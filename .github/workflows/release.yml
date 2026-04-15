@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.parse.outputs.VERSION }}
+      ver_major: ${{ steps.parse.outputs.VER_MAJOR }}
+      ver_minor: ${{ steps.parse.outputs.VER_MINOR }}
+      ver_note: ${{ steps.parse.outputs.VER_NOTE }}
+    steps:
+      - name: Parse version from tag
+        id: parse
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)(.*)$ ]]; then
+            echo "VERSION=$TAG" >> "$GITHUB_OUTPUT"
+            echo "VER_MAJOR=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "VER_MINOR=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+            echo "VER_NOTE=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Invalid tag format '$TAG', expected v<int>.<int><string>"
+            exit 1
+          fi
+
+  build:
+    needs: validate-tag
+    uses: ./.github/workflows/build.yml
+    with:
+      ver_major: ${{ needs.validate-tag.outputs.ver_major }}
+      ver_minor: ${{ needs.validate-tag.outputs.ver_minor }}
+      ver_note: ${{ needs.validate-tag.outputs.ver_note }}
+
+  package:
+    needs: [validate-tag, build]
+    uses: ./.github/workflows/package.yml
+    with:
+      version: ${{ needs.validate-tag.outputs.version }}
+      create_release: true
+    permissions:
+      contents: write
