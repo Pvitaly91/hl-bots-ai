@@ -64,6 +64,66 @@ function Get-AiRuntimeDir {
     return Join-Path (Get-ServerModRoot -HldsRoot $HldsRoot) "addons\jk_botti\runtime\ai_balance"
 }
 
+function Get-BotTestConfigTemplatePath {
+    return Join-Path (Get-RepoRoot) "addons\jk_botti\test_bots.cfg"
+}
+
+function Get-BotTestConfigPath {
+    param(
+        [string]$ModRoot,
+        [string]$Map
+    )
+
+    $configName = if ($Map -ieq "logo") { "_jk_botti_logo.cfg" } else { "jk_botti_$Map.cfg" }
+    return Join-Path (Join-Path $ModRoot "addons\jk_botti") $configName
+}
+
+function Write-BotTestConfig {
+    param(
+        [string]$HldsRoot,
+        [string]$Map,
+        [int]$BotCount,
+        [int]$BotSkill
+    )
+
+    if ($BotCount -lt 1 -or $BotCount -gt 31) {
+        throw "BotCount must be between 1 and 31. Actual value: $BotCount"
+    }
+
+    if ($BotSkill -lt 1 -or $BotSkill -gt 5) {
+        throw "BotSkill must be between 1 and 5. Actual value: $BotSkill"
+    }
+
+    $templatePath = Get-BotTestConfigTemplatePath
+    if (-not (Test-Path -LiteralPath $templatePath)) {
+        throw "Bot test config template was not found at $templatePath"
+    }
+
+    $modRoot = Ensure-Directory -Path (Get-ServerModRoot -HldsRoot $HldsRoot)
+    $botAddonsRoot = Ensure-Directory -Path (Join-Path $modRoot "addons\jk_botti")
+    $configPath = Join-Path $botAddonsRoot (Split-Path -Leaf (Get-BotTestConfigPath -ModRoot $modRoot -Map $Map))
+    $template = Get-Content -LiteralPath $templatePath -Raw
+
+    $botSetup = @(
+        "# Launcher-selected bot pool"
+        "botskill $BotSkill"
+        "min_bots $BotCount"
+        "max_bots $BotCount"
+    )
+
+    for ($index = 0; $index -lt $BotCount; $index++) {
+        $botSetup += "addbot """" """" $BotSkill"
+    }
+
+    $rendered = $template.Replace("__MAP_NAME__", $Map)
+    $rendered = $rendered.Replace("__BOT_COUNT__", [string]$BotCount)
+    $rendered = $rendered.Replace("__BOT_SKILL__", [string]$BotSkill)
+    $rendered = $rendered.Replace("__BOT_SETUP__", ($botSetup -join [Environment]::NewLine))
+
+    Set-Content -LiteralPath $configPath -Value $rendered -Encoding ASCII
+    return $configPath
+}
+
 function Get-PythonPath {
     param([string]$PreferredPath)
 

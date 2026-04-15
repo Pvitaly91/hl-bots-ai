@@ -2,9 +2,12 @@ param(
     [string]$LabRoot = "",
     [string]$HldsRoot = "",
     [string]$Map = "stalkyard",
+    [int]$BotCount = 0,
+    [int]$BotSkill = 0,
     [int]$MaxPlayers = 8,
     [int]$Port = 27015,
     [string]$Hostname = "HLDM JK_Botti AI Lab",
+    [switch]$UseTestBotConfig,
     [switch]$PassThru
 )
 
@@ -19,6 +22,23 @@ $hldsExe = Join-Path $HldsRoot "hlds.exe"
 
 if (-not (Test-Path -LiteralPath $hldsExe)) {
     throw "hlds.exe was not found at $hldsExe. Run scripts/setup_test_stand.ps1 first."
+}
+
+if ($UseTestBotConfig) {
+    if ($BotCount -lt 1) {
+        throw "BotCount must be greater than zero when -UseTestBotConfig is set."
+    }
+
+    if ($BotSkill -lt 1) {
+        throw "BotSkill must be between 1 and 5 when -UseTestBotConfig is set."
+    }
+
+    if ($MaxPlayers -lt ($BotCount + 1)) {
+        $MaxPlayers = [Math]::Min(32, $BotCount + 1)
+    }
+
+    $botConfigPath = Write-BotTestConfig -HldsRoot $HldsRoot -Map $Map -BotCount $BotCount -BotSkill $BotSkill
+    Write-Host "Generated bot test config: $botConfigPath"
 }
 
 $arguments = @(

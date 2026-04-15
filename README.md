@@ -1,5 +1,9 @@
 # hl-bots-ai
 
+PROMPT_ID_BEGIN
+HLDM-JKBOTTI-AI-STAND-20260415-01
+PROMPT_ID_END
+
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
 
 The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, the Python sidecar uses a deterministic rules engine. If the sidecar is absent or errors, the server and bot plugin still run.
@@ -59,6 +63,23 @@ The plugin applies these changes slowly:
 Game files, Metamod archives, SteamCMD payloads, generated waypoints, and compiled binaries are intentionally not committed.
 
 ## Quick Start
+
+One-command local bot test launch from `cmd.exe`:
+
+```bat
+scripts\run_test_stand_with_bots.bat
+```
+
+Examples:
+
+```bat
+scripts\run_test_stand_with_bots.bat
+scripts\run_test_stand_with_bots.bat crossfire
+scripts\run_test_stand_with_bots.bat stalkyard 6
+scripts\run_test_stand_with_bots.bat stalkyard 6 2
+```
+
+The launcher builds the Win32 DLL, prepares `.\lab`, starts the AI director, generates `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg` from `addons/jk_botti\test_bots.cfg`, and then starts HLDS with the requested bot count and skill. If `OPENAI_API_KEY` is absent, the launcher stays in deterministic offline fallback mode.
 
 Build the Win32 plugin DLL:
 
@@ -122,7 +143,7 @@ Leave `OPENAI_API_KEY` unset and run:
 powershell -NoProfile -File .\scripts\run_ai_director.ps1
 ```
 
-The sidecar will use the deterministic rules engine in `ai_director/decision.py`. This is the default lab mode and requires no internet access.
+The sidecar will use the deterministic rules engine in `ai_director/decision.py`. This is the default lab mode, it is what `scripts\run_test_stand_with_bots.bat` uses when no API key is present, and it requires no internet access.
 
 ## OpenAI Mode
 
@@ -137,13 +158,19 @@ AI_DIRECTOR_LOG_LEVEL=INFO
 
 When a key is present, the sidecar calls the OpenAI Python SDK through the Responses API and requests strict JSON output. The response is validated and clamped before a patch file is written. If the API call or SDK path fails, the sidecar logs the error and falls back to deterministic rules.
 
+After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or the underlying PowerShell launcher and the same test stand will switch from fallback mode to OpenAI-backed recommendations automatically.
+
 ## Logs And Runtime Files
 
 - Telemetry bridge: `valve/addons/jk_botti/runtime/ai_balance/telemetry.json`
 - Patch bridge: `valve/addons/jk_botti/runtime/ai_balance/patch.json`
+- Generated bot test config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
+- Bot test config template: `addons/jk_botti/test_bots.cfg`
 - AI director logs: `lab/logs/ai_director.stdout.log` and `lab/logs/ai_director.stderr.log`
 - HLDS logs: `lab/logs/hlds.stdout.log` and `lab/logs/hlds.stderr.log`
 - Server install root by default: `lab/hlds`
+
+The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a matching set of `addbot` lines so the requested bot pool comes up predictably and can be regenerated safely on each launcher run.
 
 ## Scripts
 
@@ -152,6 +179,8 @@ When a key is present, the sidecar calls the OpenAI Python SDK through the Respo
 - `scripts/run_ai_director.ps1`: runs the Python sidecar once or as a background process.
 - `scripts/run_server.ps1`: launches HLDS for the `valve` mod on a local LAN-safe configuration.
 - `scripts/run_lab.ps1`: convenience entry point that sets up the lab, launches the sidecar, and launches HLDS.
+- `scripts/run_test_stand_with_bots.ps1`: one-command test launcher that builds, prepares the lab, generates the map-specific bot config, starts the sidecar, and starts HLDS.
+- `scripts/run_test_stand_with_bots.bat`: `cmd.exe` wrapper for the one-command local bot test flow.
 - `scripts/smoke_test.ps1`: validates staged DLL presence, Metamod plugin registration, telemetry emission, patch output, and patch application log evidence.
 
 All scripts accept overridable lab paths, and the setup script supports custom SteamCMD and Metamod download sources.

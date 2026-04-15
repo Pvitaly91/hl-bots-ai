@@ -1,6 +1,43 @@
 # HLDM Test Stand
 
+PROMPT_ID_BEGIN
+HLDM-JKBOTTI-AI-STAND-20260415-01
+PROMPT_ID_END
+
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
+
+## One-Command Test Launch
+
+Use the Windows batch launcher from `cmd.exe` for the normal local bot test path:
+
+```bat
+scripts\run_test_stand_with_bots.bat
+```
+
+Arguments:
+
+- `%1`: map name, default `stalkyard`
+- `%2`: bot count, default `4`
+- `%3`: bot skill, default `3`
+- `%4`: lab root, default `.\lab`
+
+Examples:
+
+```bat
+scripts\run_test_stand_with_bots.bat
+scripts\run_test_stand_with_bots.bat crossfire
+scripts\run_test_stand_with_bots.bat stalkyard 6
+scripts\run_test_stand_with_bots.bat stalkyard 6 2
+```
+
+The batch file wraps `scripts\run_test_stand_with_bots.ps1`, which runs these steps in order:
+
+1. `scripts\build_vs2022.ps1`
+2. `scripts\setup_test_stand.ps1`
+3. `scripts\run_ai_director.ps1`
+4. `scripts\run_server.ps1`
+
+The launcher prints the resolved settings before launch, regenerates the map-specific bot test config safely on each run, writes process output under `lab\logs`, and returns a nonzero exit code if the AI director or HLDS dies immediately during startup.
 
 ## Default Lab Layout
 
@@ -10,6 +47,7 @@ By default the scripts use `.\lab` under the repository root:
 - `lab\hlds\`: HLDS dedicated server root installed through SteamCMD app `90` with `mod valve`.
 - `lab\logs\`: sidecar and HLDS stdout/stderr capture.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\`: telemetry and patch bridge folder used by the plugin and sidecar.
+- `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg`: generated map-specific bot test config used by the launcher.
 
 ## Setup Flow
 
@@ -23,6 +61,8 @@ By default the scripts use `.\lab` under the repository root:
 6. Rewrites `valve/liblist.gam` to load Metamod.
 7. Writes `valve/addons/metamod/plugins.ini` to load `addons/jk_botti/dlls/jk_botti_mm.dll`.
 8. Copies repo `addons/jk_botti` content and the staged DLL into the server install.
+
+`scripts\run_test_stand_with_bots.ps1` then writes `jk_botti_<map>.cfg` from the checked-in `addons\jk_botti\test_bots.cfg` template so the requested bot count and skill are explicit for that launch.
 
 ## Common Commands
 
@@ -65,11 +105,29 @@ Run the whole lab:
 powershell -NoProfile -File .\scripts\run_lab.ps1 -Map stalkyard
 ```
 
+Run the one-command bot launcher from PowerShell:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_test_stand_with_bots.ps1 -Map stalkyard -BotCount 4 -BotSkill 3
+```
+
 Smoke test the running lab:
 
 ```powershell
-powershell -NoProfile -File .\scripts\smoke_test.ps1 -TimeoutSeconds 120
+powershell -NoProfile -File .\scripts\smoke_test.ps1 -Map stalkyard -BotCount 4 -BotSkill 3 -TimeoutSeconds 120
 ```
+
+## Bot Test Config
+
+The checked-in template lives at `addons\jk_botti\test_bots.cfg`.
+
+Each launcher run materializes a map-specific `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg` that:
+
+- sets `botskill` to the requested skill,
+- pins `min_bots` and `max_bots` to the requested bot count,
+- emits the same number of `addbot "" "" <skill>` lines for deterministic startup,
+- keeps the AI balance bridge enabled,
+- disables chat/logo randomness to keep the local test stand more repeatable.
 
 ## Sidecar Configuration
 
@@ -85,10 +143,17 @@ Supported values:
 - `AI_DIRECTOR_POLL_INTERVAL`: optional; defaults to `5`.
 - `AI_DIRECTOR_LOG_LEVEL`: optional; defaults to `INFO`.
 
+If `OPENAI_API_KEY` is absent, the launcher stays in offline fallback mode and the Python sidecar uses the deterministic rules engine. To switch to OpenAI mode later, set `OPENAI_API_KEY` in `.env` or the environment and rerun the same launcher.
+
 ## Smoke Test Expectations
 
 `scripts/smoke_test.ps1` waits for all of the following:
 
+- `scripts/run_test_stand_with_bots.bat` exists,
+- `addons/jk_botti/test_bots.cfg` exists,
+- a generated `jk_botti_<map>.cfg` exists with the requested bot count and skill,
+- launcher logs exist under `lab\logs`,
+- fallback AI validation produces a bounded patch,
 - staged `jk_botti_mm.dll` exists,
 - `plugins.ini` references `jk_botti_mm.dll`,
 - telemetry JSON appears in the runtime directory,

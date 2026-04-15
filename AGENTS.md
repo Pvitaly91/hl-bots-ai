@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## Repository Prompt ID
+
+PROMPT_ID_BEGIN
+HLDM-JKBOTTI-AI-STAND-20260415-01
+PROMPT_ID_END
+
+- For this repository, future Codex final responses must print the exact Prompt ID block at the very beginning and the very end of the final response.
+
 ## Build Targets
 
 - Primary Windows target: `hl-bots-ai.sln` with `jk_botti_mm.vcxproj`
