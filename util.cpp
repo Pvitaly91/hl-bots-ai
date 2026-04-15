@@ -154,7 +154,12 @@ inline double fcos_sse(double x)
 // x87 fsincos asm: ~2.4x faster than glibc sin()+cos().
 inline void fsincos_x87(double x, double &s, double &c)
 {
+#ifdef _MSC_VER
+   s = sin(x);
+   c = cos(x);
+#else
    __asm__ ("fsincos;" : "=t" (c), "=u" (s) : "0" (x) : "st(7)");
+#endif
 }
 
 inline void fsincos(double x, double &s, double &c)
@@ -1274,7 +1279,11 @@ void UTIL_ConsolePrintf( const char *fmt, ... )
 void UTIL_AssertConsolePrintf(const char *file, const char *str, int line)
 {
    UTIL_ConsolePrintf("[ASSERT] '%s' : '%s' : 'line %d'", file, str, line);
+#ifdef _MSC_VER
+   __debugbreak();
+#else
    __asm__ ("int $3");
+#endif
 }
 
 char* UTIL_VarArgs2( char * string, size_t strlen, char *format, ... )

@@ -129,7 +129,7 @@ test_bot_models: $(BOT_MODELS_OBJS)
 
 # bot_client tests
 BOT_CLIENT_OBJS = engine_mock.o test_bot_client.o \
-	bot_client.o bot_weapons.o util.o safe_snprintf.o random_num.o
+	bot_client.o ai_balance.o bot_skill.o bot_weapons.o util.o safe_snprintf.o random_num.o
 
 test_bot_client: $(BOT_CLIENT_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(BOT_CLIENT_OBJS) -lm
@@ -156,7 +156,7 @@ dll.o: ../dll.cpp
 	${CXX} ${TEST_CXXFLAGS} -UVER_NOTE -DVER_NOTE='"test"' -UVER_MAJOR -DVER_MAJOR=0 -UVER_MINOR -DVER_MINOR=0 -c $< -o $@
 
 DLL_OBJS = engine_mock.o test_dll.o \
-	dll.o bot_trace.o bot_weapons.o bot_sound.o util.o safe_snprintf.o random_num.o
+	dll.o ai_balance.o bot_skill.o bot_trace.o bot_weapons.o bot_sound.o util.o safe_snprintf.o random_num.o
 
 test_dll: $(DLL_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(DLL_OBJS) -lm

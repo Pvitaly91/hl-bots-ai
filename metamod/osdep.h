@@ -170,8 +170,12 @@ mBOOL os_safe_call(REG_CMD_FN pfn);
 	#define snprintf	_snprintf
 	#define vsnprintf	_vsnprintf
 	#define sleep(x)	Sleep(x*1000)
-	#define strcasecmp	stricmp
-	#define strncasecmp	_strnicmp
+	#ifndef strcasecmp
+		#define strcasecmp	stricmp
+	#endif
+	#ifndef strncasecmp
+		#define strncasecmp	_strnicmp
+	#endif
 #endif /* _WIN32 */
 
 #ifndef S_ISREG

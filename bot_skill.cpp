@@ -20,6 +20,9 @@
 
 #include "bot_skill.h"
 
+static float g_pause_frequency_scale = 1.0f;
+static float g_battle_strafe_scale = 1.0f;
+
 #if 0
 COPY+PASTE from bot_skill.h, for explaning values in following table:
 typedef struct
@@ -205,6 +208,49 @@ bot_skill_settings_t default_skill_settings[5] = {
 };
 
 bot_skill_settings_t skill_settings[5];
+
+static float ClampFloat(const float value, const float min_value, const float max_value)
+{
+   if (value < min_value)
+      return min_value;
+   if (value > max_value)
+      return max_value;
+   return value;
+}
+
+int BotSkillGetPauseFrequency(int skill_idx)
+{
+   float scaled_value;
+
+   if (skill_idx < BEST_BOT_LEVEL)
+      skill_idx = BEST_BOT_LEVEL;
+   if (skill_idx > WORST_BOT_LEVEL)
+      skill_idx = WORST_BOT_LEVEL;
+
+   scaled_value = skill_settings[skill_idx].pause_frequency * g_pause_frequency_scale;
+   scaled_value = ClampFloat(scaled_value, 1.0f, 1000.0f);
+
+   return (int)(scaled_value + 0.5f);
+}
+
+float BotSkillGetBattleStrafe(int skill_idx)
+{
+   float scaled_value;
+
+   if (skill_idx < BEST_BOT_LEVEL)
+      skill_idx = BEST_BOT_LEVEL;
+   if (skill_idx > WORST_BOT_LEVEL)
+      skill_idx = WORST_BOT_LEVEL;
+
+   scaled_value = skill_settings[skill_idx].battle_strafe * g_battle_strafe_scale;
+   return ClampFloat(scaled_value, 0.0f, 100.0f);
+}
+
+void BotSkillSetBalanceScales(float pause_frequency_scale, float battle_strafe_scale)
+{
+   g_pause_frequency_scale = ClampFloat(pause_frequency_scale, 0.50f, 1.50f);
+   g_battle_strafe_scale = ClampFloat(battle_strafe_scale, 0.50f, 1.50f);
+}
 
 void ResetSkillsToDefault(void)
 {

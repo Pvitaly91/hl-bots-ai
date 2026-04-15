@@ -26,7 +26,9 @@
 #include "bot_weapons.h"
 #include "player.h"
 
+#ifndef Z_PREFIX
 #define Z_PREFIX
+#endif
 #include "zlib/zlib.h"
 
 
@@ -1797,9 +1799,9 @@ qboolean WaypointLoad(edict_t *pEntity)
       {
          for(int i = 0; i < num_waypoints; i++)
          {
-            waypoints[i].__reserved[0] = 0;
-            waypoints[i].__reserved[1] = 0;
-            waypoints[i].__reserved[2] = 0;
+            waypoints[i].reserved_padding[0] = 0;
+            waypoints[i].reserved_padding[1] = 0;
+            waypoints[i].reserved_padding[2] = 0;
          }
       }
 

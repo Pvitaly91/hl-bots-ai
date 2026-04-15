@@ -7,6 +7,8 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "compiler.h"
+
 inline int UTIL_IsStringEmpty(const char *str)
 {
    return str[0] == '\0';
@@ -82,9 +84,13 @@ double fcos_runtime(double x);
 
 inline double fcos(double x)
 {
+#ifdef _MSC_VER
+   return cos(x);
+#else
    if (__builtin_constant_p(x))
       return __builtin_cos(x);
    return fcos_runtime(x);
+#endif
 }
 
 // SSE-friendly atan2. Dispatches to polynomial atan2 (SSE builds)

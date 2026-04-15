@@ -67,7 +67,7 @@ typedef struct {
    int flags;     // button, lift, flag, health, ammo, etc.
    Vector origin; // location
    int itemflags; // different flags for different ammo/weapons
-   int __reserved[3];
+   int reserved_padding[3];
 } WAYPOINT;
 
 #define WAYPOINT_UNREACHABLE  (USHRT_MAX)

@@ -28,6 +28,8 @@
 #include "bot_query_hook.h"
 #include "bot_trace.h"
 
+#include "ai_balance.h"
+
 extern enginefuncs_t g_engfuncs;
 extern globalvars_t  *gpGlobals;
 extern char g_argv[1024*3];
@@ -260,6 +262,8 @@ static void SpawnInitWorld(void)
    FreeCfgBotRecord();//reset on mapchange
 
    bot_check_time = gpGlobals->time + 5.0;
+
+   AiBalanceOnMapStart();
 }
 
 
@@ -424,7 +428,10 @@ void jkbotti_ClientPutInServer( edict_t *pEntity )
    int idx = ENTINDEX(pEntity) - 1;
 
    if (idx < gpGlobals->maxClients && idx >= 0)
+   {
       players[idx].pEdict = pEntity;  // store this clients edict in the player array
+      AiBalanceOnClientPutInServer(pEntity);
+   }
    else
    {
       UTIL_ConsolePrintf("Error! ClientPutInServer pEntity invalid!");
@@ -482,7 +489,10 @@ static void ClientDisconnect( edict_t *pEntity )
       int idx = ENTINDEX(pEntity) - 1;
 
       if (idx < gpGlobals->maxClients && idx >= 0)
+      {
          players[idx].pEdict = NULL;
+         AiBalanceOnClientDisconnect(pEntity);
+      }
 
       for (i=0; i < 32; i++)
       {
@@ -805,6 +815,8 @@ static void StartFrame( void )
    if (bot_check_time < gpGlobals->time && min_bots != -1 && max_bots != -1 && min_bots <= max_bots)
       StartFrameManageBotCount();
 
+   AiBalanceStartFrame();
+
    // -- Run Floyds for creating waypoint path matrix
    //
    //    keep going for 10ms (hlds sleeps 10ms after every frame on win32, thus 10ms+10ms = 20ms -> 50fps
@@ -964,6 +976,7 @@ C_DLLEXPORT int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, 
    CVAR_SET_STRING("jk_botti_version", Plugin_info.version);
 
    BotTraceRegisterCvar();
+   AiBalanceRegisterCvars();
 
    return (TRUE); // returning TRUE enables metamod to attach this plugin
 }

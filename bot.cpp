@@ -2097,7 +2097,7 @@ static void BotWanderFreeRoam(bot_t &pBot, float moved_distance)
 
    // should the bot pause for a while here?
    // (don't pause on ladders or while being "used"...
-   if (!pBot.b_on_ladder && (RANDOM_LONG2(1, 1000) <= skill_settings[pBot.bot_skill].pause_frequency))
+   if (!pBot.b_on_ladder && (RANDOM_LONG2(1, 1000) <= BotSkillGetPauseFrequency(pBot.bot_skill)))
    {
       // set the time that the bot will stop "pausing"
       pBot.f_pause_time = gpGlobals->time +
@@ -2220,7 +2220,7 @@ static void BotDoStrafeCombat_SelectDirection(bot_t &pBot)
 
    // don't go too close to enemy
    // strafe instead
-   if(RANDOM_LONG2(1, 100) <= skill_settings[pBot.bot_skill].battle_strafe && !isMelee)
+   if(RANDOM_LONG2(1, 100) <= BotSkillGetBattleStrafe(pBot.bot_skill) && !isMelee)
    {
       if(pBot.f_strafe_time <= gpGlobals->time)
       {

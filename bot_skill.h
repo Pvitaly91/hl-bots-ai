@@ -71,6 +71,10 @@ typedef struct
 
 extern bot_skill_settings_t skill_settings[5];
 
+int BotSkillGetPauseFrequency(int skill_idx);
+float BotSkillGetBattleStrafe(int skill_idx);
+void BotSkillSetBalanceScales(float pause_frequency_scale, float battle_strafe_scale);
+
 void ResetSkillsToDefault(void);
 
 #endif

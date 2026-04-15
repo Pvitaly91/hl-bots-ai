@@ -8,7 +8,9 @@
 #define BOT_INLINE_FUNCS
 
 #include <inttypes.h>
+#ifndef _WIN32
 #include <sys/time.h>
+#endif
 
 #include "compiler.h"
 

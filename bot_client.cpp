@@ -17,6 +17,8 @@
 #include "bot_weapons.h"
 #include "player.h"
 
+#include "ai_balance.h"
+
 // types of damage to ignore...
 #define IGNORE_DAMAGE (DMG_CRUSH | DMG_BURN | DMG_FREEZE | DMG_FALL | \
                        DMG_SHOCK | DMG_DROWN | DMG_NERVEGAS | DMG_RADIATION | \
@@ -425,6 +427,8 @@ void BotClient_Valve_DeathMsg(void *p, int bot_index)
             bots[index].killer_edict = INDEXENT(killer_index);
          }
       }
+
+      AiBalanceOnDeathMsg(killer_index, victim_index);
    }
 }
 

@@ -104,6 +104,7 @@ __attribute__((weak)) qboolean b_botdontshoot = FALSE;
 __attribute__((weak)) int num_logos = 0;
 __attribute__((weak)) int submod_id = SUBMOD_HLDM;
 __attribute__((weak)) int submod_weaponflag = WEAPON_SUBMOD_HLDM;
+__attribute__((weak)) int default_bot_skill = 3;
 __attribute__((weak)) int bot_shoot_breakables = 0;
 __attribute__((weak)) int m_spriteTexture = 0;
 __attribute__((weak)) int num_waypoints = 0;

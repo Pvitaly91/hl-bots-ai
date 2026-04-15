@@ -39,6 +39,15 @@
 
 #include <string.h>		// strcpy(), strncat()
 
+#ifdef _WIN32
+	#ifndef strcasecmp
+		#define strcasecmp _stricmp
+	#endif
+	#ifndef strncasecmp
+		#define strncasecmp _strnicmp
+	#endif
+#endif
+
 void do_exit(int exitval);
 
 // Unlike snprintf(), strncpy() doesn't necessarily null-terminate the

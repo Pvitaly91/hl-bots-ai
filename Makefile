@@ -66,6 +66,7 @@ CXXFLAGS += ${CFLAGS}
 SRC = 	bot.cpp \
 	bot_chat.cpp \
 	bot_client.cpp \
+	ai_balance.cpp \
 	bot_combat.cpp \
 	bot_trace.cpp \
 	bot_config_init.cpp \
