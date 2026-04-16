@@ -133,6 +133,7 @@ static int mock_Cmd_Argc(void)
 
 static char mock_server_cmd_buf[256];
 static int mock_server_execute_count;
+static char mock_server_print_buf[512];
 
 static void mock_pfnServerCommand(const char *str)
 {
@@ -143,6 +144,24 @@ static void mock_pfnServerCommand(const char *str)
 static void mock_pfnServerExecute(void)
 {
    mock_server_execute_count++;
+}
+
+static void mock_pfnServerPrint_capture(const char *msg)
+{
+   if (msg)
+      safe_strcopy(mock_server_print_buf, sizeof(mock_server_print_buf), msg);
+   else
+      mock_server_print_buf[0] = 0;
+}
+
+static cvar_t mock_registered_ai_balance_cvar = { "jk_ai_balance_enabled", "1", 0, 0, NULL };
+
+static cvar_t *mock_pfnCVarGetPointer_cfg(const char *name)
+{
+   if (name && strcmp(name, mock_registered_ai_balance_cvar.name) == 0)
+      return &mock_registered_ai_balance_cvar;
+
+   return NULL;
 }
 
 // ============================================================
@@ -253,12 +272,15 @@ static void reset_test_state(void)
    g_engfuncs.pfnCmd_Argc = mock_Cmd_Argc;
    g_engfuncs.pfnServerCommand = (void (*)(char *))mock_pfnServerCommand;
    g_engfuncs.pfnServerExecute = mock_pfnServerExecute;
+   g_engfuncs.pfnServerPrint = mock_pfnServerPrint_capture;
+   g_engfuncs.pfnCVarGetPointer = mock_pfnCVarGetPointer_cfg;
    g_engfuncs.pfnIsDedicatedServer = mock_pfnIsDedicatedServer;
 
    memset(mock_argv_values, 0, sizeof(mock_argv_values));
    mock_argc_value = 0;
 
    mock_server_cmd_buf[0] = 0;
+   mock_server_print_buf[0] = 0;
    mock_server_execute_count = 0;
    mock_dedicated_server_value = 1; // default: dedicated
 
@@ -1858,6 +1880,27 @@ static int test_ProcessBotCfgFile_unknown_cmd(void)
    return 0;
 }
 
+static int test_ProcessBotCfgFile_registered_cvar(void)
+{
+   TEST("ProcessBotCfgFile: registered cvar executes without unknown warning");
+   reset_test_state();
+   gpGlobals->time = 10.0;
+   bot_cfg_pause_time = 0.0;
+   FILE *fp = tmpfile();
+   ASSERT_PTR_NOT_NULL(fp);
+   fprintf(fp, "jk_ai_balance_enabled 0\n");
+   rewind(fp);
+   bot_cfg_fp = fp;
+   bot_cfg_linenumber = 0;
+   ProcessBotCfgFile();
+   ASSERT_INT(mock_server_execute_count, 1);
+   ASSERT_STR(mock_server_cmd_buf, "jk_ai_balance_enabled 0\n");
+   ASSERT_STR(mock_server_print_buf, "");
+   if (bot_cfg_fp) { fclose(bot_cfg_fp); bot_cfg_fp = NULL; }
+   PASS();
+   return 0;
+}
+
 static int test_ProcessBotCfgFile_quoted_args(void)
 {
    TEST("ProcessBotCfgFile: quoted args trimmed");
@@ -2205,6 +2248,7 @@ int main(void)
    fail |= test_ProcessBotCfgFile_addbot_as_cfg();
    fail |= test_ProcessBotCfgFile_pause_cmd();
    fail |= test_ProcessBotCfgFile_unknown_cmd();
+   fail |= test_ProcessBotCfgFile_registered_cvar();
    fail |= test_ProcessBotCfgFile_quoted_args();
    fail |= test_ProcessBotCfgFile_empty_quoted_arg();
    fail |= test_ProcessBotCfgFile_tabs_converted();

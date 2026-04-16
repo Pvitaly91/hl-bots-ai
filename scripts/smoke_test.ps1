@@ -190,7 +190,10 @@ function Get-SmokeSnapshot {
     $hldsStderr = Join-Path $LogsRoot "hlds.stderr.log"
     $hldsStdoutText = if (Test-Path -LiteralPath $hldsStdout) { Get-Content -LiteralPath $hldsStdout -Raw } else { "" }
     $bootstrapText = if (Test-Path -LiteralPath $BootstrapLogPath) { Get-Content -LiteralPath $BootstrapLogPath -Raw } else { "" }
-    $hldsProcess = Get-LabProcesses -HldsRoot $HldsRoot | Where-Object { $_.Name -ieq "hlds.exe" } | Select-Object -First 1
+    $labProcesses = @(Get-LabProcesses -HldsRoot $HldsRoot)
+    $hldsProcess = $labProcesses | Where-Object { $_.Name -ieq "hlds.exe" } | Select-Object -First 1
+    $aiProcess = $labProcesses | Where-Object { $_.Name -ieq "python.exe" } | Select-Object -First 1
+    $aiBalanceWarningLine = Get-FirstMatchLine -Text $hldsStdoutText -Pattern "unknown command: 'jk_ai_balance_[^']*'"
 
     [pscustomobject]@{
         HldsStdoutPath        = $hldsStdout
@@ -198,6 +201,8 @@ function Get-SmokeSnapshot {
         HldsRunning           = $null -ne $hldsProcess
         MetamodLoaded         = $hldsStdoutText -match "Metamod version"
         PluginDllExists       = Test-Path -LiteralPath $PluginDllPath
+        BootstrapLogExists    = Test-Path -LiteralPath $BootstrapLogPath
+        AttachLogged          = $hldsStdoutText -match "plugin attaching"
         DllLoaded             = $bootstrapText -match "DllMain result=process_attach"
         GiveFnptrsReached     = $bootstrapText -match "GiveFnptrsToDll result=success"
         MetaQueryEntered      = $bootstrapText -match "Meta_Query result=entered"
@@ -206,6 +211,8 @@ function Get-SmokeSnapshot {
         MetaAttachEntered     = $bootstrapText -match "Meta_Attach result=entered"
         MetaAttachSucceeded   = $bootstrapText -match "Meta_Attach result=success"
         MetaAttachFailureLine = Get-FirstMatchLine -Text $bootstrapText -Pattern "Meta_Attach result=failure"
+        AiSidecarRunning      = $null -ne $aiProcess
+        AiBalanceWarningLine  = $aiBalanceWarningLine
         TelemetryExists       = Test-Path -LiteralPath $TelemetryPath
         PatchExists           = Test-Path -LiteralPath $PatchPath
         PatchApplied          = $hldsStdoutText -match "\[ai_balance\] applied patch="
@@ -252,6 +259,10 @@ function Get-SmokeStatus {
         return New-SmokeStatus -Code "plugin-dll-file-missing" -Summary "Metamod loaded but the configured plugin DLL file is missing." -Terminal $true
     }
 
+    if ($Snapshot.AttachLogged -and -not $Snapshot.BootstrapLogExists) {
+        return New-SmokeStatus -Code "plugin-attached-but-bootstrap-log-missing" -Summary "The plugin attached, but the bootstrap log is missing." -Terminal $true
+    }
+
     if ($Snapshot.MetaQueryFailureLine) {
         return New-SmokeStatus -Code "plugin-loaded-but-meta-query-failed" -Summary "The plugin loaded but Meta_Query failed." -Terminal $true -Detail $Snapshot.MetaQueryFailureLine
     }
@@ -272,8 +283,26 @@ function Get-SmokeStatus {
         return New-SmokeStatus -Code "plugin-passed-meta-query-but-did-not-attach" -Summary "The plugin passed Meta_Query but Meta_Attach was not reached." -Terminal $true
     }
 
-    if ($Snapshot.MetaAttachSucceeded -and $ResolvedMode -eq "NoAI") {
-        return New-SmokeStatus -Code "no-ai-path-active-by-design" -Summary "The no-AI path is active by design." -Success $true -Terminal $true -Detail "Meta_Attach succeeded and jk_ai_balance_enabled 0 is intentional for this launcher."
+    if ($Snapshot.AiBalanceWarningLine) {
+        return New-SmokeStatus -Code "plugin-attached-but-config-warning-present" -Summary "The plugin attached, but the bot config still triggered an avoidable jk_ai_balance warning." -Terminal $true -Detail $Snapshot.AiBalanceWarningLine
+    }
+
+    if ($ResolvedMode -eq "NoAI") {
+        if ($Snapshot.AiSidecarRunning) {
+            return New-SmokeStatus -Code "no-ai-path-active-but-sidecar-running" -Summary "The no-AI path attached, but an AI sidecar process is still running." -Terminal $true
+        }
+
+        if ($Snapshot.PatchExists) {
+            return New-SmokeStatus -Code "no-ai-path-active-but-unexpected-patch-output" -Summary "The no-AI path attached, but patch.json exists unexpectedly." -Terminal $true
+        }
+
+        if ($Snapshot.MetaAttachSucceeded -and $Snapshot.AttachLogged) {
+            return New-SmokeStatus -Code "no-ai-healthy" -Summary "The no-AI path is healthy: plugin attached, bootstrap log is present, no AI sidecar is running, and no patch path is expected." -Success $true -Terminal $true
+        }
+    }
+
+    if (-not $Snapshot.AiSidecarRunning) {
+        return New-SmokeStatus -Code "ai-sidecar-not-yet-running" -Summary "The plugin attached, but the AI sidecar is not running yet."
     }
 
     if ($Snapshot.MetaAttachSucceeded -and -not $Snapshot.TelemetryExists) {
@@ -289,7 +318,7 @@ function Get-SmokeStatus {
     }
 
     if ($Snapshot.PatchApplied) {
-        return New-SmokeStatus -Code "patch-applied" -Summary "Telemetry, patch output, and patch application were all observed." -Success $true -Terminal $true
+        return New-SmokeStatus -Code "ai-healthy" -Summary "The AI path is healthy: plugin attached, bootstrap log is present, the AI sidecar is running, telemetry and patch paths work, and patch application was observed." -Success $true -Terminal $true
     }
 
     return New-SmokeStatus -Code "plugin-passed-meta-query-but-did-not-attach" -Summary "The plugin passed Meta_Query but did not attach yet."
@@ -336,16 +365,21 @@ while ((Get-Date) -lt $deadline) {
 
     if ($status.Success) {
         [pscustomobject]@{
-            Status           = $status.Code
-            Summary          = $status.Summary
-            Mode             = $resolvedMode
-            BotConfigPath    = $botConfigInfo.Path
+            Status             = $status.Code
+            Summary            = $status.Summary
+            Mode               = $resolvedMode
+            BotConfigPath      = $botConfigInfo.Path
             PluginsIniPath   = $pluginsIni
             PluginRelativePath = $pluginRelativePath
-            PluginDllPath    = $pluginDllPath
-            BootstrapLogPath = $bootstrapLog
-            TelemetryPath    = $telemetryPath
-            PatchPath        = $patchPath
+            PluginDllPath      = $pluginDllPath
+            BootstrapLogPath   = $bootstrapLog
+            BootstrapLogExists = $snapshot.BootstrapLogExists
+            AiSidecarRunning   = $snapshot.AiSidecarRunning
+            TelemetryPath      = $telemetryPath
+            TelemetryExists    = $snapshot.TelemetryExists
+            PatchPath          = $patchPath
+            PatchExists        = $snapshot.PatchExists
+            PatchApplied       = $snapshot.PatchApplied
         }
         return
     }

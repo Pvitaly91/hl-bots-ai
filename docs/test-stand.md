@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-08
+HLDM-JKBOTTI-AI-STAND-20260415-09
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -20,7 +20,7 @@ The new no-AI baseline launcher is for standard jk_botti testing on `crossfire` 
 scripts\run_standard_bots_crossfire.bat
 ```
 
-Arguments for `scripts\run_test_stand_with_bots.bat`:
+Legacy positional arguments for `scripts\run_test_stand_with_bots.bat`:
 
 - `%1`: map name, default `stalkyard`
 - `%2`: bot count, default `4`
@@ -36,7 +36,7 @@ scripts\run_test_stand_with_bots.bat stalkyard 6
 scripts\run_test_stand_with_bots.bat stalkyard 6 2
 ```
 
-Arguments for `scripts\run_standard_bots_crossfire.bat`:
+Legacy positional arguments for `scripts\run_standard_bots_crossfire.bat`:
 
 - `%1`: map name, default `crossfire`
 - `%2`: bot count, default `4`
@@ -50,6 +50,17 @@ scripts\run_standard_bots_crossfire.bat
 scripts\run_standard_bots_crossfire.bat crossfire
 scripts\run_standard_bots_crossfire.bat crossfire 6
 scripts\run_standard_bots_crossfire.bat crossfire 6 2
+```
+
+If the first batch argument starts with `-`, both wrappers pass the full argument list straight through to the PowerShell implementation. This is the preferred repeat-test form because it exposes the useful knobs without duplicating logic in `cmd.exe`.
+
+Named passthrough examples:
+
+```bat
+scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 6 -BotSkill 2 -LabRoot D:\Labs\hl-bots-ai -Port 27018 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_test_stand_with_bots.bat -Map stalkyard -BotCount 6 -BotSkill 2 -LabRoot D:\Labs\hl-bots-ai -Port 27019 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The batch file wraps `scripts\run_test_stand_with_bots.ps1`, which runs these steps in order:
@@ -69,6 +80,24 @@ The no-AI batch file wraps `scripts\run_standard_bots_crossfire.ps1`, which runs
 4. `scripts\run_server.ps1`
 
 This baseline launcher automates the existing manual crossfire flow, uses `.\lab` by default, writes logs under `lab\logs`, sets `jk_ai_balance_enabled 0`, and does not start `scripts\run_ai_director.ps1`.
+
+## Fast Local Iteration
+
+Use the no-AI baseline as the primary quick loop when you only need HLDS, Metamod, and `jk_botti_mm.dll`:
+
+```bat
+scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+This keeps `crossfire` as the default baseline map, preserves `jk_ai_balance_enabled 0` in the generated config, leaves the Python sidecar off by design, and still writes all launcher output under `lab\logs`.
+
+Use the AI launcher when you need sidecar, telemetry, and patch-path verification:
+
+```bat
+scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+The skip flags are intended for repeated local runs after SteamCMD/HLDS and Metamod are already present. `-Port` is safe to vary between sessions for side-by-side manual checks.
 
 ## Default Lab Layout
 
@@ -147,6 +176,12 @@ scripts\run_standard_bots_crossfire.bat crossfire 6
 scripts\run_standard_bots_crossfire.bat crossfire 6 2
 ```
 
+Run the one-command no-AI baseline launcher from `cmd.exe` with named passthrough arguments:
+
+```bat
+scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
 Run the one-command no-AI baseline launcher from PowerShell:
 
 ```powershell
@@ -157,6 +192,12 @@ Run the one-command bot launcher from PowerShell:
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_test_stand_with_bots.ps1 -Map stalkyard -BotCount 4 -BotSkill 3
+```
+
+Run the one-command AI launcher from `cmd.exe` with named passthrough arguments:
+
+```bat
+scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 Smoke test the running lab:
@@ -196,6 +237,8 @@ The no-AI baseline launcher generates the same `jk_botti_<map>.cfg` filename dir
 
 Only `botskill`, `min_bots`, `max_bots`, and the matching `addbot` lines change when the requested bot count or skill differs from the default baseline.
 
+The earlier `unknown command: 'jk_ai_balance_enabled 0'` startup line came from JK Botti's config parser treating registered cvars as unknown before forwarding them to the engine. The launcher no longer emits that avoidable warning because registered cvars are now passed through cleanly without being mislabeled.
+
 ## Sidecar Configuration
 
 The sidecar can be configured through environment variables or `.env` files loaded from either:
@@ -228,14 +271,21 @@ The script then classifies the running lab into attach/load states instead of on
 - `metamod-did-not-load`
 - `plugin-dll-file-missing`
 - `plugin-dll-load-failed`
+- `plugin-dll-loaded-but-meta-query-not-reached`
 - `plugin-loaded-but-meta-query-failed`
 - `plugin-passed-meta-query-but-did-not-attach`
+- `plugin-attached-but-bootstrap-log-missing`
+- `plugin-attached-but-config-warning-present`
 - `plugin-attached-but-no-telemetry`
 - `telemetry-emitted-but-no-patch-path-yet`
-- `no-ai-path-active-by-design`
-- `patch-applied`
+- `telemetry-and-patch-emitted-but-no-apply-log-yet`
+- `ai-sidecar-not-yet-running`
+- `no-ai-path-active-but-sidecar-running`
+- `no-ai-path-active-but-unexpected-patch-output`
+- `no-ai-healthy`
+- `ai-healthy`
 
-`-Mode NoAI` treats `jk_ai_balance_enabled 0` as intentional and returns `no-ai-path-active-by-design` once attach succeeds. `-Mode AI` still performs the bounded fallback director validation and expects telemetry, patch output, and an `[ai_balance] applied patch=` line.
+`-Mode NoAI` treats `jk_ai_balance_enabled 0` as intentional and returns `no-ai-healthy` once attach succeeds, the bootstrap log exists, no sidecar process is running, no patch path is present, and the avoidable config warning is absent. `-Mode AI` still performs the bounded fallback director validation and expects `ai-healthy`, which requires attach success, bootstrap logging, a running sidecar, telemetry output, patch output, and an `[ai_balance] applied patch=` line.
 
 If HLDS or Metamod was not installed yet, or the server was not started, the smoke test will report the narrowest observed status and include HLDS/bootstrap log tails.
 
@@ -247,6 +297,7 @@ If HLDS or Metamod was not installed yet, or the server was not started, the smo
 - Check runtime dependencies with `powershell -NoProfile -File .\scripts\inspect_plugin_dependencies.ps1`. `Release|Win32` uses `MultiThreaded` (`/MT`) and should not require the VC++ redistributable in the lab.
 - Check the earliest bootstrap log at `lab\hlds\valve\addons\jk_botti\runtime\bootstrap.log`.
 - Use `scripts\run_standard_bots_crossfire.bat` first when debugging attach. It keeps the startup path narrowed to HLDS, Metamod, and the jk_botti DLL.
+- If you still see an `unknown command: 'jk_ai_balance_*'` line in HLDS stdout, treat it as a regression in config-command classification rather than a Metamod attach failure. A healthy Prompt 09 launcher run should not emit that warning.
 
 ## Operational Notes
 

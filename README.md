@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-08
+HLDM-JKBOTTI-AI-STAND-20260415-09
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -76,7 +76,7 @@ The new no-AI baseline launcher for standard jk_botti crossfire testing is:
 scripts\run_standard_bots_crossfire.bat
 ```
 
-Examples:
+Legacy positional examples:
 
 ```bat
 scripts\run_test_stand_with_bots.bat
@@ -90,6 +90,13 @@ scripts\run_standard_bots_crossfire.bat
 scripts\run_standard_bots_crossfire.bat crossfire
 scripts\run_standard_bots_crossfire.bat crossfire 6
 scripts\run_standard_bots_crossfire.bat crossfire 6 2
+```
+
+The `.bat` wrappers also accept direct PowerShell-style passthrough arguments, which is the fastest way to iterate once SteamCMD and Metamod are already in place:
+
+```bat
+scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The AI launcher builds the Win32 DLL, prepares `.\lab`, starts the AI director, generates `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg` from `addons\jk_botti\test_bots.cfg`, and then starts HLDS with the requested bot count and skill. If `OPENAI_API_KEY` is absent, the launcher stays in deterministic offline fallback mode.
@@ -125,6 +132,24 @@ For the no-AI attach baseline on `crossfire`, use:
 ```powershell
 powershell -NoProfile -File .\scripts\smoke_test.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Mode NoAI
 ```
+
+## Fast Local Iteration
+
+Use the no-AI baseline first when the goal is fast attach/debug repetition:
+
+```bat
+scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+This keeps the startup surface narrowed to `HLDS -> Metamod -> jk_botti_mm.dll`, preserves the standard `crossfire` baseline, writes logs under `lab\logs`, and leaves `jk_ai_balance_enabled 0` intentional in the generated config.
+
+Use the AI launcher when you need sidecar, telemetry, and patch-path coverage:
+
+```bat
+scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Both wrappers remain backward-compatible with the old positional arguments, but if the first argument starts with `-` they pass all arguments directly through to the PowerShell implementation. The useful repeat-test knobs are `-Map`, `-BotCount`, `-BotSkill`, `-LabRoot`, `-Port`, `-SkipSteamCmdUpdate`, and `-SkipMetamodDownload`.
 
 ## Visual Studio 2022 Build
 
@@ -203,10 +228,10 @@ The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a
 - `scripts/run_server.ps1`: launches HLDS for the `valve` mod on a local LAN-safe configuration.
 - `scripts/run_lab.ps1`: convenience entry point that sets up the lab, launches the sidecar, and launches HLDS.
 - `scripts/run_test_stand_with_bots.ps1`: one-command test launcher that builds, prepares the lab, generates the map-specific bot config, starts the sidecar, and starts HLDS.
-- `scripts/run_test_stand_with_bots.bat`: `cmd.exe` wrapper for the one-command local bot test flow.
+- `scripts/run_test_stand_with_bots.bat`: `cmd.exe` wrapper for the one-command local bot test flow, with backward-compatible positional arguments and direct named-argument passthrough.
 - `scripts/run_standard_bots_crossfire.ps1`: baseline launcher that builds, prepares the lab, writes a deterministic no-AI map config with `jk_ai_balance_enabled 0`, and starts HLDS without the Python sidecar.
-- `scripts/run_standard_bots_crossfire.bat`: `cmd.exe` wrapper for the baseline no-AI crossfire flow.
-- `scripts/smoke_test.ps1`: classifies attach/load state for AI and no-AI runs and validates telemetry, patch output, and patch application when AI mode is expected.
+- `scripts/run_standard_bots_crossfire.bat`: `cmd.exe` wrapper for the baseline no-AI crossfire flow, with backward-compatible positional arguments and direct named-argument passthrough.
+- `scripts/smoke_test.ps1`: classifies attach/load state for AI and no-AI runs, distinguishes healthy no-AI and healthy AI outcomes, and fails early on avoidable config warnings.
 - `scripts/inspect_plugin_exports.ps1`: checks the Win32 DLL architecture and the required HL/Metamod exports with `dumpbin`.
 - `scripts/inspect_plugin_dependencies.ps1`: reports the configured MSVC runtime mode and binary DLL dependents.
 - `scripts/inspect_plugin_path.ps1`: verifies `plugins.ini`, the deployed DLL path, and the bootstrap log location inside the lab.
@@ -221,7 +246,8 @@ All scripts accept overridable lab paths, and the setup script supports custom S
 - Check runtime dependencies with `scripts\inspect_plugin_dependencies.ps1`. `Release|Win32` is configured for `MultiThreaded` (`/MT`), and the live lab DLL should depend only on `KERNEL32.dll`, `WSOCK32.dll`, and `WS2_32.dll`.
 - Check the earliest bootstrap log at `lab\hlds\valve\addons\jk_botti\runtime\bootstrap.log`. It records `DllMain`, `GiveFnptrsToDll`, `Meta_Query`, `Meta_Attach`, and `Meta_Detach` entry/result lines.
 - Use `scripts\run_standard_bots_crossfire.bat` first when attach is in doubt. It removes the Python sidecar from the startup path and keeps the debug surface limited to `HLDS -> Metamod -> jk_botti_mm.dll`.
-- Interpret `scripts\smoke_test.ps1` by mode. `-Mode NoAI` should return `no-ai-path-active-by-design` for the standard baseline; `-Mode AI` should advance to `patch-applied`. Other statuses distinguish `hlds-did-not-start`, `metamod-did-not-load`, `plugin-dll-file-missing`, `plugin-dll-load-failed`, `plugin-loaded-but-meta-query-failed`, `plugin-passed-meta-query-but-did-not-attach`, `plugin-attached-but-no-telemetry`, and `telemetry-emitted-but-no-patch-path-yet`.
+- Interpret `scripts\smoke_test.ps1` by mode. `-Mode NoAI` should return `no-ai-healthy`; `-Mode AI` should return `ai-healthy`. Other statuses distinguish `hlds-did-not-start`, `metamod-did-not-load`, `plugin-dll-file-missing`, `plugin-dll-load-failed`, `plugin-dll-loaded-but-meta-query-not-reached`, `plugin-loaded-but-meta-query-failed`, `plugin-passed-meta-query-but-did-not-attach`, `plugin-attached-but-bootstrap-log-missing`, `plugin-attached-but-config-warning-present`, `plugin-attached-but-no-telemetry`, `telemetry-emitted-but-no-patch-path-yet`, `telemetry-and-patch-emitted-but-no-apply-log-yet`, `ai-sidecar-not-yet-running`, `no-ai-path-active-but-sidecar-running`, and `no-ai-path-active-but-unexpected-patch-output`.
+- The earlier no-AI `unknown command: 'jk_ai_balance_enabled 0'` line was a JK Botti parser classification issue, not an engine failure. The parser now detects registered cvars and forwards them as server commands without printing that avoidable warning.
 
 ## Known Limitations
 
