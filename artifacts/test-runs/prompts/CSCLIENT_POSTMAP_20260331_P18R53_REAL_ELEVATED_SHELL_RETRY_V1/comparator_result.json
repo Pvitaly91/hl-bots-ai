@@ -1,0 +1,13 @@
+{
+  "allowed": false,
+  "ran": false,
+  "reason": "no_real_fresh_traced_fallback_artifact_available_after_shell_gate_failure",
+  "dedicated_raw_anchor_present": false,
+  "fresh_traced_fallback_raw_artifact_present": false,
+  "comparison_window_core": "0x1F29-0x1FF9",
+  "comparison_window_extension": "0x1FFA-0x2009",
+  "comparison_window_used": null,
+  "first_divergence_offset": null,
+  "framing_09_09_09_0D": "unresolved",
+  "later_raw_0x27_restart_through_0x2009": "unresolved"
+}

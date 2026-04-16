@@ -1,0 +1,161 @@
+[01] Get-Location | Select-Object -ExpandProperty Path
+status=0
+summary=D:\DEV\CPP\HL-Bots
+
+[02] git branch --show-current
+status=0
+summary=feat/hldm-jk-botti-ai-stand
+
+[03] git status --short --branch
+status=0
+summary=clean working tree on feat/hldm-jk-botti-ai-stand tracking origin/feat/hldm-jk-botti-ai-stand
+
+[04] Get-ChildItem artifacts\test-runs\prompts | Select-Object -ExpandProperty Name
+status=1
+summary=path missing; artifacts\test-runs\prompts did not exist
+
+[05] git branch --list client-bootstrap-baseline
+status=0
+summary=no local branch named client-bootstrap-baseline
+
+[06] git branch -r --list origin/client-bootstrap-baseline
+status=0
+summary=no remote-tracking branch named origin/client-bootstrap-baseline
+
+[07] git remote -v
+status=0
+summary=origin=https://github.com/Pvitaly91/hl-bots-ai, upstream=https://github.com/Bots-United/jk_botti
+
+[08] Get-ChildItem -Force | Select-Object Name,Mode
+status=0
+summary=repo root enumerated; AGENTS.md and README.md present; artifacts tree absent
+
+[09] git fetch origin client-bootstrap-baseline
+status=1
+summary=fatal: couldn't find remote ref client-bootstrap-baseline
+
+[10] git ls-remote --heads origin client-bootstrap-baseline
+status=0
+summary=no matching remote head output
+
+[11] git branch -a
+status=0
+summary=local branches: feat/hldm-jk-botti-ai-stand, main; remote branches: origin/feat/hldm-jk-botti-ai-stand, origin/main, upstream/master
+
+[12] git rev-parse HEAD
+status=0
+summary=5a6d94e6e78d3aa1c88ecd396124452b627cefd8
+
+[13] git log --oneline --decorate --max-count=8 --all --simplify-by-decoration
+status=0
+summary=HEAD and origin/feat/hldm-jk-botti-ai-stand at 5a6d94e6e78d3aa1c88ecd396124452b627cefd8
+
+[14] git checkout -b client-bootstrap-baseline
+status=0
+summary=created local branch client-bootstrap-baseline at 5a6d94e6e78d3aa1c88ecd396124452b627cefd8
+
+[15] git branch --show-current
+status=0
+summary=client-bootstrap-baseline
+
+[16] git rev-parse HEAD
+status=0
+summary=5a6d94e6e78d3aa1c88ecd396124452b627cefd8
+
+[17] git rev-parse --abbrev-ref --symbolic-full-name "@{u}"
+status=1
+summary=fatal: no upstream configured for branch client-bootstrap-baseline
+
+[18] git ls-remote --heads origin client-bootstrap-baseline
+status=0
+summary=no matching remote head output
+
+[19] git status --short --branch
+status=0
+summary=clean working tree on client-bootstrap-baseline
+
+[20] git remote -v
+status=0
+summary=origin=https://github.com/Pvitaly91/hl-bots-ai, upstream=https://github.com/Bots-United/jk_botti
+
+[21] git merge-base --is-ancestor d2738e5f2d746765a0df5f7dcd7541425989c0a5 HEAD
+status=128
+summary=fatal: reference commit d2738e5f2d746765a0df5f7dcd7541425989c0a5 not present in this repository
+
+[22] git fetch origin client-bootstrap-baseline
+status=1
+summary=fatal: couldn't find remote ref client-bootstrap-baseline
+
+[23] git log --oneline --decorate --no-abbrev-commit d2738e5f2d746765a0df5f7dcd7541425989c0a5..origin/client-bootstrap-baseline
+status=1
+summary=fatal: origin/client-bootstrap-baseline is unknown and the lower-bound commit is absent
+
+[24] Get-ChildItem -Recurse -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'CSCLIENT_POSTMAP_20260331_P18R52_REAL_ELEVATED_SHELL_RETRY_V1' } | Select-Object -ExpandProperty FullName
+status=0
+summary=no P18R52 prompt-local bundle found in this working copy
+
+[25] Test-Path README.md; Test-Path docs\tests\smoke.md; Test-Path run_csclient_smoke.ps1; Test-Path tools\compare_post_voicemask_window.ps1
+status=0
+summary=README.md present; docs\tests\smoke.md absent; run_csclient_smoke.ps1 absent; tools\compare_post_voicemask_window.ps1 absent
+
+[26] Get-Content AGENTS.md
+status=0
+summary=repo prompt block is HLDM-JKBOTTI-AI-STAND-20260415-01
+
+[27] Get-Content README.md
+status=0
+summary=repo identifies as hl-bots-ai; README prompt block is HLDM-JKBOTTI-AI-STAND-20260415-07
+
+[28] Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'repo_artifact_manifest\.txt$' -or $_.FullName -match 'smoke_report\.log$' } | Select-Object -ExpandProperty FullName
+status=0
+summary=no shared smoke/bootstrap latest manifests or smoke_report.log files found in this working copy
+
+[29] git ls-files --error-unmatch stage_csclient_regamedll_rehlds_verify.ps1
+status=1
+summary=path not known to git
+
+[30] git ls-files --error-unmatch run_csclient_regamedll_rehlds_verify_manual_dedicated.bat
+status=1
+summary=path not known to git
+
+[31] git ls-files --error-unmatch run_csclient_smoke.ps1
+status=1
+summary=path not known to git
+
+[32] Select-String -Path .gitignore -Pattern 'artifacts|test-runs|lab|build'
+status=0
+summary=.gitignore ignores build/ and lab/ only; artifacts/ is not ignored by pattern shown
+
+[33] whoami /all
+status=0
+summary=user=desktop-3c05hgf\admin; BUILTIN\Administrators=deny-only; Mandatory Label=Medium Mandatory Level
+
+[34] whoami /groups
+status=0
+summary=BUILTIN\Administrators is deny-only; Mandatory Label is Medium Mandatory Level
+
+[35] whoami /priv
+status=0
+summary=only SeChangeNotifyPrivilege enabled among listed privileges; no admin proof from token
+
+[36] cmd /c fltmc
+status=1
+summary=Filter listing failed with error 0x80070005; Access is denied
+
+[37] Native token/admin probe via inline PowerShell (CheckTokenMembership, WindowsPrincipal.IsInRole, IsUserAnAdmin, process info)
+status=0
+summary=CheckTokenMembership(Admin SID)=false; WindowsPrincipal.IsInRole(Administrator)=false; IsUserAnAdmin()=false; processPath=C:\Program Files\PowerShell\7\pwsh.exe; pid=12460; sessionId=3; cwd=D:\DEV\CPP\HL-Bots
+
+[38] rg --files -g "*P18R52*"
+status=1
+summary=rg.exe failed to start from packaged app location with Access is denied
+
+[39] rg --files AGENTS.md README.md docs\tests\smoke.md run_csclient_smoke.ps1 tools\compare_post_voicemask_window.ps1
+status=1
+summary=rg.exe failed to start from packaged app location with Access is denied
+
+[40] rg --files artifacts\test-runs
+status=1
+summary=rg.exe failed to start from packaged app location with Access is denied
+
+Post-bundle git staging, commit, and push commands were executed after the bundle content was frozen and are recorded in the final response for this run.

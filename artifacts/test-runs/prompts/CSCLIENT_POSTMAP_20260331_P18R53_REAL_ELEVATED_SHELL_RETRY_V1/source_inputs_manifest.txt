@@ -1,0 +1,11 @@
+required_source_inputs
+
+AGENTS.md=read_ok; prompt_id=HLDM-JKBOTTI-AI-STAND-20260415-01
+README.md=read_ok; repo_identity=hl-bots-ai; prompt_id=HLDM-JKBOTTI-AI-STAND-20260415-07
+docs\tests\smoke.md=missing_in_live_working_copy
+full_P18R52_prompt_local_bundle=missing_in_live_working_copy
+artifacts\test-runs\smoke\latest\repo_artifact_manifest.txt=missing_in_live_working_copy
+artifacts\test-runs\smoke\latest\smoke_report.log=missing_in_live_working_copy
+artifacts\test-runs\bootstrap\latest\repo_artifact_manifest.txt=missing_in_live_working_copy
+run_csclient_smoke.ps1=missing_in_live_working_copy
+tools\compare_post_voicemask_window.ps1=missing_in_live_working_copy

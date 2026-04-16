@@ -1,0 +1,15 @@
+{
+  "shell_genuinely_elevated": false,
+  "mandatory_integrity_label": "Medium Mandatory Level",
+  "builtin_administrators_state": "deny-only",
+  "checkTokenMembershipAdminSid": false,
+  "windowsPrincipalIsInRoleAdministrator": false,
+  "isUserAnAdmin": false,
+  "fltmcSucceeded": false,
+  "fltmcResult": "Access is denied",
+  "processPath": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  "pid": 12460,
+  "sessionId": 3,
+  "workingDirectory": "D:\\DEV\\CPP\\HL-Bots",
+  "automationElevationAttempted": false
+}

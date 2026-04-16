@@ -1,0 +1,21 @@
+{
+  "shell_genuinely_elevated": false,
+  "automation_elevation_attempted": false,
+  "automation_elevation_reason": "no reliable same-working-copy noninteractive high-integrity handoff was available; interactive UAC loops were not allowed",
+  "direct_preflight_attempted": false,
+  "direct_preflight_reason": "required_elevated_high_integrity_shell_not_provided_for_p18r53",
+  "providers": [
+    "Microsoft-Windows-Kernel-Process:0x10:4",
+    "Microsoft-Windows-Kernel-File:0x1EF0:4"
+  ],
+  "filename_family": "*buffer*.dat",
+  "filesystem_root": "D:\\Steam\\steamapps\\common\\Half-Life",
+  "scope": "fallback PID only",
+  "comparison_window_core": "0x1F29-0x1FF9",
+  "comparison_window_extension": "0x1FFA-0x2009",
+  "session_name_family": "csclient-p18r53-preflight-<pid>-<timestamp>",
+  "actual_session_name": null,
+  "provider_file_path": null,
+  "etl_output_path": null,
+  "logman_command": null
+}
