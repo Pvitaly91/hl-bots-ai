@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-02
+HLDM-JKBOTTI-AI-STAND-20260415-03
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
