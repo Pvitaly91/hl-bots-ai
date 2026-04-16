@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-07
+HLDM-JKBOTTI-AI-STAND-20260415-08
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -120,6 +120,12 @@ Run the smoke test after the lab is up:
 powershell -NoProfile -File .\scripts\smoke_test.ps1
 ```
 
+For the no-AI attach baseline on `crossfire`, use:
+
+```powershell
+powershell -NoProfile -File .\scripts\smoke_test.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Mode NoAI
+```
+
 ## Visual Studio 2022 Build
 
 - Solution: `hl-bots-ai.sln`
@@ -179,6 +185,7 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 
 - Telemetry bridge: `valve/addons/jk_botti/runtime/ai_balance/telemetry.json`
 - Patch bridge: `valve/addons/jk_botti/runtime/ai_balance/patch.json`
+- Bootstrap attach log: `valve/addons/jk_botti/runtime/bootstrap.log`
 - Generated bot test config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
 - Bot test config template: `addons/jk_botti/test_bots.cfg`
 - Generated no-AI baseline config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
@@ -199,9 +206,22 @@ The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a
 - `scripts/run_test_stand_with_bots.bat`: `cmd.exe` wrapper for the one-command local bot test flow.
 - `scripts/run_standard_bots_crossfire.ps1`: baseline launcher that builds, prepares the lab, writes a deterministic no-AI map config with `jk_ai_balance_enabled 0`, and starts HLDS without the Python sidecar.
 - `scripts/run_standard_bots_crossfire.bat`: `cmd.exe` wrapper for the baseline no-AI crossfire flow.
-- `scripts/smoke_test.ps1`: validates staged DLL presence, Metamod plugin registration, telemetry emission, patch output, and patch application log evidence.
+- `scripts/smoke_test.ps1`: classifies attach/load state for AI and no-AI runs and validates telemetry, patch output, and patch application when AI mode is expected.
+- `scripts/inspect_plugin_exports.ps1`: checks the Win32 DLL architecture and the required HL/Metamod exports with `dumpbin`.
+- `scripts/inspect_plugin_dependencies.ps1`: reports the configured MSVC runtime mode and binary DLL dependents.
+- `scripts/inspect_plugin_path.ps1`: verifies `plugins.ini`, the deployed DLL path, and the bootstrap log location inside the lab.
+- `scripts/collect_attach_diagnostics.ps1`: gathers the current export, dependency, path, bootstrap, and HLDS log evidence in one report.
 
 All scripts accept overridable lab paths, and the setup script supports custom SteamCMD and Metamod download sources.
+
+## Troubleshooting Attach
+
+- Check `lab\hlds\valve\addons\metamod\plugins.ini`. It should contain `win32 addons/jk_botti/dlls/jk_botti_mm.dll`. `scripts\inspect_plugin_path.ps1` verifies the configured path and the copied DLL under `lab\hlds\valve\addons\jk_botti\dlls\jk_botti_mm.dll`.
+- Check architecture and exports with `scripts\inspect_plugin_exports.ps1`. The Release lab DLL should report `14C machine (x86)` / `PE32`, and the export table should include `GiveFnptrsToDll`, `Meta_Query`, `Meta_Attach`, and `Meta_Detach`.
+- Check runtime dependencies with `scripts\inspect_plugin_dependencies.ps1`. `Release|Win32` is configured for `MultiThreaded` (`/MT`), and the live lab DLL should depend only on `KERNEL32.dll`, `WSOCK32.dll`, and `WS2_32.dll`.
+- Check the earliest bootstrap log at `lab\hlds\valve\addons\jk_botti\runtime\bootstrap.log`. It records `DllMain`, `GiveFnptrsToDll`, `Meta_Query`, `Meta_Attach`, and `Meta_Detach` entry/result lines.
+- Use `scripts\run_standard_bots_crossfire.bat` first when attach is in doubt. It removes the Python sidecar from the startup path and keeps the debug surface limited to `HLDS -> Metamod -> jk_botti_mm.dll`.
+- Interpret `scripts\smoke_test.ps1` by mode. `-Mode NoAI` should return `no-ai-path-active-by-design` for the standard baseline; `-Mode AI` should advance to `patch-applied`. Other statuses distinguish `hlds-did-not-start`, `metamod-did-not-load`, `plugin-dll-file-missing`, `plugin-dll-load-failed`, `plugin-loaded-but-meta-query-failed`, `plugin-passed-meta-query-but-did-not-attach`, `plugin-attached-but-no-telemetry`, and `telemetry-emitted-but-no-patch-path-yet`.
 
 ## Known Limitations
 

@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-07
+HLDM-JKBOTTI-AI-STAND-20260415-08
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -165,6 +165,12 @@ Smoke test the running lab:
 powershell -NoProfile -File .\scripts\smoke_test.ps1 -Map stalkyard -BotCount 4 -BotSkill 3 -TimeoutSeconds 120
 ```
 
+Smoke test the no-AI crossfire baseline:
+
+```powershell
+powershell -NoProfile -File .\scripts\smoke_test.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Mode NoAI -TimeoutSeconds 60
+```
+
 ## Bot Test Config
 
 The checked-in template lives at `addons\jk_botti\test_bots.cfg`.
@@ -208,21 +214,39 @@ If `OPENAI_API_KEY` is absent, the launcher stays in offline fallback mode and t
 
 ## Smoke Test Expectations
 
-`scripts/smoke_test.ps1` waits for all of the following:
+`scripts/smoke_test.ps1` first verifies that:
 
-- `scripts/run_test_stand_with_bots.bat` exists,
+- both launcher entry points exist,
 - `addons/jk_botti/test_bots.cfg` exists,
-- a generated `jk_botti_<map>.cfg` exists with the requested bot count and skill,
-- launcher logs exist under `lab\logs`,
-- fallback AI validation produces a bounded patch,
-- staged `jk_botti_mm.dll` exists,
-- `plugins.ini` references `jk_botti_mm.dll`,
-- telemetry JSON appears in the runtime directory,
-- patch JSON appears in the runtime directory,
-- HLDS log contains Metamod plugin attach output,
-- HLDS log contains an `[ai_balance] applied patch=` line.
+- the generated `jk_botti_<map>.cfg` matches the requested bot count and skill,
+- the staged `jk_botti_mm.dll` exists,
+- `plugins.ini` exists and points at `addons/jk_botti/dlls/jk_botti_mm.dll`.
 
-If HLDS or Metamod was not installed yet, or the server was not started, the smoke test will time out rather than trying to repair the environment.
+The script then classifies the running lab into attach/load states instead of only timing out on a missing patch:
+
+- `hlds-did-not-start`
+- `metamod-did-not-load`
+- `plugin-dll-file-missing`
+- `plugin-dll-load-failed`
+- `plugin-loaded-but-meta-query-failed`
+- `plugin-passed-meta-query-but-did-not-attach`
+- `plugin-attached-but-no-telemetry`
+- `telemetry-emitted-but-no-patch-path-yet`
+- `no-ai-path-active-by-design`
+- `patch-applied`
+
+`-Mode NoAI` treats `jk_ai_balance_enabled 0` as intentional and returns `no-ai-path-active-by-design` once attach succeeds. `-Mode AI` still performs the bounded fallback director validation and expects telemetry, patch output, and an `[ai_balance] applied patch=` line.
+
+If HLDS or Metamod was not installed yet, or the server was not started, the smoke test will report the narrowest observed status and include HLDS/bootstrap log tails.
+
+## Attach Troubleshooting
+
+- Check `lab\hlds\valve\addons\metamod\plugins.ini`. It should contain `win32 addons/jk_botti/dlls/jk_botti_mm.dll`.
+- Check the deployed plugin path with `powershell -NoProfile -File .\scripts\inspect_plugin_path.ps1`.
+- Check x86 vs x64 and the export table with `powershell -NoProfile -File .\scripts\inspect_plugin_exports.ps1`. The Release lab DLL should report `14C machine (x86)` / `PE32`.
+- Check runtime dependencies with `powershell -NoProfile -File .\scripts\inspect_plugin_dependencies.ps1`. `Release|Win32` uses `MultiThreaded` (`/MT`) and should not require the VC++ redistributable in the lab.
+- Check the earliest bootstrap log at `lab\hlds\valve\addons\jk_botti\runtime\bootstrap.log`.
+- Use `scripts\run_standard_bots_crossfire.bat` first when debugging attach. It keeps the startup path narrowed to HLDS, Metamod, and the jk_botti DLL.
 
 ## Operational Notes
 

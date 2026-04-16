@@ -6,6 +6,8 @@ param(
     [string]$Map = "stalkyard",
     [int]$BotCount = 4,
     [int]$BotSkill = 3,
+    [ValidateSet("Auto", "AI", "NoAI")]
+    [string]$Mode = "Auto",
     [int]$TimeoutSeconds = 120
 )
 
@@ -24,75 +26,87 @@ function Get-LogTailText {
     return ((Get-Content -LiteralPath $Path -Tail $Tail) -join [Environment]::NewLine).Trim()
 }
 
-$LabRoot = if ($LabRoot) { $LabRoot } else { Get-LabRootDefault }
-$LabRoot = Ensure-Directory -Path $LabRoot
-if (-not $HldsRoot) { $HldsRoot = Get-HldsRootDefault -LabRoot $LabRoot }
+function Get-FirstMatchLine {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
 
-$repoRoot = Get-RepoRoot
-$logsRoot = Ensure-Directory -Path (Get-LogsRootDefault -LabRoot $LabRoot)
-$runtimeDir = Get-AiRuntimeDir -HldsRoot $HldsRoot
-$builtDll = Get-BuildOutputPath -Configuration $Configuration -Platform $Platform
-$launcherBat = Join-Path $repoRoot "scripts\run_test_stand_with_bots.bat"
-$launcherPs1 = Join-Path $repoRoot "scripts\run_test_stand_with_bots.ps1"
-$botTemplate = Get-BotTestConfigTemplatePath
-$botConfigPath = Get-BotTestConfigPath -ModRoot (Get-ServerModRoot -HldsRoot $HldsRoot) -Map $Map
-$pluginsIni = Join-Path (Get-ServerModRoot -HldsRoot $HldsRoot) "addons\metamod\plugins.ini"
-$aiStdout = Join-Path $logsRoot "ai_director.stdout.log"
-$aiStderr = Join-Path $logsRoot "ai_director.stderr.log"
-$hldsLog = Join-Path $logsRoot "hlds.stdout.log"
-$hldsErrLog = Join-Path $logsRoot "hlds.stderr.log"
+    if ([string]::IsNullOrEmpty($Text)) {
+        return ""
+    }
 
-if (-not (Test-Path -LiteralPath $launcherBat)) {
-    throw "Launcher batch file is missing: $launcherBat"
+    $match = $Text | Select-String -Pattern $Pattern | Select-Object -First 1
+    if ($match) {
+        return $match.Line.Trim()
+    }
+
+    return ""
 }
 
-if (-not (Test-Path -LiteralPath $launcherPs1)) {
-    throw "Launcher PowerShell implementation is missing: $launcherPs1"
+function Get-BotConfigInfo {
+    param(
+        [string]$Path,
+        [int]$BotCount,
+        [int]$BotSkill
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Expected generated bot config was not found: $Path"
+    }
+
+    $content = Get-Content -LiteralPath $Path -Raw
+    if ($content -notmatch "(?m)^botskill\s+$BotSkill\s*$") {
+        throw "Generated bot test config does not contain the requested botskill: $Path"
+    }
+
+    if ($content -notmatch "(?m)^min_bots\s+$BotCount\s*$") {
+        throw "Generated bot test config does not contain the requested min_bots value: $Path"
+    }
+
+    if ($content -notmatch "(?m)^max_bots\s+$BotCount\s*$") {
+        throw "Generated bot test config does not contain the requested max_bots value: $Path"
+    }
+
+    $addbotMatches = [regex]::Matches($content, "(?m)^addbot\b")
+    if ($addbotMatches.Count -ne $BotCount) {
+        throw "Generated bot test config contains $($addbotMatches.Count) addbot lines, expected ${BotCount}: $Path"
+    }
+
+    [pscustomobject]@{
+        Path        = $Path
+        Content     = $content
+        AiDisabled  = $content -match "(?m)^\s*jk_ai_balance_enabled\s+0\s*$"
+    }
 }
 
-if (-not (Test-Path -LiteralPath $botTemplate)) {
-    throw "Bot test config template is missing: $botTemplate"
+function Resolve-SmokeMode {
+    param(
+        [string]$RequestedMode,
+        [bool]$AiDisabled
+    )
+
+    switch ($RequestedMode) {
+        "AI" { return "AI" }
+        "NoAI" { return "NoAI" }
+        default {
+            if ($AiDisabled) { return "NoAI" }
+            return "AI"
+        }
+    }
 }
 
-if (-not (Test-Path -LiteralPath $builtDll)) {
-    throw "Expected built DLL is missing: $builtDll"
-}
+function Invoke-FallbackAiValidation {
+    param(
+        [string]$LabRoot,
+        [string]$HldsRoot
+    )
 
-if (-not (Test-Path -LiteralPath $pluginsIni)) {
-    throw "Metamod plugins.ini is missing: $pluginsIni"
-}
+    $validationRuntime = Ensure-Directory -Path (Join-Path $LabRoot "validation\runtime")
+    $validationPatch = Join-Path $validationRuntime "patch.json"
+    $validationTelemetry = Join-Path $validationRuntime "telemetry.json"
 
-if (-not ((Get-Content -LiteralPath $pluginsIni -Raw) -match "jk_botti_mm\.dll")) {
-    throw "plugins.ini does not reference jk_botti_mm.dll"
-}
-
-if (-not (Test-Path -LiteralPath $botConfigPath)) {
-    $botConfigPath = Write-BotTestConfig -HldsRoot $HldsRoot -Map $Map -BotCount $BotCount -BotSkill $BotSkill
-}
-
-$botConfigContent = Get-Content -LiteralPath $botConfigPath -Raw
-if ($botConfigContent -notmatch "(?m)^botskill\s+$BotSkill\s*$") {
-    throw "Generated bot test config does not contain the requested botskill: $botConfigPath"
-}
-
-if ($botConfigContent -notmatch "(?m)^min_bots\s+$BotCount\s*$") {
-    throw "Generated bot test config does not contain the requested min_bots value: $botConfigPath"
-}
-
-if ($botConfigContent -notmatch "(?m)^max_bots\s+$BotCount\s*$") {
-    throw "Generated bot test config does not contain the requested max_bots value: $botConfigPath"
-}
-
-$addbotMatches = [regex]::Matches($botConfigContent, "(?m)^addbot\b")
-if ($addbotMatches.Count -ne $BotCount) {
-    throw "Generated bot test config contains $($addbotMatches.Count) addbot lines, expected ${BotCount}: $botConfigPath"
-}
-
-$validationRuntime = Ensure-Directory -Path (Join-Path $LabRoot "validation\runtime")
-$validationTelemetry = Join-Path $validationRuntime "telemetry.json"
-$validationPatch = Join-Path $validationRuntime "patch.json"
-
-@'
+    @'
 {
   "schema_version": 1,
   "match_id": "validation-match",
@@ -120,105 +134,230 @@ $validationPatch = Join-Path $validationRuntime "patch.json"
 }
 '@ | Set-Content -LiteralPath $validationTelemetry -Encoding ASCII
 
-if (Test-Path -LiteralPath $validationPatch) {
-    Remove-Item -LiteralPath $validationPatch -Force
-}
+    if (Test-Path -LiteralPath $validationPatch) {
+        Remove-Item -LiteralPath $validationPatch -Force
+    }
 
-$savedApiKey = $null
-$hadApiKey = Test-Path env:OPENAI_API_KEY
-if ($hadApiKey) {
-    $savedApiKey = $env:OPENAI_API_KEY
-    Remove-Item env:OPENAI_API_KEY
-}
-
-try {
-    & (Join-Path $PSScriptRoot "run_ai_director.ps1") -LabRoot $LabRoot -HldsRoot $HldsRoot -RuntimeDir $validationRuntime -Once
-}
-finally {
+    $savedApiKey = $null
+    $hadApiKey = Test-Path env:OPENAI_API_KEY
     if ($hadApiKey) {
-        $env:OPENAI_API_KEY = $savedApiKey
+        $savedApiKey = $env:OPENAI_API_KEY
+        Remove-Item env:OPENAI_API_KEY
+    }
+
+    try {
+        & (Join-Path $PSScriptRoot "run_ai_director.ps1") -LabRoot $LabRoot -HldsRoot $HldsRoot -RuntimeDir $validationRuntime -Once
+    }
+    finally {
+        if ($hadApiKey) {
+            $env:OPENAI_API_KEY = $savedApiKey
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $validationPatch)) {
+        throw "Fallback AI validation did not produce patch.json in $validationRuntime"
+    }
+
+    $validationPatchJson = Get-Content -LiteralPath $validationPatch -Raw | ConvertFrom-Json
+    if ($validationPatchJson.target_skill_level -lt 1 -or $validationPatchJson.target_skill_level -gt 5) {
+        throw "Fallback AI validation produced an out-of-range target_skill_level: $($validationPatchJson.target_skill_level)"
+    }
+
+    if ($validationPatchJson.bot_count_delta -lt -1 -or $validationPatchJson.bot_count_delta -gt 1) {
+        throw "Fallback AI validation produced an out-of-range bot_count_delta: $($validationPatchJson.bot_count_delta)"
+    }
+
+    if ($validationPatchJson.pause_frequency_scale -lt 0.85 -or $validationPatchJson.pause_frequency_scale -gt 1.15) {
+        throw "Fallback AI validation produced an out-of-range pause_frequency_scale: $($validationPatchJson.pause_frequency_scale)"
+    }
+
+    if ($validationPatchJson.battle_strafe_scale -lt 0.85 -or $validationPatchJson.battle_strafe_scale -gt 1.15) {
+        throw "Fallback AI validation produced an out-of-range battle_strafe_scale: $($validationPatchJson.battle_strafe_scale)"
     }
 }
 
-if (-not (Test-Path -LiteralPath $validationPatch)) {
-    throw "Fallback AI validation did not produce patch.json in $validationRuntime"
-}
+function Get-SmokeSnapshot {
+    param(
+        [string]$HldsRoot,
+        [string]$LogsRoot,
+        [string]$BootstrapLogPath,
+        [string]$TelemetryPath,
+        [string]$PatchPath,
+        [string]$PluginDllPath
+    )
 
-$validationPatchJson = Get-Content -LiteralPath $validationPatch -Raw | ConvertFrom-Json
-if ($validationPatchJson.target_skill_level -lt 1 -or $validationPatchJson.target_skill_level -gt 5) {
-    throw "Fallback AI validation produced an out-of-range target_skill_level: $($validationPatchJson.target_skill_level)"
-}
+    $hldsStdout = Join-Path $LogsRoot "hlds.stdout.log"
+    $hldsStderr = Join-Path $LogsRoot "hlds.stderr.log"
+    $hldsStdoutText = if (Test-Path -LiteralPath $hldsStdout) { Get-Content -LiteralPath $hldsStdout -Raw } else { "" }
+    $bootstrapText = if (Test-Path -LiteralPath $BootstrapLogPath) { Get-Content -LiteralPath $BootstrapLogPath -Raw } else { "" }
+    $hldsProcess = Get-LabProcesses -HldsRoot $HldsRoot | Where-Object { $_.Name -ieq "hlds.exe" } | Select-Object -First 1
 
-if ($validationPatchJson.bot_count_delta -lt -1 -or $validationPatchJson.bot_count_delta -gt 1) {
-    throw "Fallback AI validation produced an out-of-range bot_count_delta: $($validationPatchJson.bot_count_delta)"
-}
-
-if ($validationPatchJson.pause_frequency_scale -lt 0.85 -or $validationPatchJson.pause_frequency_scale -gt 1.15) {
-    throw "Fallback AI validation produced an out-of-range pause_frequency_scale: $($validationPatchJson.pause_frequency_scale)"
-}
-
-if ($validationPatchJson.battle_strafe_scale -lt 0.85 -or $validationPatchJson.battle_strafe_scale -gt 1.15) {
-    throw "Fallback AI validation produced an out-of-range battle_strafe_scale: $($validationPatchJson.battle_strafe_scale)"
-}
-
-$logFiles = @($aiStdout, $aiStderr, $hldsLog, $hldsErrLog)
-foreach ($logPath in $logFiles) {
-    if (-not (Test-Path -LiteralPath $logPath)) {
-        throw "Expected launcher log file is missing: $logPath"
+    [pscustomobject]@{
+        HldsStdoutPath        = $hldsStdout
+        HldsStderrPath        = $hldsStderr
+        HldsRunning           = $null -ne $hldsProcess
+        MetamodLoaded         = $hldsStdoutText -match "Metamod version"
+        PluginDllExists       = Test-Path -LiteralPath $PluginDllPath
+        DllLoaded             = $bootstrapText -match "DllMain result=process_attach"
+        GiveFnptrsReached     = $bootstrapText -match "GiveFnptrsToDll result=success"
+        MetaQueryEntered      = $bootstrapText -match "Meta_Query result=entered"
+        MetaQuerySucceeded    = $bootstrapText -match "Meta_Query result=success"
+        MetaQueryFailureLine  = Get-FirstMatchLine -Text $bootstrapText -Pattern "Meta_Query result=failure"
+        MetaAttachEntered     = $bootstrapText -match "Meta_Attach result=entered"
+        MetaAttachSucceeded   = $bootstrapText -match "Meta_Attach result=success"
+        MetaAttachFailureLine = Get-FirstMatchLine -Text $bootstrapText -Pattern "Meta_Attach result=failure"
+        TelemetryExists       = Test-Path -LiteralPath $TelemetryPath
+        PatchExists           = Test-Path -LiteralPath $PatchPath
+        PatchApplied          = $hldsStdoutText -match "\[ai_balance\] applied patch="
+        HldsStdoutTail        = Get-LogTailText -Path $hldsStdout
+        HldsStderrTail        = Get-LogTailText -Path $hldsStderr
+        BootstrapTail         = Get-LogTailText -Path $BootstrapLogPath
+        BootstrapLogPath      = $BootstrapLogPath
     }
+}
+
+function New-SmokeStatus {
+    param(
+        [string]$Code,
+        [string]$Summary,
+        [bool]$Success = $false,
+        [bool]$Terminal = $false,
+        [string]$Detail = ""
+    )
+
+    [pscustomobject]@{
+        Code     = $Code
+        Summary  = $Summary
+        Success  = $Success
+        Terminal = $Terminal
+        Detail   = $Detail
+    }
+}
+
+function Get-SmokeStatus {
+    param(
+        [pscustomobject]$Snapshot,
+        [string]$ResolvedMode
+    )
+
+    if (-not $Snapshot.HldsRunning -and -not (Test-Path -LiteralPath $Snapshot.HldsStdoutPath)) {
+        return New-SmokeStatus -Code "hlds-did-not-start" -Summary "HLDS did not start." -Detail "No HLDS process or stdout log is present yet."
+    }
+
+    if (-not $Snapshot.MetamodLoaded) {
+        return New-SmokeStatus -Code "metamod-did-not-load" -Summary "Metamod did not load." -Detail "HLDS started, but the stdout log does not contain the Metamod banner yet."
+    }
+
+    if (-not $Snapshot.PluginDllExists) {
+        return New-SmokeStatus -Code "plugin-dll-file-missing" -Summary "Metamod loaded but the configured plugin DLL file is missing." -Terminal $true
+    }
+
+    if ($Snapshot.MetaQueryFailureLine) {
+        return New-SmokeStatus -Code "plugin-loaded-but-meta-query-failed" -Summary "The plugin loaded but Meta_Query failed." -Terminal $true -Detail $Snapshot.MetaQueryFailureLine
+    }
+
+    if ($Snapshot.MetaAttachFailureLine) {
+        return New-SmokeStatus -Code "plugin-passed-meta-query-but-did-not-attach" -Summary "The plugin passed Meta_Query but Meta_Attach failed." -Terminal $true -Detail $Snapshot.MetaAttachFailureLine
+    }
+
+    if ($Snapshot.DllLoaded -and -not $Snapshot.MetaQueryEntered -and -not $Snapshot.MetaQuerySucceeded) {
+        return New-SmokeStatus -Code "plugin-dll-loaded-but-meta-query-not-reached" -Summary "The plugin DLL loaded, but Meta_Query was never reached." -Terminal $true
+    }
+
+    if (-not $Snapshot.DllLoaded) {
+        return New-SmokeStatus -Code "plugin-dll-load-failed" -Summary "Metamod loaded, but the plugin DLL did not reach DllMain." -Detail "Bootstrap log has no DLL_PROCESS_ATTACH entry."
+    }
+
+    if ($Snapshot.MetaQuerySucceeded -and -not $Snapshot.MetaAttachEntered -and -not $Snapshot.MetaAttachSucceeded) {
+        return New-SmokeStatus -Code "plugin-passed-meta-query-but-did-not-attach" -Summary "The plugin passed Meta_Query but Meta_Attach was not reached." -Terminal $true
+    }
+
+    if ($Snapshot.MetaAttachSucceeded -and $ResolvedMode -eq "NoAI") {
+        return New-SmokeStatus -Code "no-ai-path-active-by-design" -Summary "The no-AI path is active by design." -Success $true -Terminal $true -Detail "Meta_Attach succeeded and jk_ai_balance_enabled 0 is intentional for this launcher."
+    }
+
+    if ($Snapshot.MetaAttachSucceeded -and -not $Snapshot.TelemetryExists) {
+        return New-SmokeStatus -Code "plugin-attached-but-no-telemetry" -Summary "The plugin attached but no telemetry has been emitted yet."
+    }
+
+    if ($Snapshot.TelemetryExists -and -not $Snapshot.PatchExists) {
+        return New-SmokeStatus -Code "telemetry-emitted-but-no-patch-path-yet" -Summary "Telemetry was emitted, but patch.json has not appeared yet."
+    }
+
+    if ($Snapshot.PatchExists -and -not $Snapshot.PatchApplied) {
+        return New-SmokeStatus -Code "telemetry-and-patch-emitted-but-no-apply-log-yet" -Summary "Telemetry and patch files exist, but the patch application log has not appeared yet."
+    }
+
+    if ($Snapshot.PatchApplied) {
+        return New-SmokeStatus -Code "patch-applied" -Summary "Telemetry, patch output, and patch application were all observed." -Success $true -Terminal $true
+    }
+
+    return New-SmokeStatus -Code "plugin-passed-meta-query-but-did-not-attach" -Summary "The plugin passed Meta_Query but did not attach yet."
+}
+
+$LabRoot = if ($LabRoot) { $LabRoot } else { Get-LabRootDefault }
+$LabRoot = Ensure-Directory -Path $LabRoot
+if (-not $HldsRoot) { $HldsRoot = Get-HldsRootDefault -LabRoot $LabRoot }
+
+$repoRoot = Get-RepoRoot
+$logsRoot = Ensure-Directory -Path (Get-LogsRootDefault -LabRoot $LabRoot)
+$runtimeDir = Get-AiRuntimeDir -HldsRoot $HldsRoot
+$launcherBat = Join-Path $repoRoot "scripts\run_test_stand_with_bots.bat"
+$launcherPs1 = Join-Path $repoRoot "scripts\run_test_stand_with_bots.ps1"
+$standardLauncherBat = Join-Path $repoRoot "scripts\run_standard_bots_crossfire.bat"
+$standardLauncherPs1 = Join-Path $repoRoot "scripts\run_standard_bots_crossfire.ps1"
+$botTemplate = Get-BotTestConfigTemplatePath
+$botConfigPath = Get-BotTestConfigPath -ModRoot (Get-ServerModRoot -HldsRoot $HldsRoot) -Map $Map
+$pluginsIni = Get-MetamodPluginsIniPath -ModRoot (Get-ServerModRoot -HldsRoot $HldsRoot)
+$bootstrapLog = Get-PluginBootstrapLogPath -HldsRoot $HldsRoot
+$telemetryPath = Join-Path $runtimeDir "telemetry.json"
+$patchPath = Join-Path $runtimeDir "patch.json"
+$builtDll = Get-BuildOutputPath -Configuration $Configuration -Platform $Platform
+
+foreach ($requiredPath in @($launcherBat, $launcherPs1, $standardLauncherBat, $standardLauncherPs1, $botTemplate, $builtDll, $pluginsIni)) {
+    if (-not (Test-Path -LiteralPath $requiredPath)) {
+        throw "Required path is missing: $requiredPath"
+    }
+}
+
+$pluginRelativePath = Get-ConfiguredMetamodPluginRelativePath -PluginsIniPath $pluginsIni
+$pluginDllPath = Get-DeployedPluginPath -HldsRoot $HldsRoot -RelativePath $pluginRelativePath
+$botConfigInfo = Get-BotConfigInfo -Path $botConfigPath -BotCount $BotCount -BotSkill $BotSkill
+$resolvedMode = Resolve-SmokeMode -RequestedMode $Mode -AiDisabled $botConfigInfo.AiDisabled
+
+if ($resolvedMode -eq "AI") {
+    Invoke-FallbackAiValidation -LabRoot $LabRoot -HldsRoot $HldsRoot
 }
 
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 while ((Get-Date) -lt $deadline) {
-    $telemetryExists = Test-Path -LiteralPath (Join-Path $runtimeDir "telemetry.json")
-    $patchExists = Test-Path -LiteralPath (Join-Path $runtimeDir "patch.json")
-    $hldsReady = (Test-Path -LiteralPath $hldsLog) -and ((Get-Content -LiteralPath $hldsLog -Raw) -match "plugin attaching")
-    $applied = (Test-Path -LiteralPath $hldsLog) -and ((Get-Content -LiteralPath $hldsLog -Raw) -match "\[ai_balance\] applied patch=")
+    $snapshot = Get-SmokeSnapshot -HldsRoot $HldsRoot -LogsRoot $logsRoot -BootstrapLogPath $bootstrapLog -TelemetryPath $telemetryPath -PatchPath $patchPath -PluginDllPath $pluginDllPath
+    $status = Get-SmokeStatus -Snapshot $snapshot -ResolvedMode $resolvedMode
 
-    if ($telemetryExists -and $patchExists -and $hldsReady -and $applied) {
-        Write-Host "Smoke test passed."
+    if ($status.Success) {
+        [pscustomobject]@{
+            Status           = $status.Code
+            Summary          = $status.Summary
+            Mode             = $resolvedMode
+            BotConfigPath    = $botConfigInfo.Path
+            PluginsIniPath   = $pluginsIni
+            PluginRelativePath = $pluginRelativePath
+            PluginDllPath    = $pluginDllPath
+            BootstrapLogPath = $bootstrapLog
+            TelemetryPath    = $telemetryPath
+            PatchPath        = $patchPath
+        }
         return
+    }
+
+    if ($status.Terminal) {
+        break
     }
 
     Start-Sleep -Seconds 2
 }
 
-$stdoutTail = Get-LogTailText -Path $hldsLog
-$stderrTail = Get-LogTailText -Path $hldsErrLog
-$blockers = @()
-$missingChecks = @()
-$telemetryExists = Test-Path -LiteralPath (Join-Path $runtimeDir "telemetry.json")
-$patchExists = Test-Path -LiteralPath (Join-Path $runtimeDir "patch.json")
-$hldsReady = (Test-Path -LiteralPath $hldsLog) -and ((Get-Content -LiteralPath $hldsLog -Raw) -match "plugin attaching")
-$applied = (Test-Path -LiteralPath $hldsLog) -and ((Get-Content -LiteralPath $hldsLog -Raw) -match "\[ai_balance\] applied patch=")
-
-if (-not $telemetryExists) {
-    $missingChecks += "telemetry.json"
-}
-
-if (-not $patchExists) {
-    $missingChecks += "patch.json"
-}
-
-if (-not $hldsReady) {
-    $missingChecks += "jk_botti attach log"
-}
-
-if (-not $applied) {
-    $missingChecks += "applied patch log"
-}
-
-if ((Test-Path -LiteralPath $hldsLog) -and ((Get-Content -LiteralPath $hldsLog -Raw) -match 'Unable to initialize Steam')) {
-    $blockers += 'HLDS reported "Unable to initialize Steam."'
-}
-
-if ((Test-Path -LiteralPath $hldsErrLog) -and ((Get-Content -LiteralPath $hldsErrLog -Raw) -match 'SDL3\.dll')) {
-    $blockers += 'HLDS failed to load SDL3.dll.'
-}
-
-if ($blockers.Count -eq 0 -and (Test-Path -LiteralPath $hldsLog) -and ((Get-Content -LiteralPath $hldsLog -Raw) -match 'Metamod version')) {
-    $blockers += "Metamod started, but the following checks never completed: $($missingChecks -join ', ')."
-}
-
-$blockerText = if ($blockers.Count -gt 0) { $blockers -join " " } else { "No specific external blocker was detected in the current log tail." }
-throw "Smoke test timed out waiting for Metamod/jk_botti load, telemetry output, patch output, and patch application. $blockerText STDOUT tail: $stdoutTail STDERR tail: $stderrTail"
+$snapshot = Get-SmokeSnapshot -HldsRoot $HldsRoot -LogsRoot $logsRoot -BootstrapLogPath $bootstrapLog -TelemetryPath $telemetryPath -PatchPath $patchPath -PluginDllPath $pluginDllPath
+$status = Get-SmokeStatus -Snapshot $snapshot -ResolvedMode $resolvedMode
+$detailSuffix = if ($status.Detail) { " Detail: $($status.Detail)" } else { "" }
+throw "Smoke status '$($status.Code)': $($status.Summary)$detailSuffix STDOUT tail: $($snapshot.HldsStdoutTail) STDERR tail: $($snapshot.HldsStderrTail) Bootstrap tail: $($snapshot.BootstrapTail)"

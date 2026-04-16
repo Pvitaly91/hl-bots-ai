@@ -1,0 +1,11 @@
+LIBRARY "jk_botti_mm"
+
+EXPORTS
+    GiveFnptrsToDll = _GiveFnptrsToDll@8
+    GetEntityAPI2
+    GetEntityAPI2_POST
+    GetEngineFunctions
+    GetEngineFunctions_POST
+    Meta_Attach
+    Meta_Detach
+    Meta_Query

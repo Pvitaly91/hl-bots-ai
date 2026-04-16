@@ -91,10 +91,17 @@ if ($SkipMetamodDownload) {
 $aiProcess = $null
 $serverProcess = $null
 $botConfigPath = $null
+$deployment = Test-JKBottiLabDeployment -HldsRoot $HldsRoot -Configuration $Configuration -Platform $Platform
 $aiStdout = Join-Path $logsRoot "ai_director.stdout.log"
 $aiStderr = Join-Path $logsRoot "ai_director.stderr.log"
 $hldsStdout = Join-Path $logsRoot "hlds.stdout.log"
 $hldsStderr = Join-Path $logsRoot "hlds.stderr.log"
+
+Write-Host "Verified plugin deployment:"
+Write-Host "  plugins.ini: $($deployment.PluginsIniPath)"
+Write-Host "  plugin path: $($deployment.PluginRelativePath)"
+Write-Host "  deployed DLL: $($deployment.DeployedDllPath)"
+Write-Host "  bootstrap log: $($deployment.BootstrapLogPath)"
 
 try {
     $aiProcess = & (Join-Path $PSScriptRoot "run_ai_director.ps1") -LabRoot $LabRoot -HldsRoot $HldsRoot -PythonPath $PythonPath -PassThru
@@ -145,5 +152,6 @@ catch {
     HldsPid       = $serverProcess.Id
     BotConfigPath = $botConfigPath
     LogsRoot      = $logsRoot
+    BootstrapLogPath = $deployment.BootstrapLogPath
     Mode          = $mode
 }

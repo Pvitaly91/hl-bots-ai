@@ -82,8 +82,15 @@ if ($SkipMetamodDownload) {
 
 $serverProcess = $null
 $botConfigPath = $null
+$deployment = Test-JKBottiLabDeployment -HldsRoot $HldsRoot -Configuration $Configuration -Platform $Platform
 $hldsStdout = Join-Path $logsRoot "hlds.stdout.log"
 $hldsStderr = Join-Path $logsRoot "hlds.stderr.log"
+
+Write-Host "Verified plugin deployment:"
+Write-Host "  plugins.ini: $($deployment.PluginsIniPath)"
+Write-Host "  plugin path: $($deployment.PluginRelativePath)"
+Write-Host "  deployed DLL: $($deployment.DeployedDllPath)"
+Write-Host "  bootstrap log: $($deployment.BootstrapLogPath)"
 
 try {
     $botConfigPath = Write-StandardBotTestConfig -HldsRoot $HldsRoot -Map $Map -BotCount $BotCount -BotSkill $BotSkill
@@ -135,6 +142,7 @@ catch {
     HldsPid          = $serverProcess.Id
     BotConfigPath    = $botConfigPath
     LogsRoot         = $logsRoot
+    BootstrapLogPath = $deployment.BootstrapLogPath
     AiSidecarStarted = $false
     AiBalanceEnabled = 0
 }
