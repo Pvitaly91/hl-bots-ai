@@ -8,10 +8,16 @@ This document describes the Windows-first local HLDM lab added on top of jk_bott
 
 ## One-Command Test Launch
 
-Use the Windows batch launcher from `cmd.exe` for the normal local bot test path:
+The current AI launcher remains the normal sidecar-backed test path:
 
 ```bat
 scripts\run_test_stand_with_bots.bat
+```
+
+The new no-AI baseline launcher is for standard jk_botti testing on `crossfire` without the Python sidecar:
+
+```bat
+scripts\run_standard_bots_crossfire.bat
 ```
 
 Arguments:
@@ -30,6 +36,15 @@ scripts\run_test_stand_with_bots.bat stalkyard 6
 scripts\run_test_stand_with_bots.bat stalkyard 6 2
 ```
 
+The no-AI launcher accepts the same argument positions but defaults to `crossfire`:
+
+```bat
+scripts\run_standard_bots_crossfire.bat
+scripts\run_standard_bots_crossfire.bat crossfire
+scripts\run_standard_bots_crossfire.bat crossfire 6
+scripts\run_standard_bots_crossfire.bat crossfire 6 2
+```
+
 The batch file wraps `scripts\run_test_stand_with_bots.ps1`, which runs these steps in order:
 
 1. `scripts\build_vs2022.ps1`
@@ -39,13 +54,22 @@ The batch file wraps `scripts\run_test_stand_with_bots.ps1`, which runs these st
 
 The launcher prints the resolved settings before launch, regenerates the map-specific bot test config safely on each run, writes process output under `lab\logs`, and returns a nonzero exit code if the AI director or HLDS dies immediately during startup.
 
+The no-AI batch file wraps `scripts\run_standard_bots_crossfire.ps1`, which runs these steps in order:
+
+1. `scripts\build_vs2022.ps1`
+2. `scripts\setup_test_stand.ps1`
+3. writes `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg` with the deterministic standard jk_botti baseline
+4. `scripts\run_server.ps1`
+
+This baseline launcher automates the existing manual crossfire flow, uses `.\lab` by default, writes logs under `lab\logs`, sets `jk_ai_balance_enabled 0`, and does not start `scripts\run_ai_director.ps1`.
+
 ## Default Lab Layout
 
 By default the scripts use `.\lab` under the repository root:
 
 - `lab\tools\steamcmd\`: SteamCMD install if one is not already provided.
 - `lab\hlds\`: HLDS dedicated server root installed through SteamCMD app `90` with `mod valve`.
-- `lab\logs\`: sidecar and HLDS stdout/stderr capture.
+- `lab\logs\`: HLDS stdout/stderr capture for the no-AI launcher and HLDS plus sidecar logs for the AI launcher.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\`: telemetry and patch bridge folder used by the plugin and sidecar.
 - `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg`: generated map-specific bot test config used by the launcher.
 
@@ -63,6 +87,8 @@ By default the scripts use `.\lab` under the repository root:
 8. Copies repo `addons/jk_botti` content and the staged DLL into the server install.
 
 `scripts\run_test_stand_with_bots.ps1` then writes `jk_botti_<map>.cfg` from the checked-in `addons\jk_botti\test_bots.cfg` template so the requested bot count and skill are explicit for that launch.
+
+`scripts\run_standard_bots_crossfire.ps1` writes the same map-specific filename but uses the standard no-AI baseline values for jk_botti, changing only `botskill`, `min_bots`, `max_bots`, and the matching `addbot` lines when different arguments are requested.
 
 ## Common Commands
 
@@ -105,6 +131,21 @@ Run the whole lab:
 powershell -NoProfile -File .\scripts\run_lab.ps1 -Map stalkyard
 ```
 
+Run the one-command no-AI baseline launcher from `cmd.exe`:
+
+```bat
+scripts\run_standard_bots_crossfire.bat
+scripts\run_standard_bots_crossfire.bat crossfire
+scripts\run_standard_bots_crossfire.bat crossfire 6
+scripts\run_standard_bots_crossfire.bat crossfire 6 2
+```
+
+Run the one-command no-AI baseline launcher from PowerShell:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_standard_bots_crossfire.ps1 -Map crossfire -BotCount 4 -BotSkill 3
+```
+
 Run the one-command bot launcher from PowerShell:
 
 ```powershell
@@ -128,6 +169,19 @@ Each launcher run materializes a map-specific `lab\hlds\valve\addons\jk_botti\jk
 - emits the same number of `addbot "" "" <skill>` lines for deterministic startup,
 - keeps the AI balance bridge enabled,
 - disables chat/logo randomness to keep the local test stand more repeatable.
+
+The no-AI baseline launcher generates the same `jk_botti_<map>.cfg` filename directly from the manual crossfire baseline. It preserves:
+
+- `pause 3`
+- `autowaypoint 1`
+- `bot_add_level_tag 1`
+- `bot_conntimes 0`
+- `team_balancetype 1`
+- all chat, taunt, whine, endgame, logo, and color randomness disabled
+- `bot_shoot_breakables 2`
+- `jk_ai_balance_enabled 0`
+
+Only `botskill`, `min_bots`, `max_bots`, and the matching `addbot` lines change when the requested bot count or skill differs from the default baseline.
 
 ## Sidecar Configuration
 

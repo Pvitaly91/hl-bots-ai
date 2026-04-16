@@ -78,10 +78,8 @@ function Get-BotTestConfigPath {
     return Join-Path (Join-Path $ModRoot "addons\jk_botti") $configName
 }
 
-function Write-BotTestConfig {
+function Assert-BotLaunchSettings {
     param(
-        [string]$HldsRoot,
-        [string]$Map,
         [int]$BotCount,
         [int]$BotSkill
     )
@@ -93,6 +91,33 @@ function Write-BotTestConfig {
     if ($BotSkill -lt 1 -or $BotSkill -gt 5) {
         throw "BotSkill must be between 1 and 5. Actual value: $BotSkill"
     }
+}
+
+function New-BotAddCommands {
+    param(
+        [int]$BotCount,
+        [int]$BotSkill
+    )
+
+    Assert-BotLaunchSettings -BotCount $BotCount -BotSkill $BotSkill
+
+    $commands = @()
+    for ($index = 0; $index -lt $BotCount; $index++) {
+        $commands += "addbot """" """" $BotSkill"
+    }
+
+    return $commands
+}
+
+function Write-BotTestConfig {
+    param(
+        [string]$HldsRoot,
+        [string]$Map,
+        [int]$BotCount,
+        [int]$BotSkill
+    )
+
+    Assert-BotLaunchSettings -BotCount $BotCount -BotSkill $BotSkill
 
     $templatePath = Get-BotTestConfigTemplatePath
     if (-not (Test-Path -LiteralPath $templatePath)) {
@@ -111,9 +136,7 @@ function Write-BotTestConfig {
         "max_bots $BotCount"
     )
 
-    for ($index = 0; $index -lt $BotCount; $index++) {
-        $botSetup += "addbot """" """" $BotSkill"
-    }
+    $botSetup += New-BotAddCommands -BotCount $BotCount -BotSkill $BotSkill
 
     $rendered = $template.Replace("__MAP_NAME__", $Map)
     $rendered = $rendered.Replace("__BOT_COUNT__", [string]$BotCount)
@@ -122,6 +145,70 @@ function Write-BotTestConfig {
 
     Set-Content -LiteralPath $configPath -Value $rendered -Encoding ASCII
     return $configPath
+}
+
+function Write-StandardBotTestConfig {
+    param(
+        [string]$HldsRoot,
+        [string]$Map,
+        [int]$BotCount,
+        [int]$BotSkill
+    )
+
+    Assert-BotLaunchSettings -BotCount $BotCount -BotSkill $BotSkill
+
+    $modRoot = Ensure-Directory -Path (Get-ServerModRoot -HldsRoot $HldsRoot)
+    $botAddonsRoot = Ensure-Directory -Path (Join-Path $modRoot "addons\jk_botti")
+    $configPath = Join-Path $botAddonsRoot (Split-Path -Leaf (Get-BotTestConfigPath -ModRoot $modRoot -Map $Map))
+
+    $lines = @(
+        "pause 3"
+        "autowaypoint 1"
+        "bot_add_level_tag 1"
+        "bot_conntimes 0"
+        "team_balancetype 1"
+        "bot_chat_percent 0"
+        "bot_taunt_percent 0"
+        "bot_whine_percent 0"
+        "bot_endgame_percent 0"
+        "bot_logo_percent 0"
+        "random_color 0"
+        "bot_shoot_breakables 2"
+        ""
+        "jk_ai_balance_enabled 0"
+        ""
+        "botskill $BotSkill"
+        "min_bots $BotCount"
+        "max_bots $BotCount"
+        ""
+    )
+
+    $lines += New-BotAddCommands -BotCount $BotCount -BotSkill $BotSkill
+
+    Set-Content -LiteralPath $configPath -Value ($lines -join [Environment]::NewLine) -Encoding ASCII
+    return $configPath
+}
+
+function Get-LabProcesses {
+    param([string]$HldsRoot)
+
+    $runtimeDir = (Get-AiRuntimeDir -HldsRoot $HldsRoot).ToLowerInvariant()
+    $hldsExe = (Join-Path $HldsRoot "hlds.exe").ToLowerInvariant()
+
+    return Get-CimInstance Win32_Process | Where-Object {
+        ($_.Name -ieq "hlds.exe" -and $_.ExecutablePath -and $_.ExecutablePath.ToLowerInvariant() -eq $hldsExe) -or
+        ($_.Name -ieq "python.exe" -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains("ai_director\main.py") -and $_.CommandLine.ToLowerInvariant().Contains($runtimeDir))
+    }
+}
+
+function Stop-LabProcesses {
+    param([string]$HldsRoot)
+
+    $existingProcesses = Get-LabProcesses -HldsRoot $HldsRoot
+    foreach ($existing in $existingProcesses) {
+        Write-Host "Stopping existing lab process $($existing.Name) PID=$($existing.ProcessId)"
+        Stop-Process -Id $existing.ProcessId -Force
+    }
 }
 
 function Get-PythonPath {

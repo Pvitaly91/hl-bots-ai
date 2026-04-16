@@ -64,10 +64,16 @@ Game files, Metamod archives, SteamCMD payloads, generated waypoints, and compil
 
 ## Quick Start
 
-One-command local bot test launch from `cmd.exe`:
+The current AI launcher remains unchanged:
 
 ```bat
 scripts\run_test_stand_with_bots.bat
+```
+
+The new no-AI baseline launcher for standard jk_botti crossfire testing is:
+
+```bat
+scripts\run_standard_bots_crossfire.bat
 ```
 
 Examples:
@@ -79,7 +85,16 @@ scripts\run_test_stand_with_bots.bat stalkyard 6
 scripts\run_test_stand_with_bots.bat stalkyard 6 2
 ```
 
-The launcher builds the Win32 DLL, prepares `.\lab`, starts the AI director, generates `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg` from `addons/jk_botti\test_bots.cfg`, and then starts HLDS with the requested bot count and skill. If `OPENAI_API_KEY` is absent, the launcher stays in deterministic offline fallback mode.
+```bat
+scripts\run_standard_bots_crossfire.bat
+scripts\run_standard_bots_crossfire.bat crossfire
+scripts\run_standard_bots_crossfire.bat crossfire 6
+scripts\run_standard_bots_crossfire.bat crossfire 6 2
+```
+
+The AI launcher builds the Win32 DLL, prepares `.\lab`, starts the AI director, generates `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg` from `addons\jk_botti\test_bots.cfg`, and then starts HLDS with the requested bot count and skill. If `OPENAI_API_KEY` is absent, the launcher stays in deterministic offline fallback mode.
+
+The no-AI launcher automates the existing manual baseline path for standard jk_botti testing on `crossfire`: it builds `Release|Win32`, prepares the default `.\lab` test stand, writes a deterministic `jk_botti_<map>.cfg` with `jk_ai_balance_enabled 0`, does not start `scripts\run_ai_director.ps1`, and then starts HLDS with logs under `lab\logs`.
 
 Build the Win32 plugin DLL:
 
@@ -166,6 +181,7 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 - Patch bridge: `valve/addons/jk_botti/runtime/ai_balance/patch.json`
 - Generated bot test config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
 - Bot test config template: `addons/jk_botti/test_bots.cfg`
+- Generated no-AI baseline config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
 - AI director logs: `lab/logs/ai_director.stdout.log` and `lab/logs/ai_director.stderr.log`
 - HLDS logs: `lab/logs/hlds.stdout.log` and `lab/logs/hlds.stderr.log`
 - Server install root by default: `lab/hlds`
@@ -181,6 +197,8 @@ The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a
 - `scripts/run_lab.ps1`: convenience entry point that sets up the lab, launches the sidecar, and launches HLDS.
 - `scripts/run_test_stand_with_bots.ps1`: one-command test launcher that builds, prepares the lab, generates the map-specific bot config, starts the sidecar, and starts HLDS.
 - `scripts/run_test_stand_with_bots.bat`: `cmd.exe` wrapper for the one-command local bot test flow.
+- `scripts/run_standard_bots_crossfire.ps1`: baseline launcher that builds, prepares the lab, writes a deterministic no-AI map config with `jk_ai_balance_enabled 0`, and starts HLDS without the Python sidecar.
+- `scripts/run_standard_bots_crossfire.bat`: `cmd.exe` wrapper for the baseline no-AI crossfire flow.
 - `scripts/smoke_test.ps1`: validates staged DLL presence, Metamod plugin registration, telemetry emission, patch output, and patch application log evidence.
 
 All scripts accept overridable lab paths, and the setup script supports custom SteamCMD and Metamod download sources.
