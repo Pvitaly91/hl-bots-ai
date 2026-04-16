@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-01
+HLDM-JKBOTTI-AI-STAND-20260415-02
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -20,7 +20,7 @@ The new no-AI baseline launcher is for standard jk_botti testing on `crossfire` 
 scripts\run_standard_bots_crossfire.bat
 ```
 
-Arguments:
+Arguments for `scripts\run_test_stand_with_bots.bat`:
 
 - `%1`: map name, default `stalkyard`
 - `%2`: bot count, default `4`
@@ -36,7 +36,14 @@ scripts\run_test_stand_with_bots.bat stalkyard 6
 scripts\run_test_stand_with_bots.bat stalkyard 6 2
 ```
 
-The no-AI launcher accepts the same argument positions but defaults to `crossfire`:
+Arguments for `scripts\run_standard_bots_crossfire.bat`:
+
+- `%1`: map name, default `crossfire`
+- `%2`: bot count, default `4`
+- `%3`: bot skill, default `3`
+- `%4`: lab root, default `.\lab`
+
+Examples:
 
 ```bat
 scripts\run_standard_bots_crossfire.bat
