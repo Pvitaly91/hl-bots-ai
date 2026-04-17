@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-13
+HLDM-JKBOTTI-AI-STAND-20260415-14
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -61,6 +61,7 @@ scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -
 scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 6 -BotSkill 2 -LabRoot D:\Labs\hl-bots-ai -Port 27018 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_test_stand_with_bots.bat -Map stalkyard -BotCount 6 -BotSkill 2 -LabRoot D:\Labs\hl-bots-ai -Port 27019 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_control_treatment_pair.bat -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The batch file wraps `scripts\run_test_stand_with_bots.ps1`, which runs these steps in order:
@@ -107,6 +108,7 @@ By default the scripts use `.\lab` under the repository root:
 - `lab\hlds\`: HLDS dedicated server root installed through SteamCMD app `90` with `mod valve`.
 - `lab\logs\`: HLDS stdout/stderr capture for the no-AI launcher and HLDS plus sidecar logs for the AI launcher.
 - `lab\logs\eval\`: timestamped control/treatment lane folders with copied artifacts and summaries.
+- `lab\logs\eval\pairs\`: bounded pair packs containing nested control/treatment lane folders plus combined comparison artifacts.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\`: telemetry and patch bridge folder used by the plugin and sidecar.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\history\`: per-match append-only NDJSON history.
 - `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg`: generated map-specific bot test config used by the launcher.
@@ -230,16 +232,41 @@ powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfi
 Run an AI treatment lane intended for human participation:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile responsive -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile conservative -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 Use the dedicated mixed-session helper when the goal is to bring a human into the lane quickly:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile responsive -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile conservative -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The mixed-session helper prints the join target before launch and saves the same join instructions into the lane folder as `join_instructions.txt`.
+
+Run the dedicated paired control+treatment workflow when the goal is a real human comparison pack:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 `
+  -Map crossfire `
+  -BotCount 4 `
+  -BotSkill 3 `
+  -ControlPort 27016 `
+  -TreatmentPort 27017 `
+  -DurationSeconds 80 `
+  -WaitForHumanJoin `
+  -HumanJoinGraceSeconds 120 `
+  -TreatmentProfile conservative `
+  -SkipSteamCmdUpdate `
+  -SkipMetamodDownload
+```
+
+This pair runner is thin on purpose:
+
+- it reuses `scripts\run_balance_eval.ps1` for both lanes instead of duplicating launch logic
+- it runs the no-AI control lane first and the AI treatment lane second
+- it preserves both lane session packs inside one pair root under `lab\logs\eval\pairs\`
+- it prints and saves control and treatment join targets up front
+- it keeps the control lane sidecar-free while still honoring human-join-aware wait thresholds
 
 Run the replay/profile sweep before scheduling a longer live mixed-session:
 
@@ -258,6 +285,29 @@ powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
   -OutputJson .\lab\logs\eval\comparison.json `
   -OutputMarkdown .\lab\logs\eval\comparison.md
 ```
+
+## Paired Live Procedure
+
+For the next real human-vs-bot session, use this sequence:
+
+1. Start `scripts\run_control_treatment_pair.ps1` with the default `conservative` treatment profile.
+2. Join the control lane on the printed `ControlPort` target and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
+3. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target and repeat.
+4. After the run, open `pair_summary.md` first, then `comparison.md`.
+
+The saved join helpers make the roles explicit:
+
+- `control_join_instructions.txt`: no-AI baseline, `jk_ai_balance_enabled 0`, no sidecar
+- `treatment_join_instructions.txt`: AI treatment lane, chosen tuning profile, expected join target
+- `pair_join_instructions.txt`: the whole paired sequence, useful-session expectations, and pair-pack root
+
+Why `conservative` is the default next live treatment profile:
+
+- it demands more human signal before claiming usefulness
+- it reacts more slowly near the boundary, which reduces the chance of overreading one noisy session
+- it is the safest way to learn whether live treatment is too quiet before escalating to `responsive`
+
+Try `responsive` only after a conservative pair says the treatment lane stayed too quiet relative to control or never produced a grounded human-present patch window.
 
 Run the replay/scenario tests:
 
@@ -387,6 +437,20 @@ The control lane is the baseline:
 
 The treatment lane reuses `scripts\run_test_stand_with_bots.ps1` and adds sidecar-driven patch history.
 
+Each pair written by `scripts\run_control_treatment_pair.ps1` gets its own folder under `lab\logs\eval\pairs\`.
+
+The pair root preserves:
+
+- nested control lane artifacts
+- nested treatment lane artifacts
+- `pair_summary.json`
+- `pair_summary.md`
+- `comparison.json`
+- `comparison.md`
+- `control_join_instructions.txt`
+- `treatment_join_instructions.txt`
+- `pair_join_instructions.txt`
+
 The lane manifest and summaries now distinguish:
 
 - plumbing-healthy: launcher, attach, telemetry, and patch plumbing worked
@@ -428,6 +492,12 @@ Per-lane summaries now include:
 - explanation string
 - whether the mixed-session wait timed out before enough human signal existed
 
+Read the pair artifacts in this order:
+
+- `pair_summary.md`: operator-facing answer to whether the run was only plumbing-valid, partially usable, tuning-usable, or strong-signal
+- `comparison.md`: grounded pair metrics such as both lane verdicts, both evidence-quality labels, whether treatment patched while humans were present, whether a meaningful post-patch observation window existed, frag-gap samples while humans were present, and the conservative explanation string
+- lane `session_pack.md`: the per-lane context if you need to drill into one side of the pair
+
 ## Summary Verdicts
 
 - `stable`: bounded actions, limited reversals, and recent telemetry near equilibrium.
@@ -450,6 +520,20 @@ Evidence quality is also reported separately:
 - `weak-signal`: humans were present, but post-patch evidence stayed weak
 - `usable-signal`: at least one grounded post-patch observation window exists
 - `strong-signal`: multiple grounded post-patch observation windows exist
+
+Pair/operator verdicts are reported separately:
+
+- `plumbing-valid only`: both launch paths worked, but neither lane captured enough human signal to justify tuning claims
+- `partially usable`: one lane was informative or treatment hinted at something, but the pair is not yet fair enough for a strong comparison
+- `tuning-usable`: both lanes were human-usable and treatment produced at least one grounded post-patch observation window
+- `strong-signal`: both lanes were human-usable and treatment produced multiple grounded post-patch windows
+
+Pair comparison verdicts are also preserved in `comparison.json` / `comparison.md`:
+
+- `comparison-insufficient-data`
+- `comparison-weak-signal`
+- `comparison-usable`
+- `comparison-strong-signal`
 
 ## Attach Troubleshooting
 

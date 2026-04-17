@@ -180,20 +180,60 @@ def render_markdown(
                     f"{comparison_summary.get('treatment_tuning_profile') or 'n/a'}"
                 ),
                 (
-                    f"- Control verdict: "
+                    f"- Control lane verdict: "
+                    f"{comparison_summary.get('control_lane_quality_verdict', 'insufficient-data')}"
+                ),
+                (
+                    f"- Control behavior verdict: "
                     f"{comparison_summary.get('control_behavior_verdict', 'insufficient-data')}"
                 ),
                 (
-                    f"- Treatment verdict: "
-                    f"{comparison_summary.get('treatment_behavior_verdict', 'insufficient-data')}"
+                    f"- Control evidence quality: "
+                    f"{comparison_summary.get('control_evidence_quality', 'insufficient-data')}"
                 ),
                 (
-                    f"- Treatment lane quality: "
+                    f"- Treatment lane verdict: "
                     f"{comparison_summary.get('treatment_lane_quality_verdict', 'insufficient-data')}"
+                ),
+                (
+                    f"- Treatment behavior verdict: "
+                    f"{comparison_summary.get('treatment_behavior_verdict', 'insufficient-data')}"
                 ),
                 (
                     f"- Treatment evidence quality: "
                     f"{comparison_summary.get('treatment_evidence_quality', 'insufficient-data')}"
+                ),
+                (
+                    f"- Treatment patched while humans were present: "
+                    f"{comparison_summary.get('treatment_patched_while_humans_present', False)}"
+                ),
+                (
+                    f"- Meaningful post-patch observation window: "
+                    f"{comparison_summary.get('meaningful_post_patch_observation_window_exists', False)}"
+                ),
+                (
+                    f"- Relative behavior discussion ready: "
+                    f"{comparison_summary.get('relative_behavior_discussion_ready', False)}"
+                ),
+                (
+                    f"- Treatment pre/post trend: "
+                    f"{comparison_summary.get('treatment_pre_post_trend_classification', 'unknown')}"
+                ),
+                (
+                    f"- Treatment relative to control: "
+                    f"{comparison_summary.get('treatment_relative_to_control', 'inconclusive')}"
+                ),
+                (
+                    f"- Apparent benefit too weak to trust: "
+                    f"{comparison_summary.get('apparent_benefit_too_weak_to_trust', False)}"
+                ),
+                (
+                    f"- Control frag-gap samples while humans present: "
+                    f"{comparison_summary.get('control_frag_gap_samples_while_humans_present', [])}"
+                ),
+                (
+                    f"- Treatment frag-gap samples while humans present: "
+                    f"{comparison_summary.get('treatment_frag_gap_samples_while_humans_present', [])}"
                 ),
                 (
                     f"- Comparison usable for tuning: "
@@ -204,8 +244,8 @@ def render_markdown(
                     f"{comparison_summary.get('comparison_verdict', 'comparison-insufficient-data')}"
                 ),
                 (
-                    f"- Comparison reason: "
-                    f"{comparison_summary.get('comparison_reason', '')}"
+                    f"- Explanation: "
+                    f"{comparison_summary.get('comparison_explanation', comparison_summary.get('comparison_reason', ''))}"
                 ),
             ]
         )

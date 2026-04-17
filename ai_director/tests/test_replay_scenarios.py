@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from ai_director.evaluation import simulate_replay
+from ai_director.evaluation import analyze_lane, compare_lane_summaries, simulate_replay
 
 
 def load_scenarios() -> dict[str, list[dict[str, object]]]:
@@ -12,6 +12,78 @@ def load_scenarios() -> dict[str, list[dict[str, object]]]:
         Path(__file__).resolve().parent.parent / "testdata" / "replay_scenarios.json"
     )
     return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+
+def simulate_control_replay(
+    scenario_name: str,
+    frames: list[dict[str, object]],
+    *,
+    lane_label: str = "control-baseline",
+    bot_count: int = 4,
+    bot_skill: int = 3,
+) -> dict[str, object]:
+    telemetry_records: list[dict[str, object]] = []
+    for index, frame in enumerate(frames, start=1):
+        frag_gap = int(frame.get("frag_gap_top_human_minus_top_bot", 0))
+        base_top_score = 15
+        telemetry_records.append(
+            {
+                "schema_version": 1,
+                "match_id": scenario_name,
+                "telemetry_sequence": index,
+                "timestamp_utc": str(
+                    frame.get("timestamp_utc", f"2026-04-17T00:00:{index:02d}Z")
+                ),
+                "server_time_seconds": float(
+                    frame.get("server_time_seconds", index * 20.0)
+                ),
+                "map_name": str(frame.get("map_name", "crossfire")),
+                "human_player_count": max(0, int(frame.get("human_player_count", 1))),
+                "bot_count": max(0, int(frame.get("bot_count", bot_count))),
+                "top_human_frags": base_top_score + max(frag_gap, 0),
+                "top_human_deaths": max(0, int(frame.get("top_human_deaths", 8))),
+                "top_bot_frags": base_top_score + max(-frag_gap, 0),
+                "top_bot_deaths": max(0, int(frame.get("top_bot_deaths", 8))),
+                "recent_human_kills_per_minute": max(
+                    0, int(frame.get("recent_human_kills_per_minute", 6))
+                ),
+                "recent_bot_kills_per_minute": max(
+                    0, int(frame.get("recent_bot_kills_per_minute", 6))
+                ),
+                "frag_gap_top_human_minus_top_bot": frag_gap,
+                "current_default_bot_skill_level": bot_skill,
+                "active_balance": {
+                    "pause_frequency_scale": 1.0,
+                    "battle_strafe_scale": 1.0,
+                    "interval_seconds": float(frame.get("interval_seconds", 20.0)),
+                    "cooldown_seconds": 30.0,
+                    "enabled": 0,
+                },
+            }
+        )
+
+    manifest = {
+        "prompt_id": "test-pair",
+        "mode": "NoAI",
+        "lane_label": lane_label,
+        "map": "crossfire",
+        "bot_count": bot_count,
+        "bot_skill": bot_skill,
+        "duration_seconds": int(
+            float(frames[-1].get("server_time_seconds", len(frames) * 20.0))
+        ),
+        "wait_for_human_join": True,
+        "human_join_grace_seconds": 120,
+        "bootstrap_log_present": True,
+        "attach_observed": True,
+        "ai_sidecar_observed": False,
+        "smoke_status": "no-ai-healthy",
+        "smoke_summary": "Simulated no-AI control lane healthy.",
+        "min_human_snapshots": 2,
+        "min_human_presence_seconds": 40.0,
+        "min_patch_events_for_usable_lane": 1,
+    }
+    return analyze_lane(manifest, telemetry_records, [], [])
 
 
 class ReplayScenarioTests(unittest.TestCase):
@@ -171,6 +243,93 @@ class ReplayScenarioTests(unittest.TestCase):
         self.assertTrue(summary["cooldown_constraints_respected"])
         self.assertIn(summary["behavior_verdict"], {"stable", "oscillatory"})
         self.assertGreaterEqual(summary["patch_events_count"], 1)
+
+    def test_pair_sparse_human_signal_stays_insufficient(self) -> None:
+        control_summary = simulate_control_replay(
+            "pair-sparse-control",
+            self.scenarios["brief_human_join_not_sufficient"],
+        )
+        treatment_summary = simulate_replay(
+            "pair-sparse-treatment",
+            self.scenarios["brief_human_join_not_sufficient"],
+        )["summary"]
+
+        comparison = compare_lane_summaries(control_summary, treatment_summary)
+        self.assertEqual(comparison["comparison_verdict"], "comparison-insufficient-data")
+        self.assertFalse(comparison["comparison_is_tuning_usable"])
+        self.assertIn("Neither lane captured enough human signal", comparison["comparison_reason"])
+
+    def test_pair_with_only_one_usable_lane_stays_weak_signal(self) -> None:
+        control_summary = simulate_control_replay(
+            "pair-control-sparse",
+            self.scenarios["brief_human_join_not_sufficient"],
+        )
+        treatment_summary = simulate_replay(
+            "pair-treatment-usable",
+            self.scenarios["human_joins_after_ai_waiting_patch"],
+            tuning_profile="conservative",
+        )["summary"]
+
+        comparison = compare_lane_summaries(control_summary, treatment_summary)
+        self.assertEqual(comparison["comparison_verdict"], "comparison-weak-signal")
+        self.assertFalse(comparison["comparison_is_tuning_usable"])
+        self.assertIn("Only the treatment lane captured usable human signal", comparison["comparison_reason"])
+
+    def test_pair_waiting_patch_before_humans_is_not_live_evidence(self) -> None:
+        control_summary = simulate_control_replay(
+            "pair-control-before-humans-only",
+            self.scenarios["patches_before_humans_only_not_live_evidence"],
+        )
+        treatment_summary = simulate_replay(
+            "pair-treatment-before-humans-only",
+            self.scenarios["patches_before_humans_only_not_live_evidence"],
+            tuning_profile="default",
+        )["summary"]
+
+        comparison = compare_lane_summaries(control_summary, treatment_summary)
+        self.assertEqual(comparison["comparison_verdict"], "comparison-weak-signal")
+        self.assertFalse(comparison["treatment_patched_while_humans_present"])
+        self.assertFalse(comparison["meaningful_post_patch_observation_window_exists"])
+        self.assertEqual(
+            comparison["treatment_pre_post_trend_classification"],
+            "patch-before-humans-only",
+        )
+
+    def test_pair_bounded_treatment_window_can_be_usable(self) -> None:
+        control_summary = simulate_control_replay(
+            "pair-control-usable",
+            self.scenarios["spike_then_stabilization"],
+        )
+        treatment_summary = simulate_replay(
+            "pair-treatment-usable",
+            self.scenarios["spike_then_stabilization"],
+            tuning_profile="default",
+        )["summary"]
+
+        comparison = compare_lane_summaries(control_summary, treatment_summary)
+        self.assertIn(
+            comparison["comparison_verdict"],
+            {"comparison-usable", "comparison-strong-signal"},
+        )
+        self.assertTrue(comparison["comparison_is_tuning_usable"])
+        self.assertTrue(comparison["relative_behavior_discussion_ready"])
+        self.assertTrue(comparison["treatment_patched_while_humans_present"])
+        self.assertTrue(comparison["meaningful_post_patch_observation_window_exists"])
+
+    def test_responsive_pair_can_surface_overreaction_risk(self) -> None:
+        control_summary = simulate_control_replay(
+            "pair-control-noisy",
+            self.scenarios["noisy_threshold_alternation"],
+        )
+        treatment_summary = simulate_replay(
+            "pair-treatment-responsive",
+            self.scenarios["noisy_threshold_alternation"],
+            tuning_profile="responsive",
+        )["summary"]
+
+        comparison = compare_lane_summaries(control_summary, treatment_summary)
+        self.assertEqual(treatment_summary["behavior_verdict"], "oscillatory")
+        self.assertEqual(comparison["treatment_relative_to_control"], "more-responsive")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ param(
     [string]$Platform = "Win32",
     [string]$SteamCmdPath = "",
     [string]$PythonPath = "",
-    [string]$TuningProfile = "default",
+    [string]$TuningProfile = "conservative",
     [switch]$SkipSteamCmdUpdate,
     [switch]$SkipMetamodDownload
 )

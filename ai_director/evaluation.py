@@ -325,6 +325,14 @@ def _lane_label(manifest: dict[str, Any] | None) -> str:
     return value or "default"
 
 
+def _average_frag_gap(samples: list[int], *, absolute: bool = False) -> float | None:
+    if not samples:
+        return None
+
+    values = [abs(int(sample)) if absolute else int(sample) for sample in samples]
+    return round(sum(values) / len(values), 2)
+
+
 def _is_plumbing_healthy(manifest: dict[str, Any] | None) -> bool:
     mode = str((manifest or {}).get("mode", "Unknown")).upper()
     smoke_status = str((manifest or {}).get("smoke_status", ""))
@@ -720,10 +728,22 @@ def _evidence_quality_from_signal(
     manifest: dict[str, Any] | None,
     human_signal: dict[str, Any],
 ) -> tuple[str, str]:
+    mode = str((manifest or {}).get("mode", "Unknown")).upper()
+
     if not bool(human_signal.get("tuning_signal_usable", False)):
         return (
             "insufficient-data",
             "Human signal never cleared the tuning-usability gate.",
+        )
+    if mode == "NOAI":
+        if human_signal["human_signal_verdict"] == "human-rich":
+            return (
+                "strong-signal",
+                "The control lane captured rich human presence and a strong baseline sample.",
+            )
+        return (
+            "usable-signal",
+            "The control lane captured usable human presence and a baseline worth comparing against treatment.",
         )
     if human_signal["rebalance_opportunities_count"] <= 0:
         return (
@@ -1096,6 +1116,14 @@ def analyze_lane(
         "frag_gap_samples_while_humans_present": human_signal[
             "frag_gap_samples_while_humans_present"
         ],
+        "mean_frag_gap_while_humans_present": _average_frag_gap(
+            human_signal["frag_gap_samples_while_humans_present"],
+            absolute=False,
+        ),
+        "mean_abs_frag_gap_while_humans_present": _average_frag_gap(
+            human_signal["frag_gap_samples_while_humans_present"],
+            absolute=True,
+        ),
         "meaningful_human_imbalance_snapshots_count": human_signal[
             "meaningful_human_imbalance_snapshots_count"
         ],
@@ -1120,6 +1148,12 @@ def analyze_lane(
         "response_after_patch_observation_window_count": human_signal[
             "response_after_patch_observation_window_count"
         ],
+        "treatment_patched_while_humans_present": (
+            human_signal["patch_events_while_humans_present_count"] > 0
+        ),
+        "meaningful_post_patch_observation_window_exists": (
+            human_signal["response_after_patch_observation_window_count"] > 0
+        ),
         "post_patch_frag_gap_trend": human_signal["post_patch_frag_gap_trend"],
         "patching_happened_only_while_humans_absent": human_signal[
             "patching_happened_only_while_humans_absent"
@@ -1159,6 +1193,63 @@ def analyze_lane(
     }
 
 
+def _treatment_pre_post_trend_classification(treatment: dict[str, Any]) -> str:
+    if not bool(treatment.get("tuning_signal_usable", False)):
+        return "no-usable-human-signal"
+    if bool(treatment.get("patching_happened_only_while_humans_absent", False)):
+        return "patch-before-humans-only"
+    if _as_int(treatment, "patch_events_while_humans_present_count", 0) <= 0:
+        return "no-live-treatment-patch"
+    if _as_int(treatment, "response_after_patch_observation_window_count", 0) <= 0:
+        return "no-post-patch-window"
+
+    trend = str(treatment.get("post_patch_frag_gap_trend", "inconclusive"))
+    return {
+        "improved": "pre-post-improved",
+        "worsened": "pre-post-worsened",
+        "inconclusive": "pre-post-inconclusive",
+    }.get(trend, f"pre-post-{trend}")
+
+
+def _treatment_relative_responsiveness(
+    control: dict[str, Any],
+    treatment: dict[str, Any],
+    control_mean_abs_gap: float | None,
+    treatment_mean_abs_gap: float | None,
+) -> str:
+    human_reactive_patch_events = _as_int(
+        treatment, "human_reactive_patch_events_count", 0
+    )
+    post_patch_windows = _as_int(
+        treatment, "response_after_patch_observation_window_count", 0
+    )
+    treatment_behavior = str(treatment.get("behavior_verdict", "insufficient-data"))
+
+    if bool(treatment.get("patching_happened_only_while_humans_absent", False)):
+        return "quieter"
+    if human_reactive_patch_events <= 0:
+        if _as_int(control, "meaningful_human_imbalance_snapshots_count", 0) > 0:
+            return "quieter"
+        return "inconclusive"
+    if treatment_behavior == "oscillatory":
+        return "more-responsive"
+
+    if (
+        control_mean_abs_gap is not None
+        and treatment_mean_abs_gap is not None
+        and abs(float(treatment_mean_abs_gap) - float(control_mean_abs_gap)) <= 1.0
+    ):
+        return "similar"
+    if (
+        post_patch_windows > 0
+        and str(treatment.get("post_patch_frag_gap_trend", "inconclusive")) == "improved"
+    ):
+        return "more-responsive"
+    if post_patch_windows > 0 and human_reactive_patch_events >= 2:
+        return "more-responsive"
+    return "inconclusive"
+
+
 def compare_lane_summaries(
     first_summary: dict[str, Any], second_summary: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1174,7 +1265,31 @@ def compare_lane_summaries(
     treatment_sidecar_observed = bool(treatment.get("ai_sidecar_observed", False))
     control_tuning_signal_usable = bool(control.get("tuning_signal_usable", False))
     treatment_tuning_signal_usable = bool(treatment.get("tuning_signal_usable", False))
+    control_evidence_quality = str(control.get("evidence_quality", "insufficient-data"))
     treatment_evidence_quality = str(treatment.get("evidence_quality", "insufficient-data"))
+    treatment_patched_while_humans_present = bool(
+        treatment.get("treatment_patched_while_humans_present", False)
+        or _as_int(treatment, "patch_events_while_humans_present_count", 0) > 0
+    )
+    meaningful_post_patch_observation_window_exists = bool(
+        treatment.get("meaningful_post_patch_observation_window_exists", False)
+        or _as_int(treatment, "response_after_patch_observation_window_count", 0) > 0
+    )
+    control_frag_gap_samples = list(control.get("frag_gap_samples_while_humans_present", []))
+    treatment_frag_gap_samples = list(
+        treatment.get("frag_gap_samples_while_humans_present", [])
+    )
+    control_mean_abs_gap = _average_frag_gap(control_frag_gap_samples, absolute=True)
+    treatment_mean_abs_gap = _average_frag_gap(treatment_frag_gap_samples, absolute=True)
+    treatment_pre_post_trend_classification = _treatment_pre_post_trend_classification(
+        treatment
+    )
+    treatment_relative_responsiveness = _treatment_relative_responsiveness(
+        control,
+        treatment,
+        control_mean_abs_gap,
+        treatment_mean_abs_gap,
+    )
 
     comparison_verdict = "comparison-insufficient-data"
     comparison_usable = False
@@ -1192,17 +1307,42 @@ def compare_lane_summaries(
         comparison_reason = "The control lane was not plumbing-healthy."
     elif str(treatment.get("smoke_status", "")) not in {"ai-healthy", "simulated"}:
         comparison_reason = "The treatment lane was not plumbing-healthy."
-    elif not control_tuning_signal_usable:
+    elif not control_tuning_signal_usable and not treatment_tuning_signal_usable:
         comparison_reason = (
-            "The control lane did not capture enough human signal for tuning. "
-            f"Verdict: {control.get('lane_quality_verdict', 'unknown')}."
+            "Neither lane captured enough human signal for a live comparison. "
+            f"Control: {control.get('lane_quality_verdict', 'unknown')}. "
+            f"Treatment: {treatment.get('lane_quality_verdict', 'unknown')}."
+        )
+    elif not control_tuning_signal_usable:
+        comparison_verdict = "comparison-weak-signal"
+        comparison_reason = (
+            "Only the treatment lane captured usable human signal. "
+            f"The control lane stayed {control.get('lane_quality_verdict', 'unknown')}."
         )
     elif not treatment_tuning_signal_usable:
+        comparison_verdict = "comparison-weak-signal"
         comparison_reason = (
-            "The treatment lane did not capture enough human signal for tuning. "
-            f"Verdict: {treatment.get('lane_quality_verdict', 'unknown')}."
+            "Only the control lane captured usable human signal. "
+            f"The treatment lane stayed {treatment.get('lane_quality_verdict', 'unknown')}."
+        )
+    elif bool(treatment.get("patching_happened_only_while_humans_absent", False)):
+        comparison_verdict = "comparison-weak-signal"
+        comparison_reason = (
+            "Both lanes captured humans, but treatment patches only happened before humans joined. "
+            "That is not grounded live evidence."
+        )
+    elif not treatment_patched_while_humans_present:
+        comparison_verdict = "comparison-weak-signal"
+        comparison_reason = (
+            "Both lanes were human-usable, but the treatment lane never patched while humans were present."
+        )
+    elif not meaningful_post_patch_observation_window_exists:
+        comparison_verdict = "comparison-weak-signal"
+        comparison_reason = (
+            "Treatment patched while humans were present, but no post-patch human observation window was captured."
         )
     elif treatment_evidence_quality == "weak-signal":
+        comparison_verdict = "comparison-weak-signal"
         comparison_reason = (
             "The treatment lane captured humans, but treatment-response evidence stayed weak. "
             f"Reason: {treatment.get('evidence_quality_reason', '')}"
@@ -1212,15 +1352,30 @@ def compare_lane_summaries(
     elif not bool(treatment.get("cooldown_constraints_respected", False)):
         comparison_reason = "The treatment lane violated cooldown constraints."
     else:
-        comparison_verdict = "control-vs-treatment-usable"
+        comparison_verdict = (
+            "comparison-strong-signal"
+            if treatment_evidence_quality == "strong-signal"
+            and control_evidence_quality in {"usable-signal", "strong-signal"}
+            else "comparison-usable"
+        )
         comparison_usable = True
         comparison_reason = (
             f"Control lane {control.get('lane_label', 'control')} and treatment lane "
             f"{treatment.get('lane_label', 'treatment')} both captured usable human signal; "
             f"treatment quality was {treatment.get('lane_quality_verdict', 'unknown')} with "
             f"behavior {treatment.get('behavior_verdict', 'insufficient-data')} and "
-            f"evidence quality {treatment_evidence_quality}."
+            f"evidence quality {treatment_evidence_quality}. "
+            f"Treatment looked {treatment_relative_responsiveness.replace('-', ' ')} relative to control."
         )
+
+    relative_behavior_discussion_ready = comparison_verdict in {
+        "comparison-usable",
+        "comparison-strong-signal",
+    }
+    apparent_benefit_too_weak_to_trust = (
+        treatment_relative_responsiveness == "more-responsive"
+        and not relative_behavior_discussion_ready
+    )
 
     return {
         "schema_version": 2,
@@ -1242,9 +1397,16 @@ def compare_lane_summaries(
         "treatment_lane_quality_verdict": str(
             treatment.get("lane_quality_verdict", "insufficient-data")
         ),
+        "control_evidence_quality": control_evidence_quality,
         "treatment_evidence_quality": treatment_evidence_quality,
         "control_tuning_signal_usable": control_tuning_signal_usable,
         "treatment_tuning_signal_usable": treatment_tuning_signal_usable,
+        "control_human_signal_verdict": str(
+            control.get("human_signal_verdict", "no-humans")
+        ),
+        "treatment_human_signal_verdict": str(
+            treatment.get("human_signal_verdict", "no-humans")
+        ),
         "control_telemetry_snapshots_count": _as_int(
             control, "telemetry_snapshots_count", 0
         ),
@@ -1253,14 +1415,35 @@ def compare_lane_summaries(
         ),
         "control_human_snapshots_count": _as_int(control, "human_snapshots_count", 0),
         "treatment_human_snapshots_count": _as_int(treatment, "human_snapshots_count", 0),
+        "control_seconds_with_human_presence": _as_float(
+            control, "seconds_with_human_presence", 0.0
+        ),
+        "treatment_seconds_with_human_presence": _as_float(
+            treatment, "seconds_with_human_presence", 0.0
+        ),
         "control_patch_apply_count": _as_int(control, "patch_apply_count", 0),
         "treatment_patch_apply_count": _as_int(treatment, "patch_apply_count", 0),
+        "control_frag_gap_samples_while_humans_present": control_frag_gap_samples,
+        "treatment_frag_gap_samples_while_humans_present": treatment_frag_gap_samples,
+        "control_mean_abs_frag_gap_while_humans_present": control_mean_abs_gap,
+        "treatment_mean_abs_frag_gap_while_humans_present": treatment_mean_abs_gap,
+        "treatment_patched_while_humans_present": treatment_patched_while_humans_present,
+        "meaningful_post_patch_observation_window_exists": (
+            meaningful_post_patch_observation_window_exists
+        ),
+        "treatment_pre_post_trend_classification": (
+            treatment_pre_post_trend_classification
+        ),
+        "treatment_relative_to_control": treatment_relative_responsiveness,
+        "relative_behavior_discussion_ready": relative_behavior_discussion_ready,
+        "apparent_benefit_too_weak_to_trust": apparent_benefit_too_weak_to_trust,
         "treatment_patch_response_to_human_imbalance_observed": bool(
             treatment.get("patch_response_to_human_imbalance_observed", False)
         ),
         "comparison_is_tuning_usable": comparison_usable,
         "comparison_verdict": comparison_verdict,
         "comparison_reason": comparison_reason,
+        "comparison_explanation": comparison_reason,
     }
 
 

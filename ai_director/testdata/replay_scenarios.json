@@ -346,6 +346,50 @@
       "recent_bot_kills_per_minute": 6
     }
   ],
+  "patches_before_humans_only_not_live_evidence": [
+    {
+      "server_time_seconds": 20,
+      "human_player_count": 0,
+      "frag_gap_top_human_minus_top_bot": 0,
+      "recent_human_kills_per_minute": 0,
+      "recent_bot_kills_per_minute": 0
+    },
+    {
+      "server_time_seconds": 40,
+      "human_player_count": 0,
+      "frag_gap_top_human_minus_top_bot": 0,
+      "recent_human_kills_per_minute": 0,
+      "recent_bot_kills_per_minute": 0
+    },
+    {
+      "server_time_seconds": 60,
+      "human_player_count": 1,
+      "frag_gap_top_human_minus_top_bot": 2,
+      "recent_human_kills_per_minute": 6,
+      "recent_bot_kills_per_minute": 6
+    },
+    {
+      "server_time_seconds": 80,
+      "human_player_count": 1,
+      "frag_gap_top_human_minus_top_bot": 2,
+      "recent_human_kills_per_minute": 6,
+      "recent_bot_kills_per_minute": 6
+    },
+    {
+      "server_time_seconds": 100,
+      "human_player_count": 1,
+      "frag_gap_top_human_minus_top_bot": 1,
+      "recent_human_kills_per_minute": 6,
+      "recent_bot_kills_per_minute": 6
+    },
+    {
+      "server_time_seconds": 120,
+      "human_player_count": 1,
+      "frag_gap_top_human_minus_top_bot": 0,
+      "recent_human_kills_per_minute": 6,
+      "recent_bot_kills_per_minute": 6
+    }
+  ],
   "mild_imbalance_conservative_hold": [
     {
       "server_time_seconds": 20,

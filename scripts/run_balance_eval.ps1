@@ -390,7 +390,10 @@ if ($MinPatchEventsForUsableLane -lt 0) {
     throw "MinPatchEventsForUsableLane cannot be negative."
 }
 
-$waitForHumanJoinEnabled = ($Mode -eq "AI") -and $WaitForHumanJoin.IsPresent
+$waitForHumanJoinEnabled = $false
+if ($PSBoundParameters.ContainsKey("WaitForHumanJoin")) {
+    $waitForHumanJoinEnabled = [bool]$WaitForHumanJoin
+}
 $LaneLabel = if ($LaneLabel) {
     $LaneLabel.Trim()
 }
@@ -549,7 +552,10 @@ try {
 
         $gateSatisfied = $false
         if ($null -ne $humanSignalPreview) {
-            $gateSatisfied = $humanSignalPreview.TuningSignalUsable -and $humanSignalPreview.PatchEventRequirementMet
+            $gateSatisfied = [bool]$humanSignalPreview.TuningSignalUsable
+            if ($Mode -eq "AI") {
+                $gateSatisfied = $gateSatisfied -and [bool]$humanSignalPreview.PatchEventRequirementMet
+            }
         }
 
         if ($captureComplete -and $gateSatisfied) {
@@ -618,7 +624,7 @@ $copiedArtifacts["join_instructions"] = $joinInstructionsPath
 
 $laneManifest = [ordered]@{
     schema_version = 2
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-13"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-14"
     mode = $Mode
     lane_label = $LaneLabel
     map = $Map
@@ -698,7 +704,7 @@ $sessionPackMarkdownPath = Join-Path $laneRoot "session_pack.md"
 
 $sessionPack = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-13"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-14"
     lane_root = $laneRoot
     mode = $Mode
     lane_label = $LaneLabel
@@ -751,6 +757,8 @@ Write-TextFile -Path $sessionPackMarkdownPath -Value $sessionPackMarkdown
     HumanJoinObserved = $humanJoinObserved
     HumanJoinTimedOut = $humanJoinTimedOut
     JoinTarget = $joinInfo.LoopbackAddress
+    JoinInstructionsPath = $joinInstructionsPath
+    LaneJsonPath = (Join-Path $laneRoot "lane.json")
     SummaryJsonPath = $summaryResult.OutputJson
     SummaryMarkdownPath = $summaryResult.OutputMarkdown
     SessionPackJsonPath = $sessionPackJsonPath
