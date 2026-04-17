@@ -22,14 +22,8 @@ def parse_args() -> argparse.Namespace:
         "--compare-lane-root",
         help="Optional second lane artifact directory for control-vs-treatment comparison.",
     )
-    parser.add_argument(
-        "--output-json",
-        help="Optional output path for the machine-readable summary JSON.",
-    )
-    parser.add_argument(
-        "--output-md",
-        help="Optional output path for the human-readable Markdown summary.",
-    )
+    parser.add_argument("--output-json", help="Optional output path for the summary JSON.")
+    parser.add_argument("--output-md", help="Optional output path for the summary Markdown.")
     return parser.parse_args()
 
 
@@ -47,54 +41,68 @@ def summarize_lane(lane_root: Path) -> dict[str, Any]:
     return analyze_lane(manifest, telemetry_records, patch_records, apply_records)
 
 
+def _lane_markdown(summary: dict[str, Any], heading: str) -> list[str]:
+    return [
+        heading,
+        f"- Mode: {summary.get('mode', 'Unknown')}",
+        f"- Lane label: {summary.get('lane_label', 'default')}",
+        f"- Map: {summary.get('map', 'unknown')}",
+        (
+            f"- Bot count / skill: {summary.get('bot_count', 0)} / "
+            f"{summary.get('bot_skill', 0)}"
+        ),
+        f"- Duration: {summary.get('duration_seconds', 0)} seconds",
+        f"- Bootstrap log present: {summary.get('bootstrap_log_present', False)}",
+        f"- Attach observed: {summary.get('attach_observed', False)}",
+        f"- Smoke status: {summary.get('smoke_status', '')}",
+        f"- Human snapshots: {summary.get('human_snapshots_count', 0)}",
+        (
+            f"- Seconds with human presence: "
+            f"{summary.get('seconds_with_human_presence', 0)}"
+        ),
+        f"- Telemetry snapshots: {summary.get('telemetry_snapshots_count', 0)}",
+        f"- Patch events: {summary.get('patch_events_count', 0)}",
+        f"- Patch applies: {summary.get('patch_apply_count', 0)}",
+        (
+            f"- Human-reactive patch events: "
+            f"{summary.get('human_reactive_patch_events_count', 0)}"
+        ),
+        (
+            f"- Unique skill targets: {summary.get('unique_skill_targets_seen', [])}"
+        ),
+        (
+            f"- Unique bot-count deltas: "
+            f"{summary.get('unique_bot_count_deltas_seen', [])}"
+        ),
+        (
+            f"- Cooldown respected: "
+            f"{summary.get('cooldown_constraints_respected', False)}"
+        ),
+        (
+            f"- Boundedness respected: "
+            f"{summary.get('boundedness_constraints_respected', False)}"
+        ),
+        (
+            f"- Lane quality verdict: "
+            f"{summary.get('lane_quality_verdict', 'insufficient-data')}"
+        ),
+        f"- Tuning usable: {summary.get('tuning_signal_usable', False)}",
+        f"- Stability verdict: {summary.get('behavior_verdict', 'insufficient-data')}",
+        f"- Explanation: {summary.get('explanation', '')}",
+    ]
+
+
 def render_markdown(
     primary_summary: dict[str, Any],
     comparison_summary: dict[str, Any] | None = None,
     secondary_summary: dict[str, Any] | None = None,
 ) -> str:
-    lines = [
-        "# Balance Evaluation Summary",
-        "",
-        "## Primary Lane",
-        f"- Mode: {primary_summary.get('mode', 'Unknown')}",
-        f"- Map: {primary_summary.get('map', 'unknown')}",
-        f"- Bot count / skill: {primary_summary.get('bot_count', 0)} / {primary_summary.get('bot_skill', 0)}",
-        f"- Duration: {primary_summary.get('duration_seconds', 0)} seconds",
-        f"- Bootstrap log present: {primary_summary.get('bootstrap_log_present', False)}",
-        f"- Attach observed: {primary_summary.get('attach_observed', False)}",
-        f"- Telemetry snapshots: {primary_summary.get('telemetry_snapshots_count', 0)}",
-        f"- Patch events: {primary_summary.get('patch_events_count', 0)}",
-        f"- Patch applies: {primary_summary.get('patch_apply_count', 0)}",
-        f"- Unique skill targets: {primary_summary.get('unique_skill_targets_seen', [])}",
-        f"- Unique bot-count deltas: {primary_summary.get('unique_bot_count_deltas_seen', [])}",
-        f"- Cooldown respected: {primary_summary.get('cooldown_constraints_respected', False)}",
-        f"- Boundedness respected: {primary_summary.get('boundedness_constraints_respected', False)}",
-        f"- Verdict: {primary_summary.get('behavior_verdict', 'insufficient-data')}",
-        f"- Notes: {primary_summary.get('behavior_reason', '')}",
-    ]
+    lines = ["# Balance Evaluation Summary", ""]
+    lines.extend(_lane_markdown(primary_summary, "## Primary Lane"))
 
     if secondary_summary:
-        lines.extend(
-            [
-                "",
-                "## Secondary Lane",
-                f"- Mode: {secondary_summary.get('mode', 'Unknown')}",
-                f"- Map: {secondary_summary.get('map', 'unknown')}",
-                f"- Bot count / skill: {secondary_summary.get('bot_count', 0)} / {secondary_summary.get('bot_skill', 0)}",
-                f"- Duration: {secondary_summary.get('duration_seconds', 0)} seconds",
-                f"- Bootstrap log present: {secondary_summary.get('bootstrap_log_present', False)}",
-                f"- Attach observed: {secondary_summary.get('attach_observed', False)}",
-                f"- Telemetry snapshots: {secondary_summary.get('telemetry_snapshots_count', 0)}",
-                f"- Patch events: {secondary_summary.get('patch_events_count', 0)}",
-                f"- Patch applies: {secondary_summary.get('patch_apply_count', 0)}",
-                f"- Unique skill targets: {secondary_summary.get('unique_skill_targets_seen', [])}",
-                f"- Unique bot-count deltas: {secondary_summary.get('unique_bot_count_deltas_seen', [])}",
-                f"- Cooldown respected: {secondary_summary.get('cooldown_constraints_respected', False)}",
-                f"- Boundedness respected: {secondary_summary.get('boundedness_constraints_respected', False)}",
-                f"- Verdict: {secondary_summary.get('behavior_verdict', 'insufficient-data')}",
-                f"- Notes: {secondary_summary.get('behavior_reason', '')}",
-            ]
-        )
+        lines.extend([""])
+        lines.extend(_lane_markdown(secondary_summary, "## Secondary Lane"))
 
     if comparison_summary:
         lines.extend(
@@ -102,12 +110,42 @@ def render_markdown(
                 "",
                 "## Comparison",
                 f"- Control mode: {comparison_summary.get('control_mode', 'Unknown')}",
-                f"- Treatment mode: {comparison_summary.get('treatment_mode', 'Unknown')}",
-                f"- Control sidecar-free: {comparison_summary.get('control_sidecar_free', False)}",
-                f"- Treatment sidecar observed: {comparison_summary.get('treatment_sidecar_observed', False)}",
-                f"- Control verdict: {comparison_summary.get('control_behavior_verdict', 'insufficient-data')}",
-                f"- Treatment verdict: {comparison_summary.get('treatment_behavior_verdict', 'insufficient-data')}",
-                f"- Comparison verdict: {comparison_summary.get('comparison_verdict', 'comparison-incomplete')}",
+                (
+                    f"- Control lane label: "
+                    f"{comparison_summary.get('control_lane_label', 'control')}"
+                ),
+                (
+                    f"- Treatment mode: "
+                    f"{comparison_summary.get('treatment_mode', 'Unknown')}"
+                ),
+                (
+                    f"- Treatment lane label: "
+                    f"{comparison_summary.get('treatment_lane_label', 'treatment')}"
+                ),
+                (
+                    f"- Control verdict: "
+                    f"{comparison_summary.get('control_behavior_verdict', 'insufficient-data')}"
+                ),
+                (
+                    f"- Treatment verdict: "
+                    f"{comparison_summary.get('treatment_behavior_verdict', 'insufficient-data')}"
+                ),
+                (
+                    f"- Treatment lane quality: "
+                    f"{comparison_summary.get('treatment_lane_quality_verdict', 'insufficient-data')}"
+                ),
+                (
+                    f"- Comparison usable for tuning: "
+                    f"{comparison_summary.get('comparison_is_tuning_usable', False)}"
+                ),
+                (
+                    f"- Comparison verdict: "
+                    f"{comparison_summary.get('comparison_verdict', 'comparison-insufficient-data')}"
+                ),
+                (
+                    f"- Comparison reason: "
+                    f"{comparison_summary.get('comparison_reason', '')}"
+                ),
             ]
         )
 

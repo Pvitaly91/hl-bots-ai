@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-10
+HLDM-JKBOTTI-AI-STAND-20260415-11
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -226,6 +226,12 @@ Run an AI treatment-lane balance capture:
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
+Run an AI treatment lane intended for human participation:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
 Summarize a control-vs-treatment pair:
 
 ```powershell
@@ -241,6 +247,8 @@ Run the replay/scenario tests:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios"
 ```
+
+Use the replay scenarios first when tuning thresholds or hysteresis. They are deterministic, do not require a live server, and cover one-human dominance, one-human struggles, sparse joins, oscillation-prone alternation, spike-and-stabilize patterns, and close games where AI should remain conservative.
 
 ## Bot Test Config
 
@@ -336,6 +344,12 @@ The control lane is the baseline:
 
 The treatment lane reuses `scripts\run_test_stand_with_bots.ps1` and adds sidecar-driven patch history.
 
+The lane manifest and summaries now distinguish:
+
+- plumbing-healthy: launcher, attach, telemetry, and patch plumbing worked
+- tuning-usable: enough human signal existed to judge live rebalancing
+- insufficient-data: live signal was absent or too sparse to trust for tuning
+
 Each lane folder contains:
 
 - copied HLDS logs
@@ -352,6 +366,16 @@ Each lane folder contains:
 - `summary.json`
 - `summary.md`
 
+Per-lane summaries now include:
+
+- lane label
+- human snapshots count
+- seconds with human presence
+- lane-quality verdict
+- stability verdict
+- explanation string
+- whether the mixed-session wait timed out before enough human signal existed
+
 ## Summary Verdicts
 
 - `stable`: bounded actions, limited reversals, and recent telemetry near equilibrium.
@@ -361,6 +385,13 @@ Each lane folder contains:
 
 The summary reports also call out whether cooldown and boundedness constraints were respected, how many telemetry snapshots and patch events were seen, and whether the control-vs-treatment pair is usable for tuning.
 
+Lane quality is reported separately from the stability verdict:
+
+- `ai-healthy-no-humans`: the AI lane was plumbing-healthy, but no humans were present
+- `ai-healthy-human-sparse`: humans joined, but not long enough to judge rebalancing
+- `ai-healthy-human-usable`: enough human signal existed for a real tuning sample
+- `ai-healthy-human-rich`: stronger mixed-session sample with longer or denser human presence
+
 ## Attach Troubleshooting
 
 - Check `lab\hlds\valve\addons\metamod\plugins.ini`. It should contain `win32 addons/jk_botti/dlls/jk_botti_mm.dll`.
@@ -369,7 +400,7 @@ The summary reports also call out whether cooldown and boundedness constraints w
 - Check runtime dependencies with `powershell -NoProfile -File .\scripts\inspect_plugin_dependencies.ps1`. `Release|Win32` uses `MultiThreaded` (`/MT`) and should not require the VC++ redistributable in the lab.
 - Check the earliest bootstrap log at `lab\hlds\valve\addons\jk_botti\runtime\bootstrap.log`.
 - Use `scripts\run_standard_bots_crossfire.bat` first when debugging attach. It keeps the startup path narrowed to HLDS, Metamod, and the jk_botti DLL.
-- If you still see an `unknown command: 'jk_ai_balance_*'` line in HLDS stdout, treat it as a regression in config-command classification rather than a Metamod attach failure. A healthy Prompt 10 launcher run should not emit that warning.
+- If you still see an `unknown command: 'jk_ai_balance_*'` line in HLDS stdout, treat it as a regression in config-command classification rather than a Metamod attach failure. A healthy Prompt 11 launcher run should not emit that warning.
 
 ## Operational Notes
 

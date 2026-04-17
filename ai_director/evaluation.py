@@ -18,6 +18,11 @@ from ai_director.decision import (
 )
 
 EPSILON = 1e-3
+DEFAULT_MIN_HUMAN_SNAPSHOTS = 2
+DEFAULT_MIN_HUMAN_PRESENCE_SECONDS = 40.0
+DEFAULT_MIN_PATCH_EVENTS_FOR_USABLE_LANE = 1
+MEANINGFUL_IMBALANCE_MOMENTUM = 4.0
+STRONG_IMBALANCE_MOMENTUM = 8.0
 
 
 def _as_int(payload: dict[str, Any], key: str, default: int = 0) -> int:
@@ -156,6 +161,7 @@ def build_patch_event(
         ),
         "map_name": str(telemetry.get("map_name", "unknown")),
         "momentum": round(momentum_from_telemetry(telemetry), 3),
+        "current_human_player_count": max(0, _as_int(telemetry, "human_player_count", 0)),
         "current_default_bot_skill_level": clamp_int(
             _as_int(telemetry, "current_default_bot_skill_level", 3),
             MIN_SKILL_LEVEL,
@@ -247,78 +253,384 @@ def _patch_event_direction(record: dict[str, Any]) -> str:
         return "relax"
     return "hold"
 
+def _manifest_int(manifest: dict[str, Any] | None, key: str, default: int) -> int:
+    return _as_int(manifest or {}, key, default)
 
-def classify_behavior(
-    mode: str,
+
+def _manifest_float(manifest: dict[str, Any] | None, key: str, default: float) -> float:
+    return _as_float(manifest or {}, key, default)
+
+
+def _lane_label(manifest: dict[str, Any] | None) -> str:
+    value = str((manifest or {}).get("lane_label", "")).strip()
+    return value or "default"
+
+
+def _is_plumbing_healthy(manifest: dict[str, Any] | None) -> bool:
+    mode = str((manifest or {}).get("mode", "Unknown")).upper()
+    smoke_status = str((manifest or {}).get("smoke_status", ""))
+
+    if smoke_status == "simulated":
+        return True
+
+    if mode == "AI":
+        return smoke_status == "ai-healthy"
+    if mode == "NOAI":
+        return smoke_status == "no-ai-healthy"
+    return bool((manifest or {}).get("attach_observed", False))
+
+
+def _record_span_seconds(telemetry_records: list[dict[str, Any]], index: int) -> float:
+    record = telemetry_records[index]
+    interval_seconds = max(
+        1.0, _as_float(_active_balance(record), "interval_seconds", 20.0)
+    )
+    current_time = _as_float(record, "server_time_seconds", 0.0)
+    if index + 1 >= len(telemetry_records):
+        return interval_seconds
+
+    next_time = _as_float(
+        telemetry_records[index + 1], "server_time_seconds", current_time + interval_seconds
+    )
+    delta = next_time - current_time
+    if delta <= 0.0:
+        return interval_seconds
+    return min(interval_seconds, delta)
+
+
+def _collect_human_signal(
+    manifest: dict[str, Any] | None,
     telemetry_records: list[dict[str, Any]],
     patch_records: list[dict[str, Any]],
     apply_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    min_human_snapshots = max(
+        1,
+        _manifest_int(manifest, "min_human_snapshots", DEFAULT_MIN_HUMAN_SNAPSHOTS),
+    )
+    min_human_presence_seconds = max(
+        1.0,
+        _manifest_float(
+            manifest,
+            "min_human_presence_seconds",
+            DEFAULT_MIN_HUMAN_PRESENCE_SECONDS,
+        ),
+    )
+    min_patch_events_for_usable_lane = max(
+        0,
+        _manifest_int(
+            manifest,
+            "min_patch_events_for_usable_lane",
+            DEFAULT_MIN_PATCH_EVENTS_FOR_USABLE_LANE,
+        ),
+    )
+
+    human_snapshots_count = 0
+    seconds_with_human_presence = 0.0
+    max_human_player_count = 0
+
+    for index, record in enumerate(telemetry_records):
+        human_count = max(0, _as_int(record, "human_player_count", 0))
+        if human_count <= 0:
+            continue
+        human_snapshots_count += 1
+        max_human_player_count = max(max_human_player_count, human_count)
+        seconds_with_human_presence += _record_span_seconds(telemetry_records, index)
+
+    if human_snapshots_count == 0 or seconds_with_human_presence <= 0.0:
+        human_signal_verdict = "no-humans"
+    elif (
+        human_snapshots_count < min_human_snapshots
+        or seconds_with_human_presence + EPSILON < min_human_presence_seconds
+    ):
+        human_signal_verdict = "human-sparse"
+    else:
+        rich_min_human_snapshots = max(
+            min_human_snapshots * 2, min_human_snapshots + 2
+        )
+        rich_min_human_presence_seconds = max(
+            min_human_presence_seconds * 2.0, min_human_presence_seconds + 40.0
+        )
+        if (
+            human_snapshots_count >= rich_min_human_snapshots
+            and seconds_with_human_presence + EPSILON
+            >= rich_min_human_presence_seconds
+            and max_human_player_count >= 2
+        ):
+            human_signal_verdict = "human-rich"
+        else:
+            human_signal_verdict = "human-usable"
+
+    meaningful_human_imbalance_records = [
+        record
+        for record in telemetry_records
+        if _as_int(record, "human_player_count", 0) > 0
+        and _as_int(record, "bot_count", 0) > 0
+        and abs(momentum_from_telemetry(record)) >= MEANINGFUL_IMBALANCE_MOMENTUM
+    ]
+    strong_human_imbalance_records = [
+        record
+        for record in telemetry_records
+        if _as_int(record, "human_player_count", 0) > 0
+        and _as_int(record, "bot_count", 0) > 0
+        and abs(momentum_from_telemetry(record)) >= STRONG_IMBALANCE_MOMENTUM
+    ]
+
+    emitted_patches = _emitted_patch_records(patch_records)
+    human_reactive_patch_events = [
+        record
+        for record in emitted_patches
+        if _as_int(record, "current_human_player_count", 0) > 0
+        and _as_int(record, "current_bot_count", 0) > 0
+        and abs(_as_float(record, "momentum", 0.0)) >= MEANINGFUL_IMBALANCE_MOMENTUM
+        and not str(record.get("reason", "")).lower().startswith(
+            "waiting for both humans and bots"
+        )
+    ]
+    human_reactive_patch_ids = {
+        str(record.get("patch_id", ""))
+        for record in human_reactive_patch_events
+        if str(record.get("patch_id", ""))
+    }
+    human_reactive_apply_records = [
+        record
+        for record in apply_records
+        if str(record.get("patch_id", "")) in human_reactive_patch_ids
+    ]
+
+    if human_signal_verdict == "no-humans":
+        tuning_signal_usable = False
+        blocker_reason = "No human players were observed in telemetry, so the lane is plumbing-healthy at most."
+    elif human_signal_verdict == "human-sparse":
+        tuning_signal_usable = False
+        blocker_reason = (
+            "Human presence was too sparse for tuning: "
+            f"{human_snapshots_count} human snapshots across "
+            f"{round(seconds_with_human_presence, 1)} seconds, "
+            f"below the configured minimums of {min_human_snapshots} snapshots and "
+            f"{round(min_human_presence_seconds, 1)} seconds."
+        )
+    else:
+        tuning_signal_usable = True
+        blocker_reason = ""
+
+    patch_event_requirement_met = (
+        len(meaningful_human_imbalance_records) < min_human_snapshots
+        or len(human_reactive_patch_events) >= min_patch_events_for_usable_lane
+    )
+
+    return {
+        "min_human_snapshots": min_human_snapshots,
+        "min_human_presence_seconds": round(min_human_presence_seconds, 1),
+        "min_patch_events_for_usable_lane": min_patch_events_for_usable_lane,
+        "human_snapshots_count": human_snapshots_count,
+        "seconds_with_human_presence": round(seconds_with_human_presence, 1),
+        "max_human_player_count": max_human_player_count,
+        "human_signal_verdict": human_signal_verdict,
+        "tuning_signal_usable": tuning_signal_usable,
+        "blocker_reason": blocker_reason,
+        "meaningful_human_imbalance_snapshots_count": len(
+            meaningful_human_imbalance_records
+        ),
+        "strong_human_imbalance_snapshots_count": len(strong_human_imbalance_records),
+        "human_reactive_patch_events": human_reactive_patch_events,
+        "human_reactive_patch_events_count": len(human_reactive_patch_events),
+        "human_reactive_patch_ids": human_reactive_patch_ids,
+        "human_reactive_patch_apply_count": len(human_reactive_apply_records),
+        "patch_response_to_human_imbalance_observed": bool(
+            human_reactive_patch_events or human_reactive_apply_records
+        ),
+        "patch_event_requirement_met": patch_event_requirement_met,
+    }
+
+
+def _lane_quality_verdict(
+    manifest: dict[str, Any] | None, human_signal: dict[str, Any]
+) -> str:
+    mode = str((manifest or {}).get("mode", "Unknown")).upper()
+    smoke_status = str((manifest or {}).get("smoke_status", "")) or "plumbing-unhealthy"
+
+    if not _is_plumbing_healthy(manifest):
+        return smoke_status
+
+    verdict_suffix = str(human_signal.get("human_signal_verdict", "no-humans"))
+    if mode == "AI":
+        return {
+            "no-humans": "ai-healthy-no-humans",
+            "human-sparse": "ai-healthy-human-sparse",
+            "human-usable": "ai-healthy-human-usable",
+            "human-rich": "ai-healthy-human-rich",
+        }.get(verdict_suffix, "ai-healthy-human-sparse")
+    if mode == "NOAI":
+        return f"control-baseline-{verdict_suffix}"
+    return f"{smoke_status}-{verdict_suffix}"
+
+
+def _derive_duration_seconds(
+    manifest: dict[str, Any] | None, telemetry_records: list[dict[str, Any]]
+) -> int:
+    duration_seconds = _manifest_int(manifest, "duration_seconds", 0)
+    if duration_seconds > 0:
+        return duration_seconds
+    if len(telemetry_records) >= 2:
+        start_time = _as_float(telemetry_records[0], "server_time_seconds", 0.0)
+        end_time = _as_float(telemetry_records[-1], "server_time_seconds", start_time)
+        return int(round(max(0.0, end_time - start_time)))
+    if telemetry_records:
+        return int(round(_record_span_seconds(telemetry_records, len(telemetry_records) - 1)))
+    return 0
+
+
+def classify_behavior(
+    manifest: dict[str, Any] | None,
+    telemetry_records: list[dict[str, Any]],
+    patch_records: list[dict[str, Any]],
+    apply_records: list[dict[str, Any]],
+    human_signal: dict[str, Any],
 ) -> tuple[str, str]:
+    mode = str((manifest or {}).get("mode", "Unknown")).upper()
     if len(telemetry_records) < 2:
         return ("insufficient-data", "Not enough telemetry snapshots were captured.")
 
-    emitted_patches = _emitted_patch_records(patch_records)
-    momenta = [momentum_from_telemetry(record) for record in telemetry_records]
-    strong_imbalance_count = sum(1 for value in momenta if abs(value) >= 8.0)
+    if not _is_plumbing_healthy(manifest):
+        return (
+            "insufficient-data",
+            str((manifest or {}).get("smoke_summary", "Lane plumbing was not healthy.")),
+        )
+
+    if not bool(human_signal.get("tuning_signal_usable", False)):
+        return ("insufficient-data", str(human_signal.get("blocker_reason", "")))
+
+    human_telemetry_records = [
+        record
+        for record in telemetry_records
+        if _as_int(record, "human_player_count", 0) > 0
+        and _as_int(record, "bot_count", 0) > 0
+    ]
+    momenta = [momentum_from_telemetry(record) for record in human_telemetry_records]
+    if not momenta:
+        return (
+            "insufficient-data",
+            "No telemetry snapshots contained both humans and bots at the same time.",
+        )
+
     final_abs_momentum = max(abs(value) for value in momenta[-min(3, len(momenta)) :])
+    human_reactive_patch_ids = human_signal["human_reactive_patch_ids"]
+    human_reactive_apply_records = [
+        record
+        for record in apply_records
+        if str(record.get("patch_id", "")) in human_reactive_patch_ids
+    ]
 
     apply_directions = [
         str(record.get("direction", "hold"))
-        for record in apply_records
+        for record in human_reactive_apply_records
         if str(record.get("direction", "hold")) != "hold"
     ]
     event_directions = [
         _patch_event_direction(record)
-        for record in emitted_patches
+        for record in human_signal["human_reactive_patch_events"]
         if _patch_event_direction(record) != "hold"
     ]
     direction_flips = sum(
-        1 for previous, current in zip(apply_directions, apply_directions[1:]) if previous != current
+        1
+        for previous, current in zip(apply_directions, apply_directions[1:])
+        if previous != current
     )
     event_direction_flips = sum(
-        1 for previous, current in zip(event_directions, event_directions[1:]) if previous != current
+        1
+        for previous, current in zip(event_directions, event_directions[1:])
+        if previous != current
     )
 
-    if direction_flips >= 3 or event_direction_flips >= 3:
+    if direction_flips >= 2 or event_direction_flips >= 3:
         return (
             "oscillatory",
-            "Patch applications reversed direction repeatedly instead of converging.",
+            "Human-driven balance actions kept reversing direction instead of converging.",
         )
 
-    if mode.upper() == "AI":
-        if strong_imbalance_count >= 2 and not emitted_patches and not apply_records:
+    if mode == "AI":
+        if (
+            human_signal["meaningful_human_imbalance_snapshots_count"] >= 2
+            and human_signal["human_reactive_patch_events_count"]
+            < human_signal["min_patch_events_for_usable_lane"]
+        ):
             return (
                 "underactive",
-                "Strong momentum persisted without any emitted or applied balance action.",
+                "Sustained human-vs-bot imbalance was observed, but the AI lane emitted too few human-reactive patch events.",
             )
-        if strong_imbalance_count >= 2 and final_abs_momentum >= 8.0 and direction_flips == 0 and len(apply_records) <= 1:
+
+        if (
+            human_signal["strong_human_imbalance_snapshots_count"] >= 2
+            and human_signal["human_reactive_patch_apply_count"] <= 1
+            and final_abs_momentum >= STRONG_IMBALANCE_MOMENTUM
+        ):
             return (
                 "underactive",
-                "Balance changes were too sparse to counter the sustained frag-gap momentum.",
+                "Human pressure stayed clearly one-sided and the applied response remained too sparse.",
             )
-        if final_abs_momentum <= 4.0 and direction_flips <= 1:
-            return (
-                "stable",
-                "Recent telemetry stayed near equilibrium without excessive reversals.",
-            )
-        if direction_flips >= 2 and len(apply_records) >= 4:
-            return (
-                "oscillatory",
-                "The lane kept alternating between stronger and weaker bot adjustments.",
-            )
+
         return (
             "stable",
-            "Balance actions stayed bounded and did not show runaway oscillation.",
+            "Human-driven balance changes stayed bounded without oscillatory reversals.",
         )
 
-    if final_abs_momentum <= 4.0:
-        return ("stable", "Control telemetry stayed near equilibrium.")
-    if strong_imbalance_count >= 2:
+    if (
+        human_signal["strong_human_imbalance_snapshots_count"] >= 2
+        and final_abs_momentum >= STRONG_IMBALANCE_MOMENTUM
+    ):
         return (
             "underactive",
-            "Control telemetry showed a sustained imbalance with no treatment lane activity.",
+            "The control lane stayed imbalanced for the human player across multiple snapshots.",
         )
-    return ("stable", "Control telemetry stayed within a moderate range.")
+
+    return ("stable", "The control lane captured usable human signal without treatment-side oscillation.")
+
+
+def _build_lane_explanation(
+    manifest: dict[str, Any] | None,
+    human_signal: dict[str, Any],
+    behavior_verdict: str,
+    behavior_reason: str,
+) -> str:
+    mode = str((manifest or {}).get("mode", "Unknown")).upper()
+    lane_quality_verdict = _lane_quality_verdict(manifest, human_signal)
+    if not _is_plumbing_healthy(manifest):
+        return str((manifest or {}).get("smoke_summary", "Lane plumbing was not healthy."))
+
+    if not bool(human_signal.get("tuning_signal_usable", False)):
+        timeout_suffix = ""
+        if bool((manifest or {}).get("human_join_timed_out", False)):
+            timeout_suffix = (
+                " The mixed-session wait timed out before the lane became tuning-usable."
+            )
+        return (
+            f"{lane_quality_verdict}: {human_signal.get('blocker_reason', '')}{timeout_suffix}"
+        ).strip()
+
+    human_signal_summary = (
+        f"{human_signal['human_snapshots_count']} human snapshots over "
+        f"{human_signal['seconds_with_human_presence']} seconds"
+    )
+    if behavior_verdict == "oscillatory":
+        return (
+            f"{lane_quality_verdict}: {human_signal_summary}, and emitted/applied changes flipped direction too often. "
+            f"{behavior_reason}"
+        )
+    if behavior_verdict == "underactive":
+        return (
+            f"{lane_quality_verdict}: {human_signal_summary}, with "
+            f"{human_signal['human_reactive_patch_events_count']} human-reactive patch events across "
+            f"{human_signal['meaningful_human_imbalance_snapshots_count']} meaningful imbalance snapshots. "
+            f"{behavior_reason}"
+        )
+    if mode == "AI" and human_signal["human_reactive_patch_events_count"] > 0:
+        return (
+            f"{lane_quality_verdict}: {human_signal_summary}, and the AI lane made "
+            f"{human_signal['human_reactive_patch_events_count']} bounded human-reactive patch decisions. "
+            f"{behavior_reason}"
+        )
+    return f"{lane_quality_verdict}: {human_signal_summary}. {behavior_reason}"
 
 
 def analyze_lane(
@@ -328,6 +640,7 @@ def analyze_lane(
     apply_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
     emitted_patches = _emitted_patch_records(patch_records)
+    human_signal = _collect_human_signal(manifest, telemetry_records, patch_records, apply_records)
 
     unique_skill_targets = sorted(
         {
@@ -367,19 +680,37 @@ def analyze_lane(
             break
 
     behavior_verdict, behavior_reason = classify_behavior(
-        str((manifest or {}).get("mode", "Unknown")),
+        manifest,
         telemetry_records,
         patch_records,
         apply_records,
+        human_signal,
+    )
+    lane_quality_verdict = _lane_quality_verdict(manifest, human_signal)
+    explanation = _build_lane_explanation(
+        manifest,
+        human_signal,
+        behavior_verdict,
+        behavior_reason,
     )
 
-    summary = {
-        "schema_version": 1,
+    return {
+        "schema_version": 2,
+        "prompt_id": str((manifest or {}).get("prompt_id", "")),
         "mode": str((manifest or {}).get("mode", "Unknown")),
+        "lane_label": _lane_label(manifest),
         "map": str((manifest or {}).get("map", "unknown")),
         "bot_count": _as_int(manifest or {}, "bot_count", 0),
         "bot_skill": _as_int(manifest or {}, "bot_skill", 0),
-        "duration_seconds": _as_int(manifest or {}, "duration_seconds", 0),
+        "requested_duration_seconds": _as_int(manifest or {}, "requested_duration_seconds", 0),
+        "duration_seconds": _derive_duration_seconds(manifest, telemetry_records),
+        "wait_for_human_join": bool((manifest or {}).get("wait_for_human_join", False)),
+        "human_join_grace_seconds": _as_int(manifest or {}, "human_join_grace_seconds", 0),
+        "human_join_observed": bool(
+            (manifest or {}).get("human_join_observed", False)
+            or human_signal["human_snapshots_count"] > 0
+        ),
+        "human_join_timed_out": bool((manifest or {}).get("human_join_timed_out", False)),
         "bootstrap_log_present": bool((manifest or {}).get("bootstrap_log_present", False)),
         "attach_observed": bool((manifest or {}).get("attach_observed", False)),
         "ai_sidecar_observed": bool((manifest or {}).get("ai_sidecar_observed", False)),
@@ -392,8 +723,26 @@ def analyze_lane(
             )
         ),
         "telemetry_snapshots_count": len(telemetry_records),
+        "human_snapshots_count": human_signal["human_snapshots_count"],
+        "seconds_with_human_presence": human_signal["seconds_with_human_presence"],
+        "max_human_player_count": human_signal["max_human_player_count"],
+        "meaningful_human_imbalance_snapshots_count": human_signal[
+            "meaningful_human_imbalance_snapshots_count"
+        ],
+        "strong_human_imbalance_snapshots_count": human_signal[
+            "strong_human_imbalance_snapshots_count"
+        ],
         "patch_events_count": len(emitted_patches),
         "patch_apply_count": len(apply_records),
+        "human_reactive_patch_events_count": human_signal[
+            "human_reactive_patch_events_count"
+        ],
+        "human_reactive_patch_apply_count": human_signal[
+            "human_reactive_patch_apply_count"
+        ],
+        "patch_response_to_human_imbalance_observed": human_signal[
+            "patch_response_to_human_imbalance_observed"
+        ],
         "unique_skill_targets_seen": unique_skill_targets,
         "unique_bot_count_deltas_seen": unique_bot_count_deltas,
         "cooldown_constraints_respected": cooldown_respected,
@@ -402,10 +751,18 @@ def analyze_lane(
         ),
         "skill_step_budget_respected": skill_step_budget_respected,
         "bot_count_delta_budget_respected": bot_delta_budget_respected,
+        "min_human_snapshots": human_signal["min_human_snapshots"],
+        "min_human_presence_seconds": human_signal["min_human_presence_seconds"],
+        "min_patch_events_for_usable_lane": human_signal[
+            "min_patch_events_for_usable_lane"
+        ],
+        "human_signal_verdict": human_signal["human_signal_verdict"],
+        "tuning_signal_usable": human_signal["tuning_signal_usable"],
+        "lane_quality_verdict": lane_quality_verdict,
         "behavior_verdict": behavior_verdict,
         "behavior_reason": behavior_reason,
+        "explanation": explanation,
     }
-    return summary
 
 
 def compare_lane_summaries(
@@ -419,34 +776,87 @@ def compare_lane_summaries(
     if first_mode != "NOAI" and second_mode == "NOAI":
         control, treatment = second_summary, first_summary
 
-    control_mode = str(control.get("mode", "Unknown"))
-    treatment_mode = str(treatment.get("mode", "Unknown"))
+    control_sidecar_free = not bool(control.get("ai_sidecar_observed", False))
+    treatment_sidecar_observed = bool(treatment.get("ai_sidecar_observed", False))
+    control_tuning_signal_usable = bool(control.get("tuning_signal_usable", False))
+    treatment_tuning_signal_usable = bool(treatment.get("tuning_signal_usable", False))
+
+    comparison_verdict = "comparison-insufficient-data"
+    comparison_usable = False
+    comparison_reason = ""
+
+    if str(control.get("mode", "Unknown")).upper() != "NOAI":
+        comparison_reason = "The control lane is not the no-AI baseline."
+    elif str(treatment.get("mode", "Unknown")).upper() != "AI":
+        comparison_reason = "The treatment lane is not an AI lane."
+    elif not control_sidecar_free:
+        comparison_reason = "The control lane was not sidecar-free."
+    elif not treatment_sidecar_observed:
+        comparison_reason = "The treatment lane never observed the AI sidecar."
+    elif str(control.get("smoke_status", "")) != "no-ai-healthy":
+        comparison_reason = "The control lane was not plumbing-healthy."
+    elif str(treatment.get("smoke_status", "")) not in {"ai-healthy", "simulated"}:
+        comparison_reason = "The treatment lane was not plumbing-healthy."
+    elif not control_tuning_signal_usable:
+        comparison_reason = (
+            "The control lane did not capture enough human signal for tuning. "
+            f"Verdict: {control.get('lane_quality_verdict', 'unknown')}."
+        )
+    elif not treatment_tuning_signal_usable:
+        comparison_reason = (
+            "The treatment lane did not capture enough human signal for tuning. "
+            f"Verdict: {treatment.get('lane_quality_verdict', 'unknown')}."
+        )
+    elif not bool(treatment.get("boundedness_constraints_respected", False)):
+        comparison_reason = "The treatment lane violated boundedness constraints."
+    elif not bool(treatment.get("cooldown_constraints_respected", False)):
+        comparison_reason = "The treatment lane violated cooldown constraints."
+    else:
+        comparison_verdict = "control-vs-treatment-usable"
+        comparison_usable = True
+        comparison_reason = (
+            f"Control lane {control.get('lane_label', 'control')} and treatment lane "
+            f"{treatment.get('lane_label', 'treatment')} both captured usable human signal; "
+            f"treatment quality was {treatment.get('lane_quality_verdict', 'unknown')} with "
+            f"behavior {treatment.get('behavior_verdict', 'insufficient-data')}."
+        )
+
     return {
-        "schema_version": 1,
-        "control_mode": control_mode,
-        "treatment_mode": treatment_mode,
-        "control_sidecar_free": not bool(control.get("ai_sidecar_observed", False)),
-        "treatment_sidecar_observed": bool(treatment.get("ai_sidecar_observed", False)),
+        "schema_version": 2,
+        "control_mode": str(control.get("mode", "Unknown")),
+        "control_lane_label": str(control.get("lane_label", "control")),
+        "treatment_mode": str(treatment.get("mode", "Unknown")),
+        "treatment_lane_label": str(treatment.get("lane_label", "treatment")),
+        "control_sidecar_free": control_sidecar_free,
+        "treatment_sidecar_observed": treatment_sidecar_observed,
         "control_behavior_verdict": str(control.get("behavior_verdict", "insufficient-data")),
         "treatment_behavior_verdict": str(
             treatment.get("behavior_verdict", "insufficient-data")
         ),
+        "control_lane_quality_verdict": str(
+            control.get("lane_quality_verdict", "insufficient-data")
+        ),
+        "treatment_lane_quality_verdict": str(
+            treatment.get("lane_quality_verdict", "insufficient-data")
+        ),
+        "control_tuning_signal_usable": control_tuning_signal_usable,
+        "treatment_tuning_signal_usable": treatment_tuning_signal_usable,
         "control_telemetry_snapshots_count": _as_int(
             control, "telemetry_snapshots_count", 0
         ),
         "treatment_telemetry_snapshots_count": _as_int(
             treatment, "telemetry_snapshots_count", 0
         ),
+        "control_human_snapshots_count": _as_int(control, "human_snapshots_count", 0),
+        "treatment_human_snapshots_count": _as_int(treatment, "human_snapshots_count", 0),
         "control_patch_apply_count": _as_int(control, "patch_apply_count", 0),
         "treatment_patch_apply_count": _as_int(treatment, "patch_apply_count", 0),
-        "treatment_generated_patch_history": _as_int(treatment, "patch_events_count", 0) > 0,
-        "comparison_verdict": (
-            "control-vs-treatment-usable"
-            if not bool(control.get("ai_sidecar_observed", False))
-            and _as_int(treatment, "patch_events_count", 0) > 0
-            and bool(treatment.get("boundedness_constraints_respected", False))
-            else "comparison-incomplete"
+        "treatment_patch_response_to_human_imbalance_observed": bool(
+            treatment.get("patch_response_to_human_imbalance_observed", False)
         ),
+        "comparison_is_tuning_usable": comparison_usable,
+        "comparison_verdict": comparison_verdict,
+        "comparison_reason": comparison_reason,
     }
 
 
@@ -499,6 +909,10 @@ def simulate_replay(
     initial_skill: int = 3,
     initial_bot_count: int = 4,
     map_name: str = "crossfire",
+    lane_label: str = "replay-scenario",
+    min_human_snapshots: int = DEFAULT_MIN_HUMAN_SNAPSHOTS,
+    min_human_presence_seconds: float = DEFAULT_MIN_HUMAN_PRESENCE_SECONDS,
+    min_patch_events_for_usable_lane: int = DEFAULT_MIN_PATCH_EVENTS_FOR_USABLE_LANE,
 ) -> dict[str, Any]:
     if not frames:
         raise ValueError("At least one telemetry frame is required.")
@@ -609,10 +1023,13 @@ def simulate_replay(
         )
 
     manifest = {
+        "prompt_id": "replay-simulated",
         "mode": "AI",
+        "lane_label": lane_label,
         "map": map_name,
         "bot_count": initial_bot_count,
         "bot_skill": initial_skill,
+        "requested_duration_seconds": duration_seconds,
         "duration_seconds": duration_seconds,
         "bootstrap_log_present": True,
         "attach_observed": True,
@@ -620,6 +1037,9 @@ def simulate_replay(
         "smoke_status": "simulated",
         "smoke_summary": "Deterministic replay scenario.",
         "match_id": scenario_name,
+        "min_human_snapshots": min_human_snapshots,
+        "min_human_presence_seconds": min_human_presence_seconds,
+        "min_patch_events_for_usable_lane": min_patch_events_for_usable_lane,
     }
     return {
         "manifest": manifest,

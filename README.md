@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-10
+HLDM-JKBOTTI-AI-STAND-20260415-11
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -160,6 +160,7 @@ Use the evaluation runner when the goal is behavior measurement instead of only 
 ```powershell
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode NoAI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -DurationSeconds 50 -SkipSteamCmdUpdate -SkipMetamodDownload
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The no-AI lane remains the primary control:
@@ -172,6 +173,15 @@ The no-AI lane remains the primary control:
 - no patch emission or patch application
 
 The AI lane reuses the existing sidecar-backed launcher and adds copied lane artifacts under `lab\logs\eval\<timestamp>-<mode>-...`.
+
+`scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
+
+- `-LaneLabel` stamps a human-readable role such as `control-baseline` or `mixed-session-treatment`.
+- `-WaitForHumanJoin` keeps an AI lane alive past the base duration until it either becomes tuning-usable or the grace window expires.
+- `-HumanJoinGraceSeconds`, `-MinHumanSnapshots`, and `-MinHumanPresenceSeconds` define the live mixed-session quality gate.
+- `-MinPatchEventsForUsableLane` lets the runner wait a little longer for a bounded treatment response when meaningful human-vs-bot imbalance is already present.
+
+If no humans join, the lane can still be `ai-healthy`, but the summary marks it explicitly as `ai-healthy-no-humans` instead of pretending it was ready for tuning. Sparse joins are called out as `ai-healthy-human-sparse`.
 
 Summarize one lane or compare control vs treatment with:
 
@@ -191,14 +201,15 @@ Run the deterministic replay and summary tests without a live server:
 powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios"
 ```
 
-The replay fixture set covers:
+The replay fixture set now covers more realistic mixed-session patterns:
 
-- humans dominating steadily
-- bots dominating steadily
-- close hold-steady behavior
+- one human steadily outperforming bots
+- one human repeatedly getting stomped by bots
 - alternating advantage that can become oscillatory
-- sudden frag-gap spikes
-- recovery back toward equilibrium
+- humans absent after an initial join
+- brief human joins that should stay insufficient-data
+- strong frag-gap spikes followed by stabilization
+- close games with only mild imbalance where AI should remain conservative
 
 ## Evaluation Verdicts
 
@@ -206,6 +217,15 @@ The replay fixture set covers:
 - `underactive`: strong momentum persists with too little corrective action.
 - `oscillatory`: emitted or applied patches keep flipping between stronger and weaker settings.
 - `insufficient-data`: the lane did not capture enough telemetry to judge behavior.
+
+Lane quality is reported separately from the stability verdict:
+
+- `ai-healthy-no-humans`: plumbing worked, but no human signal existed.
+- `ai-healthy-human-sparse`: humans joined briefly, but not long enough to judge rebalancing.
+- `ai-healthy-human-usable`: enough human presence existed to judge treatment behavior.
+- `ai-healthy-human-rich`: enough human presence existed to treat the lane as a stronger mixed-session sample.
+
+The no-AI control lane uses the same human-signal buckets with a `control-baseline-...` prefix so control-vs-treatment comparisons can reject weak samples cleanly.
 
 ## Visual Studio 2022 Build
 
