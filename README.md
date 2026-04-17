@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-09
+HLDM-JKBOTTI-AI-STAND-20260415-10
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -13,8 +13,10 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - Upstream `jk_botti` source imported into the repository root with upstream attribution preserved.
 - `hl-bots-ai.sln` and `jk_botti_mm.vcxproj` for Visual Studio 2022 `Win32|Debug` and `Win32|Release`.
 - `ai_balance.cpp` and related hooks in the plugin for telemetry export and bounded patch application.
-- `ai_director/` Python sidecar for offline fallback rules and optional OpenAI Responses API usage.
-- `scripts/` PowerShell automation for setup, build, launch, and smoke testing on Windows.
+- `ai_director/` Python sidecar for offline fallback rules, evaluation helpers, and optional OpenAI Responses API usage.
+- `ai_director/testdata/` and `ai_director/tests/test_replay_scenarios.py` for deterministic replay coverage.
+- `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
+- `scripts/run_balance_eval.ps1` and `scripts/summarize_balance_eval.ps1` for control/treatment summaries.
 - `docs/test-stand.md` with local HLDS lab details.
 - `AGENTS.md` for future repository automation guidance.
 
@@ -151,6 +153,60 @@ scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Por
 
 Both wrappers remain backward-compatible with the old positional arguments, but if the first argument starts with `-` they pass all arguments directly through to the PowerShell implementation. The useful repeat-test knobs are `-Map`, `-BotCount`, `-BotSkill`, `-LabRoot`, `-Port`, `-SkipSteamCmdUpdate`, and `-SkipMetamodDownload`.
 
+## Balance Evaluation Harness
+
+Use the evaluation runner when the goal is behavior measurement instead of only attach validation:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode NoAI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -DurationSeconds 50 -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+The no-AI lane remains the primary control:
+
+- default map `crossfire`
+- default bot count `4`
+- default bot skill `3`
+- `jk_ai_balance_enabled 0`
+- no Python sidecar
+- no patch emission or patch application
+
+The AI lane reuses the existing sidecar-backed launcher and adds copied lane artifacts under `lab\logs\eval\<timestamp>-<mode>-...`.
+
+Summarize one lane or compare control vs treatment with:
+
+```powershell
+powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
+  -LaneRoot .\lab\logs\eval\<control-lane> `
+  -CompareLaneRoot .\lab\logs\eval\<treatment-lane> `
+  -OutputJson .\lab\logs\eval\comparison.json `
+  -OutputMarkdown .\lab\logs\eval\comparison.md
+```
+
+## Replay Scenarios
+
+Run the deterministic replay and summary tests without a live server:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios"
+```
+
+The replay fixture set covers:
+
+- humans dominating steadily
+- bots dominating steadily
+- close hold-steady behavior
+- alternating advantage that can become oscillatory
+- sudden frag-gap spikes
+- recovery back toward equilibrium
+
+## Evaluation Verdicts
+
+- `stable`: bounded actions and limited reversals, with recent telemetry near equilibrium.
+- `underactive`: strong momentum persists with too little corrective action.
+- `oscillatory`: emitted or applied patches keep flipping between stronger and weaker settings.
+- `insufficient-data`: the lane did not capture enough telemetry to judge behavior.
+
 ## Visual Studio 2022 Build
 
 - Solution: `hl-bots-ai.sln`
@@ -210,15 +266,22 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 
 - Telemetry bridge: `valve/addons/jk_botti/runtime/ai_balance/telemetry.json`
 - Patch bridge: `valve/addons/jk_botti/runtime/ai_balance/patch.json`
+- Telemetry history: `valve/addons/jk_botti/runtime/ai_balance/history/telemetry-<match_id>.ndjson`
+- Patch recommendation history: `valve/addons/jk_botti/runtime/ai_balance/history/patch-<match_id>.ndjson`
+- Patch apply history: `valve/addons/jk_botti/runtime/ai_balance/history/patch_apply-<match_id>.ndjson`
+- Bot settings history: `valve/addons/jk_botti/runtime/ai_balance/history/bot_settings-<match_id>.ndjson`
 - Bootstrap attach log: `valve/addons/jk_botti/runtime/bootstrap.log`
 - Generated bot test config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
 - Bot test config template: `addons/jk_botti/test_bots.cfg`
 - Generated no-AI baseline config: `lab/hlds/valve/addons/jk_botti/jk_botti_<map>.cfg`
 - AI director logs: `lab/logs/ai_director.stdout.log` and `lab/logs/ai_director.stderr.log`
 - HLDS logs: `lab/logs/hlds.stdout.log` and `lab/logs/hlds.stderr.log`
+- Evaluation lane artifacts: `lab/logs/eval/<timestamp>-<mode>-...`
 - Server install root by default: `lab/hlds`
 
 The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a matching set of `addbot` lines so the requested bot pool comes up predictably and can be regenerated safely on each launcher run.
+
+For evaluation runs, the plugin now preserves per-match append-only NDJSON history in the runtime `history` directory. The no-AI control lane still never polls or applies patches, but it does emit read-only telemetry snapshots so the control and treatment lanes can be compared without enabling balance changes in the baseline.
 
 ## Scripts
 
@@ -231,7 +294,10 @@ The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a
 - `scripts/run_test_stand_with_bots.bat`: `cmd.exe` wrapper for the one-command local bot test flow, with backward-compatible positional arguments and direct named-argument passthrough.
 - `scripts/run_standard_bots_crossfire.ps1`: baseline launcher that builds, prepares the lab, writes a deterministic no-AI map config with `jk_ai_balance_enabled 0`, and starts HLDS without the Python sidecar.
 - `scripts/run_standard_bots_crossfire.bat`: `cmd.exe` wrapper for the baseline no-AI crossfire flow, with backward-compatible positional arguments and direct named-argument passthrough.
+- `scripts/run_balance_eval.ps1`: launches one control or treatment lane, waits for the requested duration, copies artifacts into a lane folder, and writes `summary.json` plus `summary.md`.
+- `scripts/summarize_balance_eval.ps1`: Windows wrapper around the Python evaluator for one lane or a control-vs-treatment pair.
 - `scripts/smoke_test.ps1`: classifies attach/load state for AI and no-AI runs, distinguishes healthy no-AI and healthy AI outcomes, and fails early on avoidable config warnings.
+- `ai_director/tools/summarize_eval.py`: machine-readable and human-readable summary generator used by the PowerShell wrapper.
 - `scripts/inspect_plugin_exports.ps1`: checks the Win32 DLL architecture and the required HL/Metamod exports with `dumpbin`.
 - `scripts/inspect_plugin_dependencies.ps1`: reports the configured MSVC runtime mode and binary DLL dependents.
 - `scripts/inspect_plugin_path.ps1`: verifies `plugins.ini`, the deployed DLL path, and the bootstrap log location inside the lab.
@@ -255,6 +321,7 @@ All scripts accept overridable lab paths, and the setup script supports custom S
 - The OpenAI path is optional and deliberately not used from per-frame bot code.
 - The AI layer only adjusts coarse balance knobs. It does not rewrite waypointing, aim code, or hidden-information access.
 - The current telemetry model is tuned for HLDM free-for-all, not team objective mods.
+- Live AI lanes without human players mostly validate idle and bounded behavior. Deeper balance tuning still benefits from replay scenarios or mixed human-vs-bot sessions.
 - Runtime paths assume the standard `valve` HLDM layout for the Windows lab scripts.
 
 ## Upstream Attribution

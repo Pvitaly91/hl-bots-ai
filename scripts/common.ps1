@@ -92,6 +92,30 @@ function Get-AiRuntimeDir {
     return Join-Path (Get-ServerModRoot -HldsRoot $HldsRoot) "addons\jk_botti\runtime\ai_balance"
 }
 
+function Get-AiRuntimeHistoryDir {
+    param([string]$HldsRoot)
+    return Join-Path (Get-AiRuntimeDir -HldsRoot $HldsRoot) "history"
+}
+
+function Get-AiRuntimeHistoryFilePath {
+    param(
+        [string]$HldsRoot,
+        [string]$Kind,
+        [string]$MatchId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Kind)) {
+        throw "Kind is required."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MatchId)) {
+        throw "MatchId is required."
+    }
+
+    $safeMatchId = [regex]::Replace($MatchId, "[^A-Za-z0-9._-]", "_")
+    return Join-Path (Get-AiRuntimeHistoryDir -HldsRoot $HldsRoot) ("{0}-{1}.ndjson" -f $Kind, $safeMatchId)
+}
+
 function Get-PluginBootstrapLogPath {
     param([string]$HldsRoot)
     return Join-Path (Get-ServerModRoot -HldsRoot $HldsRoot) "addons\jk_botti\runtime\bootstrap.log"

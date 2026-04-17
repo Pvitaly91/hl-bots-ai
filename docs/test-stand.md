@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-09
+HLDM-JKBOTTI-AI-STAND-20260415-10
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -106,7 +106,9 @@ By default the scripts use `.\lab` under the repository root:
 - `lab\tools\steamcmd\`: SteamCMD install if one is not already provided.
 - `lab\hlds\`: HLDS dedicated server root installed through SteamCMD app `90` with `mod valve`.
 - `lab\logs\`: HLDS stdout/stderr capture for the no-AI launcher and HLDS plus sidecar logs for the AI launcher.
+- `lab\logs\eval\`: timestamped control/treatment lane folders with copied artifacts and summaries.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\`: telemetry and patch bridge folder used by the plugin and sidecar.
+- `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\history\`: per-match append-only NDJSON history.
 - `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg`: generated map-specific bot test config used by the launcher.
 
 ## Setup Flow
@@ -212,6 +214,34 @@ Smoke test the no-AI crossfire baseline:
 powershell -NoProfile -File .\scripts\smoke_test.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Mode NoAI -TimeoutSeconds 60
 ```
 
+Run a control-lane balance capture:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode NoAI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -DurationSeconds 50 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Run an AI treatment-lane balance capture:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Summarize a control-vs-treatment pair:
+
+```powershell
+powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
+  -LaneRoot .\lab\logs\eval\<control-lane> `
+  -CompareLaneRoot .\lab\logs\eval\<treatment-lane> `
+  -OutputJson .\lab\logs\eval\comparison.json `
+  -OutputMarkdown .\lab\logs\eval\comparison.md
+```
+
+Run the replay/scenario tests:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios"
+```
+
 ## Bot Test Config
 
 The checked-in template lives at `addons\jk_botti\test_bots.cfg`.
@@ -236,6 +266,8 @@ The no-AI baseline launcher generates the same `jk_botti_<map>.cfg` filename dir
 - `jk_ai_balance_enabled 0`
 
 Only `botskill`, `min_bots`, `max_bots`, and the matching `addbot` lines change when the requested bot count or skill differs from the default baseline.
+
+For evaluation runs the no-AI control lane still keeps `jk_ai_balance_enabled 0` and never starts the sidecar, but the plugin now emits read-only telemetry snapshots into per-match history so the control lane can be compared with the treatment lane without enabling balance changes.
 
 The earlier `unknown command: 'jk_ai_balance_enabled 0'` startup line came from JK Botti's config parser treating registered cvars as unknown before forwarding them to the engine. The launcher no longer emits that avoidable warning because registered cvars are now passed through cleanly without being mislabeled.
 
@@ -289,6 +321,46 @@ The script then classifies the running lab into attach/load states instead of on
 
 If HLDS or Metamod was not installed yet, or the server was not started, the smoke test will report the narrowest observed status and include HLDS/bootstrap log tails.
 
+## Balance Evaluation Artifacts
+
+Each lane written by `scripts\run_balance_eval.ps1` gets its own folder under `lab\logs\eval\`.
+
+The control lane is the baseline:
+
+- launcher path: `scripts\run_standard_bots_crossfire.bat`
+- default map: `crossfire`
+- default bot count: `4`
+- default bot skill: `3`
+- `jk_ai_balance_enabled 0`
+- no Python sidecar
+
+The treatment lane reuses `scripts\run_test_stand_with_bots.ps1` and adds sidecar-driven patch history.
+
+Each lane folder contains:
+
+- copied HLDS logs
+- copied sidecar logs when AI mode is used
+- copied bootstrap log
+- copied generated bot config
+- `latest.telemetry.json`
+- `latest.patch.json` for AI mode
+- `telemetry_history.ndjson`
+- `patch_history.ndjson` for AI mode
+- `patch_apply_history.ndjson` for AI mode
+- `bot_settings_history.ndjson` for AI mode
+- `lane.json`
+- `summary.json`
+- `summary.md`
+
+## Summary Verdicts
+
+- `stable`: bounded actions, limited reversals, and recent telemetry near equilibrium.
+- `underactive`: strong frag-gap momentum with too little corrective action.
+- `oscillatory`: repeated flips between stronger and weaker settings.
+- `insufficient-data`: not enough telemetry to decide.
+
+The summary reports also call out whether cooldown and boundedness constraints were respected, how many telemetry snapshots and patch events were seen, and whether the control-vs-treatment pair is usable for tuning.
+
 ## Attach Troubleshooting
 
 - Check `lab\hlds\valve\addons\metamod\plugins.ini`. It should contain `win32 addons/jk_botti/dlls/jk_botti_mm.dll`.
@@ -297,7 +369,7 @@ If HLDS or Metamod was not installed yet, or the server was not started, the smo
 - Check runtime dependencies with `powershell -NoProfile -File .\scripts\inspect_plugin_dependencies.ps1`. `Release|Win32` uses `MultiThreaded` (`/MT`) and should not require the VC++ redistributable in the lab.
 - Check the earliest bootstrap log at `lab\hlds\valve\addons\jk_botti\runtime\bootstrap.log`.
 - Use `scripts\run_standard_bots_crossfire.bat` first when debugging attach. It keeps the startup path narrowed to HLDS, Metamod, and the jk_botti DLL.
-- If you still see an `unknown command: 'jk_ai_balance_*'` line in HLDS stdout, treat it as a regression in config-command classification rather than a Metamod attach failure. A healthy Prompt 09 launcher run should not emit that warning.
+- If you still see an `unknown command: 'jk_ai_balance_*'` line in HLDS stdout, treat it as a regression in config-command classification rather than a Metamod attach failure. A healthy Prompt 10 launcher run should not emit that warning.
 
 ## Operational Notes
 
