@@ -313,6 +313,15 @@ if ($null -eq $pairSummary) {
     throw "Pair summary JSON could not be parsed: $pairSummaryJsonPath"
 }
 
+$currentPromptId = Get-RepoPromptId
+$sourceCommitSha = Get-RepoHeadCommitSha
+$sourcePairCommitSha = if ($pairSummary.PSObject.Properties["source_commit_sha"] -and $pairSummary.source_commit_sha) {
+    [string]$pairSummary.source_commit_sha
+}
+else {
+    ""
+}
+
 $artifacts = $pairSummary.artifacts
 $comparisonJsonCandidate = if ($artifacts -and $artifacts.comparison_json) { [string]$artifacts.comparison_json } else { Join-Path $resolvedPairRoot "comparison.json" }
 $pairSummaryMarkdownCandidate = if ($artifacts -and $artifacts.pair_summary_markdown) { [string]$artifacts.pair_summary_markdown } else { Join-Path $resolvedPairRoot "pair_summary.md" }
@@ -405,8 +414,10 @@ $outputMarkdownPath = if ([string]::IsNullOrWhiteSpace($OutputMarkdown)) { Join-
 
 $scorecard = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-20"
+    prompt_id = $currentPromptId
     source_pair_prompt_id = [string]$pairSummary.prompt_id
+    commit_sha = $sourceCommitSha
+    source_pair_commit_sha = $sourcePairCommitSha
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     pair_root = $resolvedPairRoot
     pair_id = [string]$pairSummary.pair_id
@@ -478,6 +489,9 @@ $scorecard = [ordered]@{
 Write-JsonFile -Path $outputJsonPath -Value $scorecard
 Write-TextFile -Path $outputMarkdownPath -Value (Get-ScorecardMarkdown -Scorecard $scorecard)
 
+$registerHelperCommand = "powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot `"$resolvedPairRoot`""
+$registrySummaryCommand = "powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1"
+
 Write-Host "Pair-session scorecard:"
 Write-Host "  Pair root: $resolvedPairRoot"
 Write-Host "  Scorecard JSON: $outputJsonPath"
@@ -486,6 +500,8 @@ Write-Host "  Pair classification: $pairClassification"
 Write-Host "  Treatment behavior assessment: $treatmentBehaviorAssessment"
 Write-Host "  Recommendation: $($recommendation.Key)"
 Write-Host "  Recommendation reason: $($recommendation.Reason)"
+Write-Host "  Register helper: $registerHelperCommand"
+Write-Host "  Registry summary helper: $registrySummaryCommand"
 
 [pscustomobject]@{
     PairRoot = $resolvedPairRoot
@@ -496,4 +512,6 @@ Write-Host "  Recommendation reason: $($recommendation.Reason)"
     Recommendation = [string]$recommendation.Key
     RecommendationReason = [string]$recommendation.Reason
     SuggestedOperatorNextStep = [string]$recommendation.SuggestedNextStep
+    RegisterCommand = $registerHelperCommand
+    RegistrySummaryCommand = $registrySummaryCommand
 }

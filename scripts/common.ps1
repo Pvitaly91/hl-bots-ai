@@ -5,6 +5,49 @@ function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
 
+function Get-RepoPromptId {
+    $promptIdPath = Join-Path (Get-RepoRoot) "PROMPT_ID.txt"
+    if (-not (Test-Path -LiteralPath $promptIdPath)) {
+        throw "Prompt ID file was not found: $promptIdPath"
+    }
+
+    $rawLines = @(Get-Content -LiteralPath $promptIdPath | ForEach-Object { $_.Trim() })
+    $beginIndex = [Array]::IndexOf($rawLines, "PROMPT_ID_BEGIN")
+    $endIndex = [Array]::IndexOf($rawLines, "PROMPT_ID_END")
+    if ($beginIndex -lt 0 -or $endIndex -le $beginIndex) {
+        throw "Prompt ID file is malformed: $promptIdPath"
+    }
+
+    $promptLines = @($rawLines[($beginIndex + 1)..($endIndex - 1)] | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($promptLines.Count -ne 1) {
+        throw "Prompt ID file must contain exactly one prompt ID between the markers: $promptIdPath"
+    }
+
+    return [string]$promptLines[0]
+}
+
+function Get-RepoHeadCommitSha {
+    param([string]$RepoRoot = "")
+
+    $resolvedRepoRoot = if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        Get-RepoRoot
+    }
+    else {
+        $RepoRoot
+    }
+
+    try {
+        $sha = & git -C $resolvedRepoRoot rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -eq 0 -and $sha) {
+            return ($sha | Select-Object -First 1).Trim()
+        }
+    }
+    catch {
+    }
+
+    return ""
+}
+
 function Get-TuningProfilesPath {
     return Join-Path (Get-RepoRoot) "ai_director\testdata\tuning_profiles.json"
 }
@@ -128,6 +171,21 @@ function Get-HldsRootDefault {
 function Get-LogsRootDefault {
     param([string]$LabRoot)
     return Join-Path $LabRoot "logs"
+}
+
+function Get-EvalRootDefault {
+    param([string]$LabRoot)
+    return Join-Path (Get-LogsRootDefault -LabRoot $LabRoot) "eval"
+}
+
+function Get-PairsRootDefault {
+    param([string]$LabRoot)
+    return Join-Path (Get-EvalRootDefault -LabRoot $LabRoot) "pairs"
+}
+
+function Get-RegistryRootDefault {
+    param([string]$LabRoot)
+    return Join-Path (Get-EvalRootDefault -LabRoot $LabRoot) "registry"
 }
 
 function Get-LocalIPv4Address {

@@ -47,7 +47,9 @@ Default ports and lanes:
 6. Stay in the treatment lane for about the same minimum useful window.
 7. Run `scripts\review_latest_pair_run.ps1`.
 8. Run `scripts\score_latest_pair_session.ps1`.
-9. Use the scorecard recommendation before choosing the next live profile.
+9. Run `scripts\register_pair_session_result.ps1`.
+10. Run `scripts\summarize_pair_session_registry.ps1`.
+11. Use the profile recommendation before choosing the next live profile.
 
 ## What Counts As Insufficient Data
 
@@ -89,6 +91,18 @@ Then score it with:
 powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
 ```
 
+Then register it into the ledger:
+
+```powershell
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1
+```
+
+Then summarize the accumulated registry:
+
+```powershell
+powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
+```
+
 ## If No Humans Join
 
 - keep the run only as plumbing validation
@@ -116,6 +130,16 @@ powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
 - `conservative-looks-too-quiet-try-responsive-next`: responsive is justified as the next candidate only because conservative stayed too quiet under usable human presence
 - `insufficient-data-repeat-session`: reject the session as tuning evidence and repeat the live pair first
 - `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
+
+## Cross-Session Ledger
+
+- `scripts\register_pair_session_result.ps1` appends the reviewed and scored pair pack into `lab\logs\eval\registry\pair_sessions.ndjson`
+- registration defaults to the newest pair pack and skips duplicate pair packs by default
+- optional notes can be linked with `-NotesPath` or by placing a notes file in the pair root; missing notes never fail the registration step
+- `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
+- the registry summary tells you how many sessions are still insufficient-data or weak-signal, how many are tuning-usable or strong-signal, how often treatment patched while humans were present, and how each treatment profile is behaving across runs
+- conservative remains the default next live profile until the registry shows repeated grounded evidence that responsive is justified
+- responsive should be rejected or reverted when grounded responsive evidence looks too reactive
 
 ## Optional Session Notes
 

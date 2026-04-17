@@ -268,6 +268,9 @@ if (-not $PSBoundParameters.ContainsKey("MinPatchEventsForUsableLane")) {
     $MinPatchEventsForUsableLane = [int]$resolvedTuningProfile.evaluation.min_patch_events_for_usable_lane
 }
 
+$currentPromptId = Get-RepoPromptId
+$sourceCommitSha = Get-RepoHeadCommitSha
+
 if ($MinHumanSnapshots -lt 1) {
     throw "MinHumanSnapshots must be at least 1."
 }
@@ -343,6 +346,8 @@ Write-TextFile -Path $pairJoinInstructionsPath -Value (
 $operatorChecklistPath = Join-Path (Get-RepoRoot) "docs\operator-checklist.md"
 $reviewHelperCommand = "powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1 -PairRoot `"$pairRoot`""
 $scoreHelperCommand = "powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1 -PairRoot `"$pairRoot`""
+$registerHelperCommand = "powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot `"$pairRoot`""
+$registrySummaryCommand = "powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1"
 
 Write-Host "Paired control+treatment evaluation:"
 Write-Host "  Pair pack root: $pairRoot"
@@ -380,6 +385,8 @@ Write-Host "  No-human or sparse-human runs are plumbing validation only, not tu
 Write-Host "After the run:"
 Write-Host "  Review helper: $reviewHelperCommand"
 Write-Host "  Score helper: $scoreHelperCommand"
+Write-Host "  Register helper: $registerHelperCommand"
+Write-Host "  Registry summary helper: $registrySummaryCommand"
 Write-Host "  Pair join instructions: $pairJoinInstructionsPath"
 Write-Host "  Operator checklist: $operatorChecklistPath"
 
@@ -469,7 +476,9 @@ $pairSummaryMarkdownPath = Join-Path $pairRoot "pair_summary.md"
 
 $pairSummary = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-20"
+    prompt_id = $currentPromptId
+    source_commit_sha = $sourceCommitSha
+    generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     pair_id = $pairFolderName
     pair_root = $pairRoot
     map = $Map
@@ -543,6 +552,8 @@ Write-Host "  Comparison Markdown: $comparisonMarkdownPath"
 Write-Host "  Operator note: $operatorNote"
 Write-Host "  Next step: $reviewHelperCommand"
 Write-Host "  Then score: $scoreHelperCommand"
+Write-Host "  Then register: $registerHelperCommand"
+Write-Host "  Then summarize the registry: $registrySummaryCommand"
 Write-Host "  Operator checklist: $operatorChecklistPath"
 
 [pscustomobject]@{
@@ -563,5 +574,7 @@ Write-Host "  Operator checklist: $operatorChecklistPath"
     TreatmentProfile = $resolvedTuningProfile.name
     ReviewCommand = $reviewHelperCommand
     ScoreCommand = $scoreHelperCommand
+    RegisterCommand = $registerHelperCommand
+    RegistrySummaryCommand = $registrySummaryCommand
     OperatorChecklistPath = $operatorChecklistPath
 }

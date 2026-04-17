@@ -365,6 +365,8 @@ else {
     $resolvedTuningProfile = $null
     $TuningProfile = ""
 }
+$currentPromptId = Get-RepoPromptId
+$sourceCommitSha = Get-RepoHeadCommitSha
 $meaningfulImbalanceMomentumForPreview = if ($null -ne $resolvedTuningProfile) {
     [double]$resolvedTuningProfile.evaluation.meaningful_imbalance_momentum
 }
@@ -624,7 +626,8 @@ $copiedArtifacts["join_instructions"] = $joinInstructionsPath
 
 $laneManifest = [ordered]@{
     schema_version = 2
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-20"
+    prompt_id = $currentPromptId
+    source_commit_sha = $sourceCommitSha
     mode = $Mode
     lane_label = $LaneLabel
     map = $Map
@@ -704,7 +707,8 @@ $sessionPackMarkdownPath = Join-Path $laneRoot "session_pack.md"
 
 $sessionPack = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-20"
+    prompt_id = $currentPromptId
+    source_commit_sha = $sourceCommitSha
     lane_root = $laneRoot
     mode = $Mode
     lane_label = $LaneLabel

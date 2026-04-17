@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-20
+HLDM-JKBOTTI-AI-STAND-20260415-21
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -109,6 +109,7 @@ By default the scripts use `.\lab` under the repository root:
 - `lab\logs\`: HLDS stdout/stderr capture for the no-AI launcher and HLDS plus sidecar logs for the AI launcher.
 - `lab\logs\eval\`: timestamped control/treatment lane folders with copied artifacts and summaries.
 - `lab\logs\eval\pairs\`: bounded pair packs containing nested control/treatment lane folders plus combined comparison artifacts.
+- `lab\logs\eval\registry\`: append-only pair-session ledger plus cross-session summary and profile-recommendation artifacts.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\`: telemetry and patch bridge folder used by the plugin and sidecar.
 - `lab\hlds\valve\addons\jk_botti\runtime\ai_balance\history\`: per-match append-only NDJSON history.
 - `lab\hlds\valve\addons\jk_botti\jk_botti_<map>.cfg`: generated map-specific bot test config used by the launcher.
@@ -286,6 +287,20 @@ Then score the latest pair pack with:
 powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
 ```
 
+Register the latest scored pair pack into the append-only ledger:
+
+```powershell
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -NotesPath .\lab\logs\eval\pairs\<pair-pack>\session_notes.md
+```
+
+Summarize the accumulated pair-session ledger after registration:
+
+```powershell
+powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
+```
+
 Run the replay/profile sweep before scheduling a longer live mixed-session:
 
 ```powershell
@@ -314,7 +329,9 @@ For the next real human-vs-bot session, use this sequence:
 4. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
 5. Run `scripts\review_latest_pair_run.ps1`.
 6. Run `scripts\score_latest_pair_session.ps1`.
-7. Use the scorecard recommendation to choose the next live action.
+7. Run `scripts\register_pair_session_result.ps1`.
+8. Run `scripts\summarize_pair_session_registry.ps1`.
+9. Use the profile recommendation to choose the next live action.
 
 The saved join helpers make the roles explicit:
 
@@ -329,6 +346,29 @@ Why `conservative` is the default next live treatment profile:
 - it is the safest way to learn whether live treatment is too quiet before escalating to `responsive`
 
 Try `responsive` only after a conservative pair says the treatment lane stayed too quiet relative to control or never produced a grounded human-present patch window.
+
+## Cross-Session Evidence Ledger
+
+Use the registry helpers to move from single scorecards to accumulated live evidence.
+
+- `scripts\register_pair_session_result.ps1` appends one normalized registry entry into `lab\logs\eval\registry\pair_sessions.ndjson`.
+- registration defaults to the latest pair pack, but `-PairRoot` can target any existing pair pack.
+- duplicate pair packs are skipped by default with a clear message instead of being re-registered silently.
+- registry entries record the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, whether the session is tuning-usable, optional notes path, and embedded prompt/commit metadata when available.
+- notes remain optional. Pass `-NotesPath` or drop a notes file into the pair root if an operator wants to keep lightweight context with the objective evidence.
+- `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
+- the summary answers how many usable sessions exist for each profile, how often treatment patched while humans were present, whether the dataset is still dominated by insufficient-data or weak-signal runs, and whether responsive is justified or should be rejected or reverted.
+- profile promotion stays intentionally conservative: no-human and weak-signal sessions do not justify responsive, one noisy session does not justify a profile change, and conservative remains the default until repeated grounded evidence says otherwise.
+
+Interpret the aggregate recommendation like this:
+
+- `keep-conservative`: the current live default is still behaving safely.
+- `collect-more-conservative-evidence`: there is some usable signal, but not enough repeated grounded evidence yet to promote or reject conservative.
+- `conservative-validated-try-responsive`: only justified after multiple usable or strong conservative sessions show that conservative is consistently too quiet under real human presence.
+- `responsive-too-reactive-revert-to-conservative`: grounded responsive evidence already shows overreaction and the next live profile should move back to conservative.
+- `insufficient-data-repeat-session`: the registry is still dominated by plumbing-only or no-human evidence.
+- `weak-signal-repeat-session`: humans joined, but the accumulated post-patch evidence is still too weak for a profile change.
+- `manual-review-needed`: the ledger has conflicting grounded evidence or a guardrail concern that needs a manual read before the next live action.
 
 Treat the first real human pair session like an operator checklist, not a tuning experiment. `docs\operator-checklist.md` is the concise runbook for:
 

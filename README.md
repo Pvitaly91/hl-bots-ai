@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-20
+HLDM-JKBOTTI-AI-STAND-20260415-21
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -233,7 +233,9 @@ For the first real human pair session, use this operator flow:
 4. join the printed treatment lane second
 5. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
 6. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
-7. use the scorecard recommendation to choose the next live action
+7. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
+8. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
+9. use the profile recommendation to choose the next live action
 
 Preflight verdicts mean:
 
@@ -248,6 +250,20 @@ Run the scorecard helper after the review step:
 
 ```powershell
 powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
+```
+
+Register the newest scored pair pack into the append-only ledger:
+
+```powershell
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -NotesPath .\lab\logs\eval\pairs\<pair-pack>\session_notes.md
+```
+
+Summarize the accumulated pair-session ledger after registration:
+
+```powershell
+powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 ```
 
 Interpret the scorecard treatment assessment like this:
@@ -265,6 +281,27 @@ Use the scorecard recommendation conservatively:
 - `conservative-looks-too-quiet-try-responsive-next`: only justified when humans were present long enough to compare lanes and conservative still stayed too quiet.
 - `insufficient-data-repeat-session`: reject the session for tuning and collect another live pair first.
 - `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action.
+
+## Cross-Session Evidence Ledger
+
+Use the registry layer to turn repeated live pair runs into one honest evidence history instead of treating each scorecard in isolation.
+
+- `scripts\register_pair_session_result.ps1` reads the latest pair pack by default, or a specific `-PairRoot`, and appends one normalized entry into `lab\logs\eval\registry\pair_sessions.ndjson`.
+- duplicate registration is blocked by default; the helper skips with a clear message instead of silently writing the same pair pack twice.
+- each registry entry records the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, whether the session is tuning-usable, optional notes path, and any embedded prompt ID or commit SHA metadata.
+- notes are optional: either pass `-NotesPath` explicitly or place a notes file in the pair root. Missing notes never block registration.
+- subjective notes are carried as context only; the promotion logic still keys off lane evidence, pair classification, and scorecard fields first.
+- `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
+- the registry summary reports total registered sessions, sessions by pair classification, sessions by treatment profile, counts for insufficient-data / weak-signal / tuning-usable / strong-signal sessions, human-present patch counts, meaningful post-patch window counts, and treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`.
+- the profile recommendation stays intentionally conservative. It will not recommend `responsive` from no-human or weak-signal runs, and it requires repeated grounded conservative evidence before promotion.
+- `keep-conservative` means the current live default is still behaving safely.
+- `collect-more-conservative-evidence` means there is some usable signal, but not enough repeated grounded evidence yet to justify promotion.
+- `conservative-validated-try-responsive` is only justified after multiple usable or strong conservative sessions show that conservative is consistently too quiet under real human presence.
+- `responsive-too-reactive-revert-to-conservative` means grounded responsive evidence already shows overreaction and the live default should move back to conservative.
+- `insufficient-data-repeat-session` and `weak-signal-repeat-session` mean the evidence is still too thin to justify any profile change.
+- `manual-review-needed` means the cross-session evidence conflicts or a grounded guardrail concern needs an operator read before another live choice.
+
+Conservative remains the default next live treatment profile until the ledger says otherwise. That keeps profile promotion bounded, reversible, and driven by accumulated evidence instead of one noisy session.
 
 Summarize one lane or compare control vs treatment with:
 
@@ -429,8 +466,11 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 - Evaluation lane artifacts: `lab/logs/eval/<timestamp>-<mode>-...`
 - Mixed-session session packs: `lab/logs/eval/<timestamp>-<mode>-.../session_pack.json`
 - Pair packs: `lab/logs/eval/pairs/<timestamp>-...`
+- Pair-session registry artifacts: `lab/logs/eval/registry/<artifact>`
 - Pair summaries: `lab/logs/eval/pairs/<timestamp>-.../pair_summary.json` and `pair_summary.md`
 - Pair comparisons: `lab/logs/eval/pairs/<timestamp>-.../comparison.json` and `comparison.md`
+- Pair-session registry ledger: `lab/logs/eval/registry/pair_sessions.ndjson`
+- Pair-session registry summaries: `lab/logs/eval/registry/registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
 - Server install root by default: `lab/hlds`
 
 The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a matching set of `addbot` lines so the requested bot pool comes up predictably and can be regenerated safely on each launcher run.
@@ -458,6 +498,9 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/review_latest_pair_run.ps1`: finds the newest pair pack, prints the key artifact paths, summarizes the control/treatment verdicts, and points to the next artifact worth reading.
 - `scripts/score_latest_pair_session.ps1`: writes `scorecard.json` and `scorecard.md` into a pair pack, classifies the treatment lane as too quiet / appropriately conservative / inconclusive / too reactive, and emits an explicit next-action recommendation.
 - `scripts/score_latest_pair_session.bat`: `cmd.exe` wrapper for the scorecard helper.
+- `scripts/register_pair_session_result.ps1`: appends one normalized pair-session result into the persistent registry ledger and skips duplicate pair packs by default.
+- `scripts/register_pair_session_result.bat`: `cmd.exe` wrapper for the pair-session registry helper.
+- `scripts/summarize_pair_session_registry.ps1`: summarizes accumulated pair-session evidence and emits a conservative profile recommendation for the next live action.
 - `scripts/launch_local_hldm_client.ps1`: optional helper that resolves a local Half-Life client and launches or dry-runs a local join command.
 - `scripts/launch_local_hldm_client.bat`: `cmd.exe` wrapper for the local client helper.
 - `scripts/summarize_balance_eval.ps1`: Windows wrapper around the Python evaluator for one lane or a control-vs-treatment pair.
