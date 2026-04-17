@@ -121,7 +121,7 @@ function Get-PairJoinInstructionsText {
         "Treatment becomes most interpretable when it patches while humans are present and there is time to observe the aftermath.",
         "If humans never join, the pair should be treated as insufficient-data only.",
         "If humans join briefly, the pair should be treated as weak-signal.",
-        "After the run, review pair_summary.md first, then comparison.md, or run scripts\review_latest_pair_run.ps1.",
+        "After the run, review pair_summary.md first, then comparison.md, run scripts\review_latest_pair_run.ps1, and finish with scripts\score_latest_pair_session.ps1.",
         "Human-join grace window: $HumanJoinGraceSeconds seconds",
         "Pair pack root: $PairRoot"
     )
@@ -342,6 +342,7 @@ Write-TextFile -Path $pairJoinInstructionsPath -Value (
 
 $operatorChecklistPath = Join-Path (Get-RepoRoot) "docs\operator-checklist.md"
 $reviewHelperCommand = "powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1 -PairRoot `"$pairRoot`""
+$scoreHelperCommand = "powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1 -PairRoot `"$pairRoot`""
 
 Write-Host "Paired control+treatment evaluation:"
 Write-Host "  Pair pack root: $pairRoot"
@@ -378,6 +379,7 @@ Write-Host "  Treatment is strongest when it patches while humans are present an
 Write-Host "  No-human or sparse-human runs are plumbing validation only, not tuning evidence."
 Write-Host "After the run:"
 Write-Host "  Review helper: $reviewHelperCommand"
+Write-Host "  Score helper: $scoreHelperCommand"
 Write-Host "  Pair join instructions: $pairJoinInstructionsPath"
 Write-Host "  Operator checklist: $operatorChecklistPath"
 
@@ -467,7 +469,7 @@ $pairSummaryMarkdownPath = Join-Path $pairRoot "pair_summary.md"
 
 $pairSummary = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-19"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-20"
     pair_id = $pairFolderName
     pair_root = $pairRoot
     map = $Map
@@ -540,6 +542,7 @@ Write-Host "  Comparison JSON: $comparisonJsonPath"
 Write-Host "  Comparison Markdown: $comparisonMarkdownPath"
 Write-Host "  Operator note: $operatorNote"
 Write-Host "  Next step: $reviewHelperCommand"
+Write-Host "  Then score: $scoreHelperCommand"
 Write-Host "  Operator checklist: $operatorChecklistPath"
 
 [pscustomobject]@{
@@ -559,5 +562,6 @@ Write-Host "  Operator checklist: $operatorChecklistPath"
     OperatorNoteClassification = $operatorClassification
     TreatmentProfile = $resolvedTuningProfile.name
     ReviewCommand = $reviewHelperCommand
+    ScoreCommand = $scoreHelperCommand
     OperatorChecklistPath = $operatorChecklistPath
 }

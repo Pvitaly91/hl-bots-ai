@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-19
+HLDM-JKBOTTI-AI-STAND-20260415-20
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -280,6 +280,12 @@ After a pair completes, review the latest pair pack with:
 powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1
 ```
 
+Then score the latest pair pack with:
+
+```powershell
+powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
+```
+
 Run the replay/profile sweep before scheduling a longer live mixed-session:
 
 ```powershell
@@ -306,7 +312,9 @@ For the next real human-vs-bot session, use this sequence:
 2. Start `scripts\run_control_treatment_pair.ps1` with the default `conservative` treatment profile.
 3. Join the control lane on the printed `ControlPort` target first and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
 4. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
-5. After the run, open `pair_summary.md` first, then `comparison.md`, or run `scripts\review_latest_pair_run.ps1`.
+5. Run `scripts\review_latest_pair_run.ps1`.
+6. Run `scripts\score_latest_pair_session.ps1`.
+7. Use the scorecard recommendation to choose the next live action.
 
 The saved join helpers make the roles explicit:
 
@@ -330,6 +338,8 @@ Treat the first real human pair session like an operator checklist, not a tuning
 - what counts as usable-signal
 - what to do if no humans join
 - what to do if treatment never patches while humans are present
+
+`docs\first-live-pair-notes-template.md` is an optional lightweight scratchpad if an operator wants to jot down who joined, how long they stayed, and whether treatment felt too quiet or too reactive.
 
 Preflight verdicts mean:
 
@@ -522,6 +532,7 @@ Per-lane summaries now include:
 
 Read the pair artifacts in this order:
 
+- `scorecard.md`: concise operator-facing decision report for the pair, including the treatment assessment and explicit next-action recommendation
 - `pair_summary.md`: operator-facing answer to whether the run was only plumbing-valid, partially usable, tuning-usable, or strong-signal
 - `comparison.md`: grounded pair metrics such as both lane verdicts, both evidence-quality labels, whether treatment patched while humans were present, whether a meaningful post-patch observation window existed, frag-gap samples while humans were present, and the conservative explanation string
 - lane `session_pack.md`: the per-lane context if you need to drill into one side of the pair
@@ -562,6 +573,22 @@ Pair comparison verdicts are also preserved in `comparison.json` / `comparison.m
 - `comparison-weak-signal`
 - `comparison-usable`
 - `comparison-strong-signal`
+
+The first-human-session scorecard adds one more operator-focused treatment label:
+
+- `too quiet`: humans were present long enough to compare lanes, but conservative stayed quieter than control without grounded human-present patch evidence
+- `appropriately conservative`: conservative produced grounded human-present patch evidence without looking overactive
+- `inconclusive`: human presence, patch timing, or post-patch windows were still too weak to justify a profile decision
+- `too reactive`: the treatment lane looked oscillatory or violated a guardrail and needs manual artifact review
+
+Use the scorecard recommendations like this:
+
+- `keep-conservative-and-collect-more`: conservative remains the next live default
+- `treatment-evidence-promising-repeat-conservative`: repeat conservative before changing profile
+- `weak-signal-repeat-session`: collect another conservative session because live evidence stayed weak
+- `conservative-looks-too-quiet-try-responsive-next`: responsive is justified as the next candidate only because conservative stayed too quiet under usable human presence
+- `insufficient-data-repeat-session`: reject the session as tuning evidence
+- `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
 
 ## Attach Troubleshooting
 

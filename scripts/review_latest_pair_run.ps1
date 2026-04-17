@@ -114,6 +114,10 @@ if ([string]::IsNullOrWhiteSpace($resolvedPairRoot)) {
     throw "Pair root was not found: $PairRoot"
 }
 
+$scorecardJsonPath = Join-Path $resolvedPairRoot "scorecard.json"
+$scorecardMarkdownPath = Join-Path $resolvedPairRoot "scorecard.md"
+$scoreCommand = "powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1 -PairRoot `"$resolvedPairRoot`""
+
 $pairSummaryJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "pair_summary.json")
 if (-not $pairSummaryJsonPath) {
     throw "Pair summary JSON was not found under $resolvedPairRoot"
@@ -177,6 +181,9 @@ Write-Host "  Treatment patched while humans were present: $treatmentPatchedWhil
 Write-Host "  Meaningful post-patch observation window: $meaningfulPostPatchWindow"
 Write-Host "  Pair classification: $pairClassification"
 Write-Host "  Comparison verdict: $comparisonVerdict"
+Write-Host "  Score helper: $scoreCommand"
+Write-Host "  Scorecard JSON path: $scorecardJsonPath"
+Write-Host "  Scorecard Markdown path: $scorecardMarkdownPath"
 Write-Host "Next artifact to inspect:"
 Write-Host "  Path: $($nextArtifact.Path)"
 Write-Host "  Reason: $($nextArtifact.Reason)"
@@ -195,6 +202,9 @@ Write-Host "  Reason: $($nextArtifact.Reason)"
     MeaningfulPostPatchObservationWindowExists = $meaningfulPostPatchWindow
     PairClassification = $pairClassification
     ComparisonVerdict = $comparisonVerdict
+    ScoreCommand = $scoreCommand
+    ScorecardJsonPath = $scorecardJsonPath
+    ScorecardMarkdownPath = $scorecardMarkdownPath
     NextArtifactPath = $nextArtifact.Path
     NextArtifactReason = $nextArtifact.Reason
 }

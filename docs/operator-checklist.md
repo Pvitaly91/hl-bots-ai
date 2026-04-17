@@ -45,7 +45,9 @@ Default ports and lanes:
 4. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
 5. Let the runner advance to the treatment lane, then join the treatment lane second.
 6. Stay in the treatment lane for about the same minimum useful window.
-7. After the run, inspect the pair pack before making any tuning claims.
+7. Run `scripts\review_latest_pair_run.ps1`.
+8. Run `scripts\score_latest_pair_session.ps1`.
+9. Use the scorecard recommendation before choosing the next live profile.
 
 ## What Counts As Insufficient Data
 
@@ -69,15 +71,22 @@ This is the minimum bar for `tuning-usable`. Multiple grounded post-patch window
 
 Open these in order:
 
-1. `pair_summary.md`
-2. `comparison.md`
-3. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
-4. control `summary.md` if the control lane looks weak or sparse
+1. `scorecard.md`
+2. `pair_summary.md`
+3. `comparison.md`
+4. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
+5. control `summary.md` if the control lane looks weak or sparse
 
 The fastest way to review the newest pair is:
 
 ```powershell
 powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1
+```
+
+Then score it with:
+
+```powershell
+powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
 ```
 
 ## If No Humans Join
@@ -91,6 +100,26 @@ powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1
 - inspect `comparison.md` and the treatment lane `summary.md`
 - confirm whether humans were present long enough for treatment to react
 - if the pair still says treatment stayed too quiet relative to control, only then consider a later follow-up with `responsive`
+
+## How To Interpret The Scorecard
+
+- `too quiet`: humans were present long enough to compare lanes, but conservative still stayed quieter than control without grounded human-present patch evidence
+- `appropriately conservative`: conservative produced grounded human-present patch evidence and did not look oscillatory or overactive
+- `inconclusive`: human presence, patch timing, or post-patch windows were still too weak to justify a profile decision
+- `too reactive`: the treatment lane looked oscillatory or violated a guardrail and needs manual review before another live profile choice
+
+## How To Use The Recommendation
+
+- `keep-conservative-and-collect-more`: conservative stays the next live default
+- `treatment-evidence-promising-repeat-conservative`: repeat conservative before changing profile
+- `weak-signal-repeat-session`: collect another conservative session because the live evidence stayed weak
+- `conservative-looks-too-quiet-try-responsive-next`: responsive is justified as the next candidate only because conservative stayed too quiet under usable human presence
+- `insufficient-data-repeat-session`: reject the session as tuning evidence and repeat the live pair first
+- `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
+
+## Optional Session Notes
+
+- `docs\first-live-pair-notes-template.md` is a lightweight place to jot down who joined, how long they stayed, and whether treatment felt too quiet or too reactive
 
 ## Preflight Verdict Meanings
 

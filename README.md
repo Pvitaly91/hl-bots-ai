@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-19
+HLDM-JKBOTTI-AI-STAND-20260415-20
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -19,6 +19,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `docs/test-stand.md` with local HLDS lab details.
 - `docs/operator-checklist.md` with the first real human pair-session operator flow.
+- `docs/first-live-pair-notes-template.md` as an optional lightweight note sheet for the first real human pair session.
 - `AGENTS.md` for future repository automation guidance.
 
 ## Architecture Overview
@@ -210,6 +211,7 @@ Live lane summaries now also record the active tuning profile and the effective 
 
 Read pair artifacts like this:
 
+- `scorecard.json` / `scorecard.md`: concise operator-facing session scorecard and explicit next-action recommendation, written by `scripts\score_latest_pair_session.ps1`.
 - `pair_summary.json` / `pair_summary.md`: the operator-facing verdict for the whole pair, including whether the run was only plumbing-valid, partially usable, tuning-usable, or strong-signal.
 - `comparison.json` / `comparison.md`: grounded control-vs-treatment metrics such as both lane verdicts, both evidence-quality labels, whether treatment patched while humans were present, whether a post-patch observation window existed, frag-gap samples while humans were present, and a conservative explanation string.
 - `control_join_instructions.txt` and `treatment_join_instructions.txt`: the exact join targets to hand to the human participant for each lane.
@@ -230,6 +232,8 @@ For the first real human pair session, use this operator flow:
 3. join the printed control lane first
 4. join the printed treatment lane second
 5. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
+6. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
+7. use the scorecard recommendation to choose the next live action
 
 Preflight verdicts mean:
 
@@ -238,6 +242,29 @@ Preflight verdicts mean:
 - `blocked`: do not spend a human session yet; fix the reported blockers first.
 
 Use `docs\operator-checklist.md` as the concise runbook for the first real human pair session.
+Use `docs\first-live-pair-notes-template.md` only if an operator wants a lightweight place to capture subjective notes next to the saved artifacts.
+
+Run the scorecard helper after the review step:
+
+```powershell
+powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
+```
+
+Interpret the scorecard treatment assessment like this:
+
+- `too quiet`: humans were present long enough to compare lanes, but conservative stayed quieter than control without grounded human-present patch evidence.
+- `appropriately conservative`: conservative produced grounded human-present patch evidence without looking oscillatory or overactive.
+- `inconclusive`: human presence, patch timing, or post-patch observation windows were still too weak to justify a profile decision.
+- `too reactive`: the treatment lane looked oscillatory or violated a guardrail, so artifacts need manual review before another live profile choice.
+
+Use the scorecard recommendation conservatively:
+
+- `keep-conservative-and-collect-more`: conservative already looks healthy enough to remain the live default.
+- `treatment-evidence-promising-repeat-conservative`: there is promising live signal, but repeat conservative before considering a profile change.
+- `weak-signal-repeat-session`: humans joined, but the post-patch evidence stayed weak; repeat conservative first.
+- `conservative-looks-too-quiet-try-responsive-next`: only justified when humans were present long enough to compare lanes and conservative still stayed too quiet.
+- `insufficient-data-repeat-session`: reject the session for tuning and collect another live pair first.
+- `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action.
 
 Summarize one lane or compare control vs treatment with:
 
@@ -429,6 +456,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
 - `scripts/review_latest_pair_run.ps1`: finds the newest pair pack, prints the key artifact paths, summarizes the control/treatment verdicts, and points to the next artifact worth reading.
+- `scripts/score_latest_pair_session.ps1`: writes `scorecard.json` and `scorecard.md` into a pair pack, classifies the treatment lane as too quiet / appropriately conservative / inconclusive / too reactive, and emits an explicit next-action recommendation.
+- `scripts/score_latest_pair_session.bat`: `cmd.exe` wrapper for the scorecard helper.
 - `scripts/launch_local_hldm_client.ps1`: optional helper that resolves a local Half-Life client and launches or dry-runs a local join command.
 - `scripts/launch_local_hldm_client.bat`: `cmd.exe` wrapper for the local client helper.
 - `scripts/summarize_balance_eval.ps1`: Windows wrapper around the Python evaluator for one lane or a control-vs-treatment pair.
