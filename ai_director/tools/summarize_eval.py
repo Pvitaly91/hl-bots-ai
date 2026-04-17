@@ -42,10 +42,22 @@ def summarize_lane(lane_root: Path) -> dict[str, Any]:
 
 
 def _lane_markdown(summary: dict[str, Any], heading: str) -> list[str]:
+    profile_effective = summary.get("tuning_profile_effective") or {}
+    profile_decision = profile_effective.get("decision", {})
+    profile_evaluation = profile_effective.get("evaluation", {})
     return [
         heading,
         f"- Mode: {summary.get('mode', 'Unknown')}",
         f"- Lane label: {summary.get('lane_label', 'default')}",
+        f"- Tuning profile: {summary.get('tuning_profile') or 'n/a'}",
+        (
+            f"- Profile knobs: cooldown={profile_effective.get('cooldown_seconds', 'n/a')}, "
+            f"mild/strong momentum="
+            f"{profile_decision.get('mild_momentum_threshold', 'n/a')}/"
+            f"{profile_decision.get('strong_momentum_threshold', 'n/a')}, "
+            f"min humans={profile_evaluation.get('min_human_snapshots', 'n/a')} snapshots / "
+            f"{profile_evaluation.get('min_human_presence_seconds', 'n/a')} seconds"
+        ),
         f"- Map: {summary.get('map', 'unknown')}",
         (
             f"- Bot count / skill: {summary.get('bot_count', 0)} / "
@@ -152,12 +164,20 @@ def render_markdown(
                     f"{comparison_summary.get('control_lane_label', 'control')}"
                 ),
                 (
+                    f"- Control tuning profile: "
+                    f"{comparison_summary.get('control_tuning_profile') or 'n/a'}"
+                ),
+                (
                     f"- Treatment mode: "
                     f"{comparison_summary.get('treatment_mode', 'Unknown')}"
                 ),
                 (
                     f"- Treatment lane label: "
                     f"{comparison_summary.get('treatment_lane_label', 'treatment')}"
+                ),
+                (
+                    f"- Treatment tuning profile: "
+                    f"{comparison_summary.get('treatment_tuning_profile') or 'n/a'}"
                 ),
                 (
                     f"- Control verdict: "

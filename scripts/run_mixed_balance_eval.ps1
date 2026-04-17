@@ -17,6 +17,7 @@ param(
     [string]$Platform = "Win32",
     [string]$SteamCmdPath = "",
     [string]$PythonPath = "",
+    [string]$TuningProfile = "default",
     [switch]$SkipSteamCmdUpdate,
     [switch]$SkipMetamodDownload
 )
@@ -37,6 +38,7 @@ Write-Host "  Bot count: $BotCount"
 Write-Host "  Bot skill: $BotSkill"
 Write-Host "  Port: $Port"
 Write-Host "  Lane label: $laneLabelValue"
+Write-Host "  Tuning profile: $TuningProfile"
 Write-Host "  Loopback join target: $($joinInfo.LoopbackAddress)"
 Write-Host "  Console join command: $($joinInfo.ConsoleCommand)"
 if (-not [string]::IsNullOrWhiteSpace([string]$joinInfo.LanAddress)) {
@@ -55,6 +57,7 @@ $evalArgs = @{
     MinHumanSnapshots = $MinHumanSnapshots
     MinHumanPresenceSeconds = $MinHumanPresenceSeconds
     MinPatchEventsForUsableLane = $MinPatchEventsForUsableLane
+    TuningProfile = $TuningProfile
     LaneLabel = $laneLabelValue
     Configuration = $Configuration
     Platform = $Platform

@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-12
+HLDM-JKBOTTI-AI-STAND-20260415-13
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -14,9 +14,9 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `hl-bots-ai.sln` and `jk_botti_mm.vcxproj` for Visual Studio 2022 `Win32|Debug` and `Win32|Release`.
 - `ai_balance.cpp` and related hooks in the plugin for telemetry export and bounded patch application.
 - `ai_director/` Python sidecar for offline fallback rules, evaluation helpers, and optional OpenAI Responses API usage.
-- `ai_director/testdata/` and `ai_director/tests/test_replay_scenarios.py` for deterministic replay coverage.
+- `ai_director/tuning.py`, `ai_director/testdata/`, and replay sweep tooling for deterministic profile comparison.
 - `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
-- `scripts/run_balance_eval.ps1` and `scripts/summarize_balance_eval.ps1` for control/treatment summaries.
+- `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `docs/test-stand.md` with local HLDS lab details.
 - `AGENTS.md` for future repository automation guidance.
 
@@ -159,9 +159,9 @@ Use the evaluation runner when the goal is behavior measurement instead of only 
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode NoAI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -DurationSeconds 50 -SkipSteamCmdUpdate -SkipMetamodDownload
-powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
-powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
-powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile default -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile responsive -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile responsive -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The no-AI lane remains the primary control:
@@ -178,6 +178,7 @@ The AI lane reuses the existing sidecar-backed launcher and adds copied lane art
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
 
 - `-LaneLabel` stamps a human-readable role such as `control-baseline` or `mixed-session-treatment`.
+- `-TuningProfile` selects a named offline rule profile such as `conservative`, `default`, or `responsive`.
 - `-WaitForHumanJoin` keeps an AI lane alive past the base duration until it either becomes tuning-usable or the grace window expires.
 - `-HumanJoinGraceSeconds`, `-MinHumanSnapshots`, and `-MinHumanPresenceSeconds` define the live mixed-session quality gate.
 - `-MinPatchEventsForUsableLane` lets the runner wait a little longer for a bounded treatment response when meaningful human-vs-bot imbalance is already present.
@@ -195,6 +196,8 @@ If no humans join, the lane can still be `ai-healthy`, but the summary marks it 
 - `human_presence_timeline.ndjson`
 - copied HLDS, bootstrap, sidecar, bot-config, telemetry, and patch artifacts
 
+Live lane summaries now also record the active tuning profile and the effective knobs used for that run, so mixed-session results can be interpreted relative to `conservative`, `default`, or `responsive` treatment behavior.
+
 If `Half-Life\hl.exe` is available locally, `scripts\launch_local_hldm_client.ps1 -Port <port> -DryRun` resolves the client path and prints the launch command without starting the game. If the executable is missing, the helper fails with a precise prereq message instead of failing silently.
 
 Summarize one lane or compare control vs treatment with:
@@ -207,12 +210,38 @@ powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
   -OutputMarkdown .\lab\logs\eval\comparison.md
 ```
 
+## Replay-Driven Tuning Profiles
+
+A tuning profile is a named bundle of bounded offline rule parameters used by the AI sidecar and the replay evaluator. The current catalog is stored in `ai_director/testdata/tuning_profiles.json` and exposes three starting points:
+
+- `conservative`: higher human-signal thresholds, slower cooldown, and more caution near the decision boundary.
+- `default`: current bounded baseline behavior and the safest reference point for regression checks.
+- `responsive`: lower decision thresholds and a shorter cooldown to react earlier to sustained imbalance.
+
+Run the replay/profile sweep before spending live mixed-session time:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_balance_parameter_sweep.ps1
+powershell -NoProfile -File .\scripts\run_balance_parameter_sweep.ps1 -Profiles conservative default responsive
+```
+
+The sweep writes `summary.json`, `summary.md`, `comparison.json`, and `comparison.md` under `lab\logs\eval\replay_sweeps\<timestamp>\`. Those artifacts answer:
+
+- which profile is safest
+- which profile is most conservative
+- which profile is most responsive
+- which profile best avoids oscillation
+- which profile best avoids underreaction
+- which profile is the best next candidate for a live mixed-session run
+
+Use the sweep results to pick the next live treatment profile, then pass the same name back into `scripts\run_balance_eval.ps1` or `scripts\run_mixed_balance_eval.ps1` with `-TuningProfile <name>`. The no-AI control lane stays profile-agnostic and remains the baseline for control-vs-treatment comparisons.
+
 ## Replay Scenarios
 
 Run the deterministic replay and summary tests without a live server:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios ai_director.tests.test_tuning_profiles"
 ```
 
 The replay fixture set now covers more realistic mixed-session patterns:
@@ -226,6 +255,10 @@ The replay fixture set now covers more realistic mixed-session patterns:
 - brief human joins that should stay insufficient-data
 - strong frag-gap spikes followed by stabilization
 - close games with only mild imbalance where AI should remain conservative
+- near-threshold lanes where conservative should hold and responsive profiles may react
+- sustained moderate imbalance where a quicker profile should respond sooner
+- noisy threshold alternation where aggressive profiles risk oscillation
+- overcorrection-risk sequences where hysteresis matters after the first patch
 
 ## Evaluation Verdicts
 

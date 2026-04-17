@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from ai_director.tuning import resolve_tuning_profile
+
 MIN_SKILL_LEVEL = 1
 MAX_SKILL_LEVEL = 5
 MIN_SCALE = 0.85
@@ -69,7 +71,21 @@ def recommendation_from_payload(payload: dict[str, Any]) -> PatchRecommendation:
     ).clamped()
 
 
-def recommend_patch(telemetry: dict[str, Any]) -> PatchRecommendation:
+def _decision_settings(
+    tuning_profile: str | dict[str, Any] | None,
+) -> tuple[str, dict[str, Any], float]:
+    profile = resolve_tuning_profile(tuning_profile)
+    return (
+        str(profile.get("name", "default")),
+        dict(profile.get("decision", {})),
+        float(profile.get("cooldown_seconds", 30.0)),
+    )
+
+
+def recommend_patch(
+    telemetry: dict[str, Any], tuning_profile: str | dict[str, Any] | None = None
+) -> PatchRecommendation:
+    profile_name, settings, _ = _decision_settings(tuning_profile)
     current_skill = clamp_int(
         _as_int(telemetry, "current_default_bot_skill_level", 3),
         MIN_SKILL_LEVEL,
@@ -87,45 +103,71 @@ def recommend_patch(telemetry: dict[str, Any]) -> PatchRecommendation:
             bot_count_delta=0,
             pause_frequency_scale=1.0,
             battle_strafe_scale=1.0,
-            reason="Waiting for both humans and bots to become active.",
+            reason=f"Waiting for both humans and bots to become active ({profile_name} profile).",
         )
 
     momentum = frag_gap + ((human_kpm - bot_kpm) * 0.75)
+    mild_momentum_threshold = float(settings.get("mild_momentum_threshold", 4.0))
+    strong_momentum_threshold = float(settings.get("strong_momentum_threshold", 8.0))
+    max_extra_bots_above_humans = max(
+        0, _as_int(settings, "max_extra_bots_above_humans", 2)
+    )
+    max_bot_count = max(1, _as_int(settings, "max_bot_count", 6))
 
-    if momentum >= 8:
+    if momentum >= strong_momentum_threshold:
         return PatchRecommendation(
             target_skill_level=current_skill - 1,
-            bot_count_delta=1 if bot_count < min(human_count + 2, 6) else 0,
-            pause_frequency_scale=0.92,
-            battle_strafe_scale=1.08,
-            reason="Humans are pulling ahead on frags and recent kill pace.",
+            bot_count_delta=(
+                1
+                if bot_count < min(human_count + max_extra_bots_above_humans, max_bot_count)
+                else 0
+            ),
+            pause_frequency_scale=float(
+                settings.get("strong_strengthen_pause_frequency_scale", 0.92)
+            ),
+            battle_strafe_scale=float(
+                settings.get("strong_strengthen_battle_strafe_scale", 1.08)
+            ),
+            reason=f"Humans are pulling ahead on frags and recent kill pace ({profile_name} profile).",
         ).clamped()
 
-    if momentum >= 4:
+    if momentum >= mild_momentum_threshold:
         return PatchRecommendation(
             target_skill_level=current_skill - 1,
             bot_count_delta=0,
-            pause_frequency_scale=0.96,
-            battle_strafe_scale=1.04,
-            reason="Humans are slightly ahead; strengthen bots cautiously.",
+            pause_frequency_scale=float(
+                settings.get("mild_strengthen_pause_frequency_scale", 0.96)
+            ),
+            battle_strafe_scale=float(
+                settings.get("mild_strengthen_battle_strafe_scale", 1.04)
+            ),
+            reason=f"Humans are slightly ahead; strengthen bots cautiously ({profile_name} profile).",
         ).clamped()
 
-    if momentum <= -8:
+    if momentum <= -strong_momentum_threshold:
         return PatchRecommendation(
             target_skill_level=current_skill + 1,
             bot_count_delta=-1 if bot_count > 1 else 0,
-            pause_frequency_scale=1.08,
-            battle_strafe_scale=0.92,
-            reason="Bots are leading too hard on frags and recent kill pace.",
+            pause_frequency_scale=float(
+                settings.get("strong_relax_pause_frequency_scale", 1.08)
+            ),
+            battle_strafe_scale=float(
+                settings.get("strong_relax_battle_strafe_scale", 0.92)
+            ),
+            reason=f"Bots are leading too hard on frags and recent kill pace ({profile_name} profile).",
         ).clamped()
 
-    if momentum <= -4:
+    if momentum <= -mild_momentum_threshold:
         return PatchRecommendation(
             target_skill_level=current_skill + 1,
             bot_count_delta=0,
-            pause_frequency_scale=1.04,
-            battle_strafe_scale=0.96,
-            reason="Bots are slightly ahead; relax them cautiously.",
+            pause_frequency_scale=float(
+                settings.get("mild_relax_pause_frequency_scale", 1.04)
+            ),
+            battle_strafe_scale=float(
+                settings.get("mild_relax_battle_strafe_scale", 0.96)
+            ),
+            reason=f"Bots are slightly ahead; relax them cautiously ({profile_name} profile).",
         ).clamped()
 
     return PatchRecommendation(
@@ -133,14 +175,17 @@ def recommend_patch(telemetry: dict[str, Any]) -> PatchRecommendation:
         bot_count_delta=0,
         pause_frequency_scale=1.0,
         battle_strafe_scale=1.0,
-        reason="Match looks close enough; hold current balance.",
+        reason=f"Match looks close enough; hold current balance ({profile_name} profile).",
     ).clamped()
 
 
 def materialize_patch(
-    telemetry: dict[str, Any], recommendation: PatchRecommendation
+    telemetry: dict[str, Any],
+    recommendation: PatchRecommendation,
+    tuning_profile: str | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     recommendation = recommendation.clamped()
+    profile_name, _, cooldown_seconds = _decision_settings(tuning_profile)
     match_id = str(telemetry.get("match_id", "unknown-match"))
     telemetry_sequence = _as_int(telemetry, "telemetry_sequence", 0)
     map_name = str(telemetry.get("map_name", "unknown"))
@@ -163,5 +208,7 @@ def materialize_patch(
         "telemetry_sequence": telemetry_sequence,
         "map_name": map_name,
         "patch_id": f"{match_id}:{telemetry_sequence}:{patch_hash}",
+        "tuning_profile": profile_name,
+        "profile_cooldown_seconds": round(cooldown_seconds, 1),
         **patch_core,
     }

@@ -35,6 +35,7 @@ def process_telemetry(
     api_key: str | None,
     model: str,
     previous_patch: dict | None,
+    tuning_profile: str,
 ) -> dict:
     if api_key:
         try:
@@ -44,11 +45,15 @@ def process_telemetry(
             logging.info("Generated patch with OpenAI model %s", model)
         except Exception as exc:  # pragma: no cover - depends on local env
             logging.warning("OpenAI path failed, falling back to rules: %s", exc)
-            recommendation = recommend_patch(telemetry)
+            recommendation = recommend_patch(telemetry, tuning_profile=tuning_profile)
     else:
-        recommendation = recommend_patch(telemetry)
+        recommendation = recommend_patch(telemetry, tuning_profile=tuning_profile)
 
-    patch = materialize_patch(telemetry, recommendation)
+    patch = materialize_patch(
+        telemetry,
+        recommendation,
+        tuning_profile=tuning_profile,
+    )
     patch_event = build_patch_event(telemetry, recommendation, patch, previous_patch)
     append_ndjson(
         history_file_path(runtime_dir, "patch", str(telemetry.get("match_id", "unknown-match"))),
@@ -104,6 +109,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Process the latest telemetry file once and exit.",
     )
+    parser.add_argument(
+        "--tuning-profile",
+        default=os.getenv("AI_DIRECTOR_TUNING_PROFILE", "default"),
+        help="Named tuning profile for the bounded offline rule path.",
+    )
     return parser.parse_args()
 
 
@@ -144,6 +154,7 @@ def main() -> int:
                     api_key=api_key,
                     model=model,
                     previous_patch=last_patch,
+                    tuning_profile=str(args.tuning_profile),
                 )
                 if patch:
                     write_json_atomic(patch_path, patch)

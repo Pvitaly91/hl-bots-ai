@@ -3,6 +3,7 @@ param(
     [string]$HldsRoot = "",
     [string]$RuntimeDir = "",
     [string]$PythonPath = "",
+    [string]$TuningProfile = "default",
     [double]$PollInterval = 5,
     [switch]$Once,
     [switch]$PassThru
@@ -25,6 +26,7 @@ $arguments = @(
     $mainPath
     "--runtime-dir", $RuntimeDir
     "--poll-interval", "$PollInterval"
+    "--tuning-profile", $TuningProfile
 )
 
 if ($Once) {

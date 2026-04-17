@@ -16,6 +16,7 @@ from ai_director.decision import (
     materialize_patch,
     recommend_patch,
 )
+from ai_director.tuning import resolve_tuning_profile, tuning_profile_summary
 
 EPSILON = 1e-3
 DEFAULT_MIN_HUMAN_SNAPSHOTS = 2
@@ -160,6 +161,7 @@ def build_patch_event(
             _as_float(telemetry, "server_time_seconds", 0.0), 2
         ),
         "map_name": str(telemetry.get("map_name", "unknown")),
+        "tuning_profile": str(candidate_patch.get("tuning_profile", "")),
         "momentum": round(momentum_from_telemetry(telemetry), 3),
         "current_human_player_count": max(0, _as_int(telemetry, "human_player_count", 0)),
         "current_default_bot_skill_level": clamp_int(
@@ -261,6 +263,63 @@ def _manifest_float(manifest: dict[str, Any] | None, key: str, default: float) -
     return _as_float(manifest or {}, key, default)
 
 
+def _manifest_has_key(manifest: dict[str, Any] | None, key: str) -> bool:
+    return isinstance(manifest, dict) and key in manifest
+
+
+def _manifest_tuning_profile(manifest: dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(manifest, dict):
+        effective_profile = manifest.get("tuning_profile_effective")
+        if isinstance(effective_profile, dict) and effective_profile:
+            return resolve_tuning_profile(effective_profile)
+        if str(manifest.get("mode", "Unknown")).upper() == "AI":
+            return resolve_tuning_profile(manifest.get("tuning_profile", None))
+    return resolve_tuning_profile(None)
+
+
+def _summary_tuning_profile(
+    manifest: dict[str, Any] | None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    if str((manifest or {}).get("mode", "Unknown")).upper() != "AI":
+        return (None, None)
+    profile = _manifest_tuning_profile(manifest)
+    return (str(profile.get("name", "default")), tuning_profile_summary(profile))
+
+
+def _evaluation_setting(
+    manifest: dict[str, Any] | None,
+    key: str,
+    default: float,
+) -> float:
+    profile = _manifest_tuning_profile(manifest)
+    evaluation = profile.get("evaluation", {})
+    return float(evaluation.get(key, default))
+
+
+def _manifest_or_profile_int(
+    manifest: dict[str, Any] | None,
+    key: str,
+    default: int,
+    profile_key: str | None = None,
+) -> int:
+    if _manifest_has_key(manifest, key):
+        return _manifest_int(manifest, key, default)
+    resolved_key = profile_key or key
+    return int(round(_evaluation_setting(manifest, resolved_key, float(default))))
+
+
+def _manifest_or_profile_float(
+    manifest: dict[str, Any] | None,
+    key: str,
+    default: float,
+    profile_key: str | None = None,
+) -> float:
+    if _manifest_has_key(manifest, key):
+        return _manifest_float(manifest, key, default)
+    resolved_key = profile_key or key
+    return _evaluation_setting(manifest, resolved_key, default)
+
+
 def _lane_label(manifest: dict[str, Any] | None) -> str:
     value = str((manifest or {}).get("lane_label", "")).strip()
     return value or "default"
@@ -334,11 +393,15 @@ def _collect_human_signal(
 ) -> dict[str, Any]:
     min_human_snapshots = max(
         1,
-        _manifest_int(manifest, "min_human_snapshots", DEFAULT_MIN_HUMAN_SNAPSHOTS),
+        _manifest_or_profile_int(
+            manifest,
+            "min_human_snapshots",
+            DEFAULT_MIN_HUMAN_SNAPSHOTS,
+        ),
     )
     min_human_presence_seconds = max(
         1.0,
-        _manifest_float(
+        _manifest_or_profile_float(
             manifest,
             "min_human_presence_seconds",
             DEFAULT_MIN_HUMAN_PRESENCE_SECONDS,
@@ -346,10 +409,60 @@ def _collect_human_signal(
     )
     min_patch_events_for_usable_lane = max(
         0,
-        _manifest_int(
+        _manifest_or_profile_int(
             manifest,
             "min_patch_events_for_usable_lane",
             DEFAULT_MIN_PATCH_EVENTS_FOR_USABLE_LANE,
+        ),
+    )
+    meaningful_imbalance_momentum = _manifest_or_profile_float(
+        manifest,
+        "meaningful_imbalance_momentum",
+        MEANINGFUL_IMBALANCE_MOMENTUM,
+    )
+    strong_imbalance_momentum = _manifest_or_profile_float(
+        manifest,
+        "strong_imbalance_momentum",
+        STRONG_IMBALANCE_MOMENTUM,
+    )
+    rich_human_snapshot_multiplier = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "rich_human_snapshot_multiplier",
+            2,
+        ),
+    )
+    rich_human_snapshot_extra = max(
+        0,
+        _manifest_or_profile_int(
+            manifest,
+            "rich_human_snapshot_extra",
+            2,
+        ),
+    )
+    rich_human_presence_multiplier = max(
+        1.0,
+        _manifest_or_profile_float(
+            manifest,
+            "rich_human_presence_multiplier",
+            2.0,
+        ),
+    )
+    rich_human_presence_extra_seconds = max(
+        0.0,
+        _manifest_or_profile_float(
+            manifest,
+            "rich_human_presence_extra_seconds",
+            40.0,
+        ),
+    )
+    rich_human_min_player_count = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "rich_human_min_player_count",
+            2,
         ),
     )
 
@@ -400,16 +513,18 @@ def _collect_human_signal(
         human_signal_verdict = "human-sparse"
     else:
         rich_min_human_snapshots = max(
-            min_human_snapshots * 2, min_human_snapshots + 2
+            min_human_snapshots * rich_human_snapshot_multiplier,
+            min_human_snapshots + rich_human_snapshot_extra,
         )
         rich_min_human_presence_seconds = max(
-            min_human_presence_seconds * 2.0, min_human_presence_seconds + 40.0
+            min_human_presence_seconds * rich_human_presence_multiplier,
+            min_human_presence_seconds + rich_human_presence_extra_seconds,
         )
         if (
             human_snapshots_count >= rich_min_human_snapshots
             and seconds_with_human_presence + EPSILON
             >= rich_min_human_presence_seconds
-            and max_human_player_count >= 2
+            and max_human_player_count >= rich_human_min_player_count
         ):
             human_signal_verdict = "human-rich"
         else:
@@ -420,14 +535,14 @@ def _collect_human_signal(
         for record in telemetry_records
         if _as_int(record, "human_player_count", 0) > 0
         and _as_int(record, "bot_count", 0) > 0
-        and abs(momentum_from_telemetry(record)) >= MEANINGFUL_IMBALANCE_MOMENTUM
+        and abs(momentum_from_telemetry(record)) >= meaningful_imbalance_momentum
     ]
     strong_human_imbalance_records = [
         record
         for record in telemetry_records
         if _as_int(record, "human_player_count", 0) > 0
         and _as_int(record, "bot_count", 0) > 0
-        and abs(momentum_from_telemetry(record)) >= STRONG_IMBALANCE_MOMENTUM
+        and abs(momentum_from_telemetry(record)) >= strong_imbalance_momentum
     ]
 
     emitted_patches = _emitted_patch_records(patch_records)
@@ -442,7 +557,7 @@ def _collect_human_signal(
         for record in emitted_patches
         if _as_int(record, "current_human_player_count", 0) > 0
         and _as_int(record, "current_bot_count", 0) > 0
-        and abs(_as_float(record, "momentum", 0.0)) >= MEANINGFUL_IMBALANCE_MOMENTUM
+        and abs(_as_float(record, "momentum", 0.0)) >= meaningful_imbalance_momentum
         and not str(record.get("reason", "")).lower().startswith(
             "waiting for both humans and bots"
         )
@@ -527,6 +642,8 @@ def _collect_human_signal(
         "min_human_snapshots": min_human_snapshots,
         "min_human_presence_seconds": round(min_human_presence_seconds, 1),
         "min_patch_events_for_usable_lane": min_patch_events_for_usable_lane,
+        "meaningful_imbalance_momentum": round(meaningful_imbalance_momentum, 3),
+        "strong_imbalance_momentum": round(strong_imbalance_momentum, 3),
         "human_snapshots_count": human_snapshots_count,
         "seconds_with_human_presence": round(seconds_with_human_presence, 1),
         "max_human_player_count": max_human_player_count,
@@ -599,7 +716,10 @@ def _lane_quality_verdict(
     return f"{smoke_status}-{verdict_suffix}"
 
 
-def _evidence_quality_from_signal(human_signal: dict[str, Any]) -> tuple[str, str]:
+def _evidence_quality_from_signal(
+    manifest: dict[str, Any] | None,
+    human_signal: dict[str, Any],
+) -> tuple[str, str]:
     if not bool(human_signal.get("tuning_signal_usable", False)):
         return (
             "insufficient-data",
@@ -620,13 +740,32 @@ def _evidence_quality_from_signal(human_signal: dict[str, Any]) -> tuple[str, st
             "weak-signal",
             "No post-patch human observation window was captured after a treatment response.",
         )
+    strong_signal_min_post_patch_windows = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "strong_signal_min_post_patch_windows",
+            2,
+        ),
+    )
+    strong_signal_requires_human_rich = bool(
+        _manifest_or_profile_int(
+            manifest,
+            "strong_signal_requires_human_rich",
+            1,
+        )
+    )
     if (
-        human_signal["human_signal_verdict"] == "human-rich"
-        and human_signal["response_after_patch_observation_window_count"] >= 2
+        (
+            not strong_signal_requires_human_rich
+            or human_signal["human_signal_verdict"] == "human-rich"
+        )
+        and human_signal["response_after_patch_observation_window_count"]
+        >= strong_signal_min_post_patch_windows
     ):
         return (
             "strong-signal",
-            "Multiple post-patch human observation windows were captured in a human-rich lane.",
+            "Multiple post-patch human observation windows were captured with enough signal to trust the treatment response.",
         )
     return (
         "usable-signal",
@@ -700,6 +839,43 @@ def classify_behavior(
         for record in human_signal["human_reactive_patch_events"]
         if _patch_event_direction(record) != "hold"
     ]
+    oscillation_apply_direction_flips = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "oscillation_apply_direction_flips",
+            2,
+        ),
+    )
+    oscillation_event_direction_flips = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "oscillation_event_direction_flips",
+            3,
+        ),
+    )
+    underactive_meaningful_imbalance_snapshots = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "underactive_meaningful_imbalance_snapshots",
+            2,
+        ),
+    )
+    underactive_strong_imbalance_snapshots = max(
+        1,
+        _manifest_or_profile_int(
+            manifest,
+            "underactive_strong_imbalance_snapshots",
+            2,
+        ),
+    )
+    strong_imbalance_momentum = _manifest_or_profile_float(
+        manifest,
+        "strong_imbalance_momentum",
+        STRONG_IMBALANCE_MOMENTUM,
+    )
     direction_flips = sum(
         1
         for previous, current in zip(apply_directions, apply_directions[1:])
@@ -711,7 +887,10 @@ def classify_behavior(
         if previous != current
     )
 
-    if direction_flips >= 2 or event_direction_flips >= 3:
+    if (
+        direction_flips >= oscillation_apply_direction_flips
+        or event_direction_flips >= oscillation_event_direction_flips
+    ):
         return (
             "oscillatory",
             "Human-driven balance actions kept reversing direction instead of converging.",
@@ -719,19 +898,21 @@ def classify_behavior(
 
     if mode == "AI":
         if (
-            human_signal["meaningful_human_imbalance_snapshots_count"] >= 2
+            human_signal["meaningful_human_imbalance_snapshots_count"]
+            >= underactive_meaningful_imbalance_snapshots
             and human_signal["human_reactive_patch_events_count"]
             < human_signal["min_patch_events_for_usable_lane"]
         ):
             return (
                 "underactive",
                 "Sustained human-vs-bot imbalance was observed, but the AI lane emitted too few human-reactive patch events.",
-            )
+        )
 
         if (
-            human_signal["strong_human_imbalance_snapshots_count"] >= 2
+            human_signal["strong_human_imbalance_snapshots_count"]
+            >= underactive_strong_imbalance_snapshots
             and human_signal["human_reactive_patch_apply_count"] <= 1
-            and final_abs_momentum >= STRONG_IMBALANCE_MOMENTUM
+            and final_abs_momentum >= strong_imbalance_momentum
         ):
             return (
                 "underactive",
@@ -744,8 +925,9 @@ def classify_behavior(
         )
 
     if (
-        human_signal["strong_human_imbalance_snapshots_count"] >= 2
-        and final_abs_momentum >= STRONG_IMBALANCE_MOMENTUM
+        human_signal["strong_human_imbalance_snapshots_count"]
+        >= underactive_strong_imbalance_snapshots
+        and final_abs_momentum >= strong_imbalance_momentum
     ):
         return (
             "underactive",
@@ -807,6 +989,7 @@ def analyze_lane(
     patch_records: list[dict[str, Any]],
     apply_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    tuning_profile_name, tuning_profile_effective = _summary_tuning_profile(manifest)
     emitted_patches = _emitted_patch_records(patch_records)
     human_signal = _collect_human_signal(manifest, telemetry_records, patch_records, apply_records)
 
@@ -855,7 +1038,10 @@ def analyze_lane(
         human_signal,
     )
     lane_quality_verdict = _lane_quality_verdict(manifest, human_signal)
-    evidence_quality, evidence_quality_reason = _evidence_quality_from_signal(human_signal)
+    evidence_quality, evidence_quality_reason = _evidence_quality_from_signal(
+        manifest,
+        human_signal,
+    )
     explanation = _build_lane_explanation(
         manifest,
         human_signal,
@@ -869,6 +1055,8 @@ def analyze_lane(
         "mode": str((manifest or {}).get("mode", "Unknown")),
         "lane_label": _lane_label(manifest),
         "map": str((manifest or {}).get("map", "unknown")),
+        "tuning_profile": tuning_profile_name,
+        "tuning_profile_effective": tuning_profile_effective,
         "bot_count": _as_int(manifest or {}, "bot_count", 0),
         "bot_skill": _as_int(manifest or {}, "bot_skill", 0),
         "requested_duration_seconds": _as_int(manifest or {}, "requested_duration_seconds", 0),
@@ -952,6 +1140,8 @@ def analyze_lane(
         "min_patch_events_for_usable_lane": human_signal[
             "min_patch_events_for_usable_lane"
         ],
+        "meaningful_imbalance_momentum": human_signal["meaningful_imbalance_momentum"],
+        "strong_imbalance_momentum": human_signal["strong_imbalance_momentum"],
         "human_signal_verdict": human_signal["human_signal_verdict"],
         "tuning_signal_usable": human_signal["tuning_signal_usable"],
         "lane_ever_became_tuning_usable": human_signal[
@@ -1036,8 +1226,10 @@ def compare_lane_summaries(
         "schema_version": 2,
         "control_mode": str(control.get("mode", "Unknown")),
         "control_lane_label": str(control.get("lane_label", "control")),
+        "control_tuning_profile": control.get("tuning_profile", None),
         "treatment_mode": str(treatment.get("mode", "Unknown")),
         "treatment_lane_label": str(treatment.get("lane_label", "treatment")),
+        "treatment_tuning_profile": treatment.get("tuning_profile", None),
         "control_sidecar_free": control_sidecar_free,
         "treatment_sidecar_observed": treatment_sidecar_observed,
         "control_behavior_verdict": str(control.get("behavior_verdict", "insufficient-data")),
@@ -1078,6 +1270,7 @@ def _build_simulated_telemetry(
     state: dict[str, Any],
     frame: dict[str, Any],
     map_name: str,
+    tuning_profile: dict[str, Any],
 ) -> dict[str, Any]:
     frag_gap = _as_int(frame, "frag_gap_top_human_minus_top_bot", 0)
     base_top_score = 15
@@ -1108,7 +1301,14 @@ def _build_simulated_telemetry(
             "pause_frequency_scale": round(float(state["pause_frequency_scale"]), 3),
             "battle_strafe_scale": round(float(state["battle_strafe_scale"]), 3),
             "interval_seconds": round(_as_float(frame, "interval_seconds", 20.0), 1),
-            "cooldown_seconds": round(_as_float(frame, "cooldown_seconds", 30.0), 1),
+            "cooldown_seconds": round(
+                _as_float(
+                    frame,
+                    "cooldown_seconds",
+                    float(tuning_profile.get("cooldown_seconds", 30.0)),
+                ),
+                1,
+            ),
             "enabled": _as_int(frame, "enabled", 1),
         },
     }
@@ -1118,16 +1318,59 @@ def simulate_replay(
     scenario_name: str,
     frames: list[dict[str, Any]],
     *,
+    tuning_profile: str | dict[str, Any] | None = None,
     initial_skill: int = 3,
     initial_bot_count: int = 4,
     map_name: str = "crossfire",
     lane_label: str = "replay-scenario",
-    min_human_snapshots: int = DEFAULT_MIN_HUMAN_SNAPSHOTS,
-    min_human_presence_seconds: float = DEFAULT_MIN_HUMAN_PRESENCE_SECONDS,
-    min_patch_events_for_usable_lane: int = DEFAULT_MIN_PATCH_EVENTS_FOR_USABLE_LANE,
+    min_human_snapshots: int | None = None,
+    min_human_presence_seconds: float | None = None,
+    min_patch_events_for_usable_lane: int | None = None,
 ) -> dict[str, Any]:
     if not frames:
         raise ValueError("At least one telemetry frame is required.")
+
+    resolved_profile = resolve_tuning_profile(tuning_profile)
+    profile_summary = tuning_profile_summary(resolved_profile)
+    evaluation_settings = dict(resolved_profile.get("evaluation", {}))
+    min_human_snapshots = (
+        max(
+            1,
+            int(
+                evaluation_settings.get(
+                    "min_human_snapshots", DEFAULT_MIN_HUMAN_SNAPSHOTS
+                )
+            ),
+        )
+        if min_human_snapshots is None
+        else max(1, int(min_human_snapshots))
+    )
+    min_human_presence_seconds = (
+        max(
+            1.0,
+            float(
+                evaluation_settings.get(
+                    "min_human_presence_seconds",
+                    DEFAULT_MIN_HUMAN_PRESENCE_SECONDS,
+                )
+            ),
+        )
+        if min_human_presence_seconds is None
+        else max(1.0, float(min_human_presence_seconds))
+    )
+    min_patch_events_for_usable_lane = (
+        max(
+            0,
+            int(
+                evaluation_settings.get(
+                    "min_patch_events_for_usable_lane",
+                    DEFAULT_MIN_PATCH_EVENTS_FOR_USABLE_LANE,
+                )
+            ),
+        )
+        if min_patch_events_for_usable_lane is None
+        else max(0, int(min_patch_events_for_usable_lane))
+    )
 
     state: dict[str, Any] = {
         "current_default_bot_skill_level": clamp_int(
@@ -1145,7 +1388,14 @@ def simulate_replay(
     pending_patch: dict[str, Any] | None = None
 
     for index, frame in enumerate(frames, start=1):
-        telemetry = _build_simulated_telemetry(scenario_name, index, state, frame, map_name)
+        telemetry = _build_simulated_telemetry(
+            scenario_name,
+            index,
+            state,
+            frame,
+            map_name,
+            resolved_profile,
+        )
         telemetry_records.append(deepcopy(telemetry))
 
         cooldown_seconds = _as_float(_active_balance(telemetry), "cooldown_seconds", 30.0)
@@ -1218,8 +1468,12 @@ def simulate_replay(
                 }
             )
 
-        recommendation = recommend_patch(telemetry)
-        candidate_patch = materialize_patch(telemetry, recommendation)
+        recommendation = recommend_patch(telemetry, tuning_profile=resolved_profile)
+        candidate_patch = materialize_patch(
+            telemetry,
+            recommendation,
+            tuning_profile=resolved_profile,
+        )
         patch_event = build_patch_event(telemetry, recommendation, candidate_patch, pending_patch)
         patch_records.append(patch_event)
         if patch_event["emitted"]:
@@ -1239,6 +1493,8 @@ def simulate_replay(
         "mode": "AI",
         "lane_label": lane_label,
         "map": map_name,
+        "tuning_profile": str(resolved_profile.get("name", "default")),
+        "tuning_profile_effective": profile_summary,
         "bot_count": initial_bot_count,
         "bot_skill": initial_skill,
         "requested_duration_seconds": duration_seconds,
@@ -1252,6 +1508,49 @@ def simulate_replay(
         "min_human_snapshots": min_human_snapshots,
         "min_human_presence_seconds": min_human_presence_seconds,
         "min_patch_events_for_usable_lane": min_patch_events_for_usable_lane,
+        "meaningful_imbalance_momentum": float(
+            evaluation_settings.get(
+                "meaningful_imbalance_momentum", MEANINGFUL_IMBALANCE_MOMENTUM
+            )
+        ),
+        "strong_imbalance_momentum": float(
+            evaluation_settings.get(
+                "strong_imbalance_momentum", STRONG_IMBALANCE_MOMENTUM
+            )
+        ),
+        "rich_human_snapshot_multiplier": int(
+            evaluation_settings.get("rich_human_snapshot_multiplier", 2)
+        ),
+        "rich_human_snapshot_extra": int(
+            evaluation_settings.get("rich_human_snapshot_extra", 2)
+        ),
+        "rich_human_presence_multiplier": float(
+            evaluation_settings.get("rich_human_presence_multiplier", 2.0)
+        ),
+        "rich_human_presence_extra_seconds": float(
+            evaluation_settings.get("rich_human_presence_extra_seconds", 40.0)
+        ),
+        "rich_human_min_player_count": int(
+            evaluation_settings.get("rich_human_min_player_count", 2)
+        ),
+        "oscillation_apply_direction_flips": int(
+            evaluation_settings.get("oscillation_apply_direction_flips", 2)
+        ),
+        "oscillation_event_direction_flips": int(
+            evaluation_settings.get("oscillation_event_direction_flips", 3)
+        ),
+        "underactive_meaningful_imbalance_snapshots": int(
+            evaluation_settings.get("underactive_meaningful_imbalance_snapshots", 2)
+        ),
+        "underactive_strong_imbalance_snapshots": int(
+            evaluation_settings.get("underactive_strong_imbalance_snapshots", 2)
+        ),
+        "strong_signal_min_post_patch_windows": int(
+            evaluation_settings.get("strong_signal_min_post_patch_windows", 2)
+        ),
+        "strong_signal_requires_human_rich": bool(
+            evaluation_settings.get("strong_signal_requires_human_rich", True)
+        ),
     }
     return {
         "manifest": manifest,

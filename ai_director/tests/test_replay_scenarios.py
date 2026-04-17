@@ -148,6 +148,30 @@ class ReplayScenarioTests(unittest.TestCase):
         self.assertFalse(summary["patching_happened_only_while_humans_absent"])
         self.assertIn(summary["evidence_quality"], {"usable-signal", "strong-signal"})
 
+    def test_sustained_moderate_imbalance_is_bounded_under_default_profile(self) -> None:
+        result = simulate_replay(
+            "sustained-moderate-default",
+            self.scenarios["sustained_moderate_imbalance"],
+            tuning_profile="default",
+        )
+        summary = result["summary"]
+        self.assertTrue(summary["boundedness_constraints_respected"])
+        self.assertTrue(summary["cooldown_constraints_respected"])
+        self.assertEqual(summary["tuning_profile"], "default")
+        self.assertIn(summary["behavior_verdict"], {"stable", "underactive"})
+
+    def test_post_patch_overcorrection_risk_stays_bounded(self) -> None:
+        result = simulate_replay(
+            "post-patch-overcorrection",
+            self.scenarios["post_patch_overcorrection_risk"],
+            tuning_profile="default",
+        )
+        summary = result["summary"]
+        self.assertTrue(summary["boundedness_constraints_respected"])
+        self.assertTrue(summary["cooldown_constraints_respected"])
+        self.assertIn(summary["behavior_verdict"], {"stable", "oscillatory"})
+        self.assertGreaterEqual(summary["patch_events_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

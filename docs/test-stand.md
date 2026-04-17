@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-12
+HLDM-JKBOTTI-AI-STAND-20260415-13
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -150,6 +150,7 @@ Run only the AI sidecar:
 ```powershell
 powershell -NoProfile -File .\scripts\run_ai_director.ps1 `
   -LabRoot .\lab `
+  -TuningProfile default `
   -PollInterval 5
 ```
 
@@ -223,22 +224,30 @@ powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode NoAI -Map cross
 Run an AI treatment-lane balance capture:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile default -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 Run an AI treatment lane intended for human participation:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile responsive -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 Use the dedicated mixed-session helper when the goal is to bring a human into the lane quickly:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -TuningProfile responsive -WaitForHumanJoin -HumanJoinGraceSeconds 120 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The mixed-session helper prints the join target before launch and saves the same join instructions into the lane folder as `join_instructions.txt`.
+
+Run the replay/profile sweep before scheduling a longer live mixed-session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_balance_parameter_sweep.ps1
+```
+
+The sweep compares the named `conservative`, `default`, and `responsive` profiles offline and writes `summary.json`, `summary.md`, `comparison.json`, and `comparison.md` under `lab\logs\eval\replay_sweeps\<timestamp>\`.
 
 Summarize a control-vs-treatment pair:
 
@@ -253,10 +262,10 @@ powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
 Run the replay/scenario tests:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_decision ai_director.tests.test_replay_scenarios ai_director.tests.test_tuning_profiles"
 ```
 
-Use the replay scenarios first when tuning thresholds or hysteresis. They are deterministic, do not require a live server, and cover one-human dominance, one-human struggles, sparse joins, oscillation-prone alternation, spike-and-stabilize patterns, and close games where AI should remain conservative.
+Use the replay scenarios first when tuning thresholds or hysteresis. They are deterministic, do not require a live server, and now cover one-human dominance, one-human struggles, sparse joins, late joins, threshold-sensitive lanes, oscillation-prone alternation, spike-and-stabilize patterns, overcorrection risk, and close games where AI should remain conservative.
 
 If a local Half-Life client is installed, you can resolve or dry-run the join command with:
 
@@ -308,8 +317,26 @@ Supported values:
 - `OPENAI_MODEL`: optional; defaults to `gpt-4o-mini`.
 - `AI_DIRECTOR_POLL_INTERVAL`: optional; defaults to `5`.
 - `AI_DIRECTOR_LOG_LEVEL`: optional; defaults to `INFO`.
+- `AI_DIRECTOR_TUNING_PROFILE`: optional; defaults to `default`.
 
 If `OPENAI_API_KEY` is absent, the launcher stays in offline fallback mode and the Python sidecar uses the deterministic rules engine. To switch to OpenAI mode later, set `OPENAI_API_KEY` in `.env` or the environment and rerun the same launcher.
+
+## Tuning Profiles
+
+A tuning profile is a named bundle of bounded offline rule parameters for the AI sidecar and the replay evaluator. The current catalog lives in `ai_director\testdata\tuning_profiles.json`.
+
+- `conservative`: more signal required before the lane is judged usable, slower cooldown, and more caution near the threshold.
+- `default`: current bounded baseline behavior and the reference profile for regression checks.
+- `responsive`: lower thresholds and shorter cooldown for earlier response to sustained imbalance.
+
+When you pass `-TuningProfile` into `scripts\run_balance_eval.ps1`, `scripts\run_mixed_balance_eval.ps1`, or `scripts\run_ai_director.ps1`, the chosen profile name and effective knobs are recorded in `lane.json`, `summary.json`, `summary.md`, and the session pack. The no-AI control lane remains profile-agnostic and still serves as the sidecar-free control.
+
+Read the replay sweep outputs like this:
+
+- `summary.json` / `summary.md`: per-profile boundedness, cooldown, churn, oscillation, underactivity, and accepted-scenario counts
+- `comparison.json` / `comparison.md`: safest profile, most conservative profile, most responsive profile, best oscillation avoidance, best underreaction avoidance, and the next live candidate
+
+Use the replay sweep first to choose the next treatment profile, then capture a live AI lane with the same `-TuningProfile` value and compare it against the no-AI control lane.
 
 ## Smoke Test Expectations
 

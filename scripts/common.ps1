@@ -5,6 +5,54 @@ function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
 
+function Get-TuningProfilesPath {
+    return Join-Path (Get-RepoRoot) "ai_director\testdata\tuning_profiles.json"
+}
+
+function Get-TuningProfilesCatalog {
+    $profilesPath = Get-TuningProfilesPath
+    if (-not (Test-Path -LiteralPath $profilesPath)) {
+        throw "Tuning profile catalog was not found: $profilesPath"
+    }
+
+    return Get-Content -LiteralPath $profilesPath -Raw | ConvertFrom-Json
+}
+
+function Get-TuningProfileDefinition {
+    param([string]$Name = "")
+
+    $catalog = Get-TuningProfilesCatalog
+    $profiles = $catalog.profiles
+    if ($null -eq $profiles) {
+        throw "The tuning profile catalog does not contain a profiles object."
+    }
+
+    $profileName = if ([string]::IsNullOrWhiteSpace($Name)) {
+        [string]$catalog.default_profile
+    }
+    else {
+        $Name.Trim()
+    }
+
+    if (-not $profileName) {
+        $profileName = "default"
+    }
+
+    $profile = $profiles.PSObject.Properties[$profileName]
+    if ($null -eq $profile) {
+        $availableNames = @($profiles.PSObject.Properties | ForEach-Object { $_.Name }) -join ", "
+        throw "Unknown tuning profile '$profileName'. Available profiles: $availableNames"
+    }
+
+    return [pscustomobject]@{
+        name = $profileName
+        description = [string]$profile.Value.description
+        cooldown_seconds = [double]$profile.Value.cooldown_seconds
+        decision = $profile.Value.decision
+        evaluation = $profile.Value.evaluation
+    }
+}
+
 function Get-LabRootDefault {
     return Join-Path (Get-RepoRoot) "lab"
 }

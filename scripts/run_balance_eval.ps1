@@ -11,6 +11,7 @@ param(
     [string]$Platform = "Win32",
     [string]$SteamCmdPath = "",
     [string]$PythonPath = "",
+    [string]$TuningProfile = "default",
     [string]$LaneLabel = "",
     [Alias("EvalRoot")]
     [string]$OutputRoot = "",
@@ -180,7 +181,8 @@ function Get-HumanSignalStats {
         [string]$PatchHistoryPath,
         [int]$MinHumanSnapshots,
         [double]$MinHumanPresenceSeconds,
-        [int]$MinPatchEventsForUsableLane
+        [int]$MinPatchEventsForUsableLane,
+        [double]$MeaningfulImbalanceMomentum = 4.0
     )
 
     $telemetryRecords = @(Read-NdjsonFile -Path $TelemetryHistoryPath)
@@ -202,7 +204,7 @@ function Get-HumanSignalStats {
         $maxHumanPlayerCount = [Math]::Max($maxHumanPlayerCount, $humanCount)
         $secondsWithHumanPresence += Get-TelemetrySpanSeconds -TelemetryRecords $telemetryRecords -Index $index
 
-        if ([int]$record.bot_count -gt 0 -and [Math]::Abs((Get-TelemetryMomentum -Record $record)) -ge 4.0) {
+        if ([int]$record.bot_count -gt 0 -and [Math]::Abs((Get-TelemetryMomentum -Record $record)) -ge $MeaningfulImbalanceMomentum) {
             $meaningfulImbalanceSnapshotsCount += 1
         }
     }
@@ -214,7 +216,7 @@ function Get-HumanSignalStats {
         if ([int]$record.current_human_player_count -le 0 -or [int]$record.current_bot_count -le 0) {
             continue
         }
-        if ([Math]::Abs([double]$record.momentum) -lt 4.0) {
+        if ([Math]::Abs([double]$record.momentum) -lt $MeaningfulImbalanceMomentum) {
             continue
         }
         $reason = [string]$record.reason
@@ -317,6 +319,7 @@ function Get-SessionPackMarkdown {
         [object]$LaneSummary,
         [string]$LaneLabel,
         [string]$Mode,
+        [string]$TuningProfile,
         [object]$JoinInfo,
         [string]$HumanTimelinePath
     )
@@ -326,6 +329,7 @@ function Get-SessionPackMarkdown {
         "",
         "- Mode: $Mode",
         "- Lane label: $LaneLabel",
+        "- Tuning profile: $TuningProfile",
         "- Loopback join target: $($JoinInfo.LoopbackAddress)",
         "- Lane quality verdict: $($LaneSummary.lane_quality_verdict)",
         "- Evidence quality: $($LaneSummary.evidence_quality)",
@@ -342,6 +346,30 @@ function Get-SessionPackMarkdown {
     }
 
     return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+}
+
+if ($Mode -eq "AI") {
+    $resolvedTuningProfile = Get-TuningProfileDefinition -Name $TuningProfile
+
+    if (-not $PSBoundParameters.ContainsKey("MinHumanSnapshots")) {
+        $MinHumanSnapshots = [int]$resolvedTuningProfile.evaluation.min_human_snapshots
+    }
+    if (-not $PSBoundParameters.ContainsKey("MinHumanPresenceSeconds")) {
+        $MinHumanPresenceSeconds = [int][Math]::Round([double]$resolvedTuningProfile.evaluation.min_human_presence_seconds)
+    }
+    if (-not $PSBoundParameters.ContainsKey("MinPatchEventsForUsableLane")) {
+        $MinPatchEventsForUsableLane = [int]$resolvedTuningProfile.evaluation.min_patch_events_for_usable_lane
+    }
+}
+else {
+    $resolvedTuningProfile = $null
+    $TuningProfile = ""
+}
+$meaningfulImbalanceMomentumForPreview = if ($null -ne $resolvedTuningProfile) {
+    [double]$resolvedTuningProfile.evaluation.meaningful_imbalance_momentum
+}
+else {
+    4.0
 }
 
 Assert-BotLaunchSettings -BotCount $BotCount -BotSkill $BotSkill
@@ -414,6 +442,7 @@ $launcherArgs = @{
 
 if ($Mode -eq "AI") {
     $launcherArgs.PythonPath = $pythonExe
+    $launcherArgs.TuningProfile = $TuningProfile
 }
 if ($SkipSteamCmdUpdate) {
     $launcherArgs.SkipSteamCmdUpdate = $true
@@ -501,7 +530,8 @@ try {
                 -PatchHistoryPath $patchHistoryPath `
                 -MinHumanSnapshots $MinHumanSnapshots `
                 -MinHumanPresenceSeconds $MinHumanPresenceSeconds `
-                -MinPatchEventsForUsableLane $MinPatchEventsForUsableLane
+                -MinPatchEventsForUsableLane $MinPatchEventsForUsableLane `
+                -MeaningfulImbalanceMomentum $meaningfulImbalanceMomentumForPreview
 
             if ($humanSignalPreview.HumanSnapshotsCount -gt 0) {
                 $humanJoinObserved = $true
@@ -554,7 +584,8 @@ if ($matchId) {
         -PatchHistoryPath $patchHistoryPath `
         -MinHumanSnapshots $MinHumanSnapshots `
         -MinHumanPresenceSeconds $MinHumanPresenceSeconds `
-        -MinPatchEventsForUsableLane $MinPatchEventsForUsableLane
+        -MinPatchEventsForUsableLane $MinPatchEventsForUsableLane `
+        -MeaningfulImbalanceMomentum $meaningfulImbalanceMomentumForPreview
     if ($humanSignalPreview.HumanSnapshotsCount -gt 0) {
         $humanJoinObserved = $true
     }
@@ -587,10 +618,12 @@ $copiedArtifacts["join_instructions"] = $joinInstructionsPath
 
 $laneManifest = [ordered]@{
     schema_version = 2
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-12"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-13"
     mode = $Mode
     lane_label = $LaneLabel
     map = $Map
+    tuning_profile = if ($null -ne $resolvedTuningProfile) { [string]$resolvedTuningProfile.name } else { $null }
+    tuning_profile_effective = if ($null -ne $resolvedTuningProfile) { $resolvedTuningProfile } else { $null }
     bot_count = $BotCount
     bot_skill = $BotSkill
     port = $Port
@@ -665,10 +698,12 @@ $sessionPackMarkdownPath = Join-Path $laneRoot "session_pack.md"
 
 $sessionPack = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-12"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-13"
     lane_root = $laneRoot
     mode = $Mode
     lane_label = $LaneLabel
+    tuning_profile = if ($null -ne $resolvedTuningProfile) { [string]$resolvedTuningProfile.name } else { $null }
+    tuning_profile_effective = if ($null -ne $resolvedTuningProfile) { $resolvedTuningProfile } else { $null }
     match_id = $matchId
     loopback_join_target = $joinInfo.LoopbackAddress
     lan_join_target = $joinInfo.LanAddress
@@ -696,11 +731,12 @@ $sessionPackMarkdown = if ($null -ne $laneSummary) {
         -LaneSummary $laneSummary `
         -LaneLabel $LaneLabel `
         -Mode $Mode `
+        -TuningProfile $(if ($null -ne $resolvedTuningProfile) { [string]$resolvedTuningProfile.name } else { "n/a" }) `
         -JoinInfo $joinInfo `
         -HumanTimelinePath $humanPresenceTimelinePath
 }
 else {
-    "# Session Pack`r`n`r`n- Lane label: $LaneLabel`r`n- Summary generation did not produce a lane summary.`r`n"
+    "# Session Pack`r`n`r`n- Lane label: $LaneLabel`r`n- Tuning profile: $(if ($null -ne $resolvedTuningProfile) { [string]$resolvedTuningProfile.name } else { "n/a" })`r`n- Summary generation did not produce a lane summary.`r`n"
 }
 Write-TextFile -Path $sessionPackMarkdownPath -Value $sessionPackMarkdown
 
@@ -708,6 +744,7 @@ Write-TextFile -Path $sessionPackMarkdownPath -Value $sessionPackMarkdown
     LaneRoot = $laneRoot
     Mode = $Mode
     LaneLabel = $LaneLabel
+    TuningProfile = if ($null -ne $resolvedTuningProfile) { [string]$resolvedTuningProfile.name } else { "" }
     Map = $Map
     MatchId = $matchId
     SmokeStatus = if ($null -ne $smokeResult) { $smokeResult.Status } else { "" }
