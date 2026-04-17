@@ -298,6 +298,34 @@ def _record_span_seconds(telemetry_records: list[dict[str, Any]], index: int) ->
     return min(interval_seconds, delta)
 
 
+def _latest_telemetry_at_or_before(
+    telemetry_records: list[dict[str, Any]], server_time: float
+) -> dict[str, Any] | None:
+    latest_record: dict[str, Any] | None = None
+    for record in telemetry_records:
+        record_time = _as_float(record, "server_time_seconds", 0.0)
+        if record_time <= server_time + EPSILON:
+            latest_record = record
+            continue
+        break
+    return latest_record
+
+
+def _first_human_observation_after(
+    telemetry_records: list[dict[str, Any]], server_time: float
+) -> dict[str, Any] | None:
+    for record in telemetry_records:
+        record_time = _as_float(record, "server_time_seconds", 0.0)
+        if record_time <= server_time + EPSILON:
+            continue
+        if (
+            _as_int(record, "human_player_count", 0) > 0
+            and _as_int(record, "bot_count", 0) > 0
+        ):
+            return record
+    return None
+
+
 def _collect_human_signal(
     manifest: dict[str, Any] | None,
     telemetry_records: list[dict[str, Any]],
@@ -325,17 +353,43 @@ def _collect_human_signal(
         ),
     )
 
+    lane_start_server_time = (
+        _as_float(telemetry_records[0], "server_time_seconds", 0.0)
+        if telemetry_records
+        else 0.0
+    )
     human_snapshots_count = 0
     seconds_with_human_presence = 0.0
     max_human_player_count = 0
+    first_human_seen_timestamp_utc: str | None = None
+    first_human_seen_server_time_seconds: float | None = None
+    last_human_seen_timestamp_utc: str | None = None
+    last_human_seen_server_time_seconds: float | None = None
+    frag_gap_samples_while_humans_present: list[int] = []
 
     for index, record in enumerate(telemetry_records):
         human_count = max(0, _as_int(record, "human_player_count", 0))
         if human_count <= 0:
             continue
+
+        if first_human_seen_timestamp_utc is None:
+            first_human_seen_timestamp_utc = str(record.get("timestamp_utc", ""))
+            first_human_seen_server_time_seconds = _as_float(
+                record, "server_time_seconds", 0.0
+            )
+
+        last_human_seen_timestamp_utc = str(record.get("timestamp_utc", ""))
+        last_human_seen_server_time_seconds = _as_float(
+            record, "server_time_seconds", 0.0
+        )
         human_snapshots_count += 1
         max_human_player_count = max(max_human_player_count, human_count)
         seconds_with_human_presence += _record_span_seconds(telemetry_records, index)
+
+        if _as_int(record, "bot_count", 0) > 0:
+            frag_gap_samples_while_humans_present.append(
+                _as_int(record, "frag_gap_top_human_minus_top_bot", 0)
+            )
 
     if human_snapshots_count == 0 or seconds_with_human_presence <= 0.0:
         human_signal_verdict = "no-humans"
@@ -377,6 +431,12 @@ def _collect_human_signal(
     ]
 
     emitted_patches = _emitted_patch_records(patch_records)
+    patch_events_while_humans_present = [
+        record
+        for record in emitted_patches
+        if _as_int(record, "current_human_player_count", 0) > 0
+        and _as_int(record, "current_bot_count", 0) > 0
+    ]
     human_reactive_patch_events = [
         record
         for record in emitted_patches
@@ -397,6 +457,38 @@ def _collect_human_signal(
         for record in apply_records
         if str(record.get("patch_id", "")) in human_reactive_patch_ids
     ]
+    patch_apply_records_while_humans_present: list[dict[str, Any]] = []
+    response_after_patch_observation_window_count = 0
+    improved_post_patch_count = 0
+    worsened_post_patch_count = 0
+
+    for record in apply_records:
+        apply_time = _as_float(record, "server_time_seconds", 0.0)
+        current_human_state = _latest_telemetry_at_or_before(telemetry_records, apply_time)
+        if current_human_state is None:
+            continue
+        if (
+            _as_int(current_human_state, "human_player_count", 0) <= 0
+            or _as_int(current_human_state, "bot_count", 0) <= 0
+        ):
+            continue
+
+        patch_apply_records_while_humans_present.append(record)
+        next_observation = _first_human_observation_after(telemetry_records, apply_time)
+        if next_observation is None:
+            continue
+
+        response_after_patch_observation_window_count += 1
+        before_gap = abs(
+            _as_int(current_human_state, "frag_gap_top_human_minus_top_bot", 0)
+        )
+        after_gap = abs(
+            _as_int(next_observation, "frag_gap_top_human_minus_top_bot", 0)
+        )
+        if after_gap + 1 < before_gap:
+            improved_post_patch_count += 1
+        elif after_gap > before_gap + 1:
+            worsened_post_patch_count += 1
 
     if human_signal_verdict == "no-humans":
         tuning_signal_usable = False
@@ -418,6 +510,18 @@ def _collect_human_signal(
         len(meaningful_human_imbalance_records) < min_human_snapshots
         or len(human_reactive_patch_events) >= min_patch_events_for_usable_lane
     )
+    if improved_post_patch_count > worsened_post_patch_count and improved_post_patch_count > 0:
+        post_patch_frag_gap_trend = "improved"
+    elif worsened_post_patch_count > improved_post_patch_count and worsened_post_patch_count > 0:
+        post_patch_frag_gap_trend = "worsened"
+    else:
+        post_patch_frag_gap_trend = "inconclusive"
+
+    patching_happened_only_while_humans_absent = bool(emitted_patches) and not bool(
+        patch_events_while_humans_present
+    )
+    lane_ever_became_tuning_usable = tuning_signal_usable
+    lane_stayed_sparse_or_insufficient = not lane_ever_became_tuning_usable
 
     return {
         "min_human_snapshots": min_human_snapshots,
@@ -426,17 +530,46 @@ def _collect_human_signal(
         "human_snapshots_count": human_snapshots_count,
         "seconds_with_human_presence": round(seconds_with_human_presence, 1),
         "max_human_player_count": max_human_player_count,
+        "first_human_seen_timestamp_utc": first_human_seen_timestamp_utc,
+        "first_human_seen_server_time_seconds": first_human_seen_server_time_seconds,
+        "first_human_seen_offset_seconds": (
+            round(first_human_seen_server_time_seconds - lane_start_server_time, 1)
+            if first_human_seen_server_time_seconds is not None
+            else None
+        ),
+        "last_human_seen_timestamp_utc": last_human_seen_timestamp_utc,
+        "last_human_seen_server_time_seconds": last_human_seen_server_time_seconds,
+        "last_human_seen_offset_seconds": (
+            round(last_human_seen_server_time_seconds - lane_start_server_time, 1)
+            if last_human_seen_server_time_seconds is not None
+            else None
+        ),
+        "frag_gap_samples_while_humans_present": frag_gap_samples_while_humans_present,
         "human_signal_verdict": human_signal_verdict,
         "tuning_signal_usable": tuning_signal_usable,
         "blocker_reason": blocker_reason,
+        "lane_ever_became_tuning_usable": lane_ever_became_tuning_usable,
+        "lane_stayed_sparse_or_insufficient": lane_stayed_sparse_or_insufficient,
         "meaningful_human_imbalance_snapshots_count": len(
             meaningful_human_imbalance_records
         ),
         "strong_human_imbalance_snapshots_count": len(strong_human_imbalance_records),
+        "rebalance_opportunities_count": len(meaningful_human_imbalance_records),
+        "patch_events_while_humans_present_count": len(patch_events_while_humans_present),
         "human_reactive_patch_events": human_reactive_patch_events,
         "human_reactive_patch_events_count": len(human_reactive_patch_events),
         "human_reactive_patch_ids": human_reactive_patch_ids,
         "human_reactive_patch_apply_count": len(human_reactive_apply_records),
+        "patch_apply_count_while_humans_present": len(
+            patch_apply_records_while_humans_present
+        ),
+        "response_after_patch_observation_window_count": (
+            response_after_patch_observation_window_count
+        ),
+        "post_patch_frag_gap_trend": post_patch_frag_gap_trend,
+        "patching_happened_only_while_humans_absent": (
+            patching_happened_only_while_humans_absent
+        ),
         "patch_response_to_human_imbalance_observed": bool(
             human_reactive_patch_events or human_reactive_apply_records
         ),
@@ -464,6 +597,41 @@ def _lane_quality_verdict(
     if mode == "NOAI":
         return f"control-baseline-{verdict_suffix}"
     return f"{smoke_status}-{verdict_suffix}"
+
+
+def _evidence_quality_from_signal(human_signal: dict[str, Any]) -> tuple[str, str]:
+    if not bool(human_signal.get("tuning_signal_usable", False)):
+        return (
+            "insufficient-data",
+            "Human signal never cleared the tuning-usability gate.",
+        )
+    if human_signal["rebalance_opportunities_count"] <= 0:
+        return (
+            "weak-signal",
+            "Humans were present, but no meaningful imbalance created a rebalance opportunity.",
+        )
+    if human_signal["patching_happened_only_while_humans_absent"]:
+        return (
+            "weak-signal",
+            "All emitted patches happened while humans were absent, so treatment evidence stayed weak.",
+        )
+    if human_signal["response_after_patch_observation_window_count"] <= 0:
+        return (
+            "weak-signal",
+            "No post-patch human observation window was captured after a treatment response.",
+        )
+    if (
+        human_signal["human_signal_verdict"] == "human-rich"
+        and human_signal["response_after_patch_observation_window_count"] >= 2
+    ):
+        return (
+            "strong-signal",
+            "Multiple post-patch human observation windows were captured in a human-rich lane.",
+        )
+    return (
+        "usable-signal",
+        "Human presence and at least one post-patch observation window were captured.",
+    )
 
 
 def _derive_duration_seconds(
@@ -687,6 +855,7 @@ def analyze_lane(
         human_signal,
     )
     lane_quality_verdict = _lane_quality_verdict(manifest, human_signal)
+    evidence_quality, evidence_quality_reason = _evidence_quality_from_signal(human_signal)
     explanation = _build_lane_explanation(
         manifest,
         human_signal,
@@ -726,19 +895,46 @@ def analyze_lane(
         "human_snapshots_count": human_signal["human_snapshots_count"],
         "seconds_with_human_presence": human_signal["seconds_with_human_presence"],
         "max_human_player_count": human_signal["max_human_player_count"],
+        "first_human_seen_timestamp_utc": human_signal["first_human_seen_timestamp_utc"],
+        "first_human_seen_server_time_seconds": human_signal[
+            "first_human_seen_server_time_seconds"
+        ],
+        "first_human_seen_offset_seconds": human_signal["first_human_seen_offset_seconds"],
+        "last_human_seen_timestamp_utc": human_signal["last_human_seen_timestamp_utc"],
+        "last_human_seen_server_time_seconds": human_signal[
+            "last_human_seen_server_time_seconds"
+        ],
+        "last_human_seen_offset_seconds": human_signal["last_human_seen_offset_seconds"],
+        "frag_gap_samples_while_humans_present": human_signal[
+            "frag_gap_samples_while_humans_present"
+        ],
         "meaningful_human_imbalance_snapshots_count": human_signal[
             "meaningful_human_imbalance_snapshots_count"
         ],
         "strong_human_imbalance_snapshots_count": human_signal[
             "strong_human_imbalance_snapshots_count"
         ],
+        "rebalance_opportunities_count": human_signal["rebalance_opportunities_count"],
         "patch_events_count": len(emitted_patches),
+        "patch_events_while_humans_present_count": human_signal[
+            "patch_events_while_humans_present_count"
+        ],
         "patch_apply_count": len(apply_records),
+        "patch_apply_count_while_humans_present": human_signal[
+            "patch_apply_count_while_humans_present"
+        ],
         "human_reactive_patch_events_count": human_signal[
             "human_reactive_patch_events_count"
         ],
         "human_reactive_patch_apply_count": human_signal[
             "human_reactive_patch_apply_count"
+        ],
+        "response_after_patch_observation_window_count": human_signal[
+            "response_after_patch_observation_window_count"
+        ],
+        "post_patch_frag_gap_trend": human_signal["post_patch_frag_gap_trend"],
+        "patching_happened_only_while_humans_absent": human_signal[
+            "patching_happened_only_while_humans_absent"
         ],
         "patch_response_to_human_imbalance_observed": human_signal[
             "patch_response_to_human_imbalance_observed"
@@ -758,7 +954,15 @@ def analyze_lane(
         ],
         "human_signal_verdict": human_signal["human_signal_verdict"],
         "tuning_signal_usable": human_signal["tuning_signal_usable"],
+        "lane_ever_became_tuning_usable": human_signal[
+            "lane_ever_became_tuning_usable"
+        ],
+        "lane_stayed_sparse_or_insufficient": human_signal[
+            "lane_stayed_sparse_or_insufficient"
+        ],
         "lane_quality_verdict": lane_quality_verdict,
+        "evidence_quality": evidence_quality,
+        "evidence_quality_reason": evidence_quality_reason,
         "behavior_verdict": behavior_verdict,
         "behavior_reason": behavior_reason,
         "explanation": explanation,
@@ -780,6 +984,7 @@ def compare_lane_summaries(
     treatment_sidecar_observed = bool(treatment.get("ai_sidecar_observed", False))
     control_tuning_signal_usable = bool(control.get("tuning_signal_usable", False))
     treatment_tuning_signal_usable = bool(treatment.get("tuning_signal_usable", False))
+    treatment_evidence_quality = str(treatment.get("evidence_quality", "insufficient-data"))
 
     comparison_verdict = "comparison-insufficient-data"
     comparison_usable = False
@@ -807,6 +1012,11 @@ def compare_lane_summaries(
             "The treatment lane did not capture enough human signal for tuning. "
             f"Verdict: {treatment.get('lane_quality_verdict', 'unknown')}."
         )
+    elif treatment_evidence_quality == "weak-signal":
+        comparison_reason = (
+            "The treatment lane captured humans, but treatment-response evidence stayed weak. "
+            f"Reason: {treatment.get('evidence_quality_reason', '')}"
+        )
     elif not bool(treatment.get("boundedness_constraints_respected", False)):
         comparison_reason = "The treatment lane violated boundedness constraints."
     elif not bool(treatment.get("cooldown_constraints_respected", False)):
@@ -818,7 +1028,8 @@ def compare_lane_summaries(
             f"Control lane {control.get('lane_label', 'control')} and treatment lane "
             f"{treatment.get('lane_label', 'treatment')} both captured usable human signal; "
             f"treatment quality was {treatment.get('lane_quality_verdict', 'unknown')} with "
-            f"behavior {treatment.get('behavior_verdict', 'insufficient-data')}."
+            f"behavior {treatment.get('behavior_verdict', 'insufficient-data')} and "
+            f"evidence quality {treatment_evidence_quality}."
         )
 
     return {
@@ -839,6 +1050,7 @@ def compare_lane_summaries(
         "treatment_lane_quality_verdict": str(
             treatment.get("lane_quality_verdict", "insufficient-data")
         ),
+        "treatment_evidence_quality": treatment_evidence_quality,
         "control_tuning_signal_usable": control_tuning_signal_usable,
         "treatment_tuning_signal_usable": treatment_tuning_signal_usable,
         "control_telemetry_snapshots_count": _as_int(

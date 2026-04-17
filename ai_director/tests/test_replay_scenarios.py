@@ -95,6 +95,7 @@ class ReplayScenarioTests(unittest.TestCase):
         self.assertEqual(summary["seconds_with_human_presence"], 40.0)
         self.assertEqual(summary["lane_quality_verdict"], "ai-healthy-human-usable")
         self.assertTrue(summary["tuning_signal_usable"])
+        self.assertEqual(summary["evidence_quality"], "weak-signal")
         self.assertLessEqual(summary["human_reactive_patch_events_count"], 2)
 
     def test_brief_human_join_is_insufficient_data(self) -> None:
@@ -107,6 +108,7 @@ class ReplayScenarioTests(unittest.TestCase):
         self.assertFalse(summary["tuning_signal_usable"])
         self.assertEqual(summary["behavior_verdict"], "insufficient-data")
         self.assertLessEqual(summary["patch_apply_count"], 1)
+        self.assertEqual(summary["evidence_quality"], "insufficient-data")
 
     def test_spike_then_stabilization_stays_bounded(self) -> None:
         result = simulate_replay(
@@ -119,6 +121,32 @@ class ReplayScenarioTests(unittest.TestCase):
         self.assertTrue(summary["tuning_signal_usable"])
         self.assertEqual(summary["behavior_verdict"], "stable")
         self.assertGreaterEqual(summary["human_reactive_patch_events_count"], 1)
+        self.assertGreaterEqual(summary["response_after_patch_observation_window_count"], 1)
+        self.assertIn(summary["post_patch_frag_gap_trend"], {"improved", "inconclusive"})
+
+    def test_human_joins_late_can_still_become_usable(self) -> None:
+        result = simulate_replay(
+            "human-joins-late",
+            self.scenarios["human_joins_late"],
+        )
+        summary = result["summary"]
+        self.assertTrue(summary["tuning_signal_usable"])
+        self.assertEqual(summary["lane_quality_verdict"], "ai-healthy-human-usable")
+        self.assertEqual(summary["first_human_seen_offset_seconds"], 40.0)
+        self.assertTrue(summary["lane_ever_became_tuning_usable"])
+        self.assertGreaterEqual(summary["patch_events_while_humans_present_count"], 1)
+
+    def test_human_join_after_waiting_patch_keeps_evidence_grounded(self) -> None:
+        result = simulate_replay(
+            "human-joins-after-waiting-patch",
+            self.scenarios["human_joins_after_ai_waiting_patch"],
+        )
+        summary = result["summary"]
+        self.assertTrue(summary["tuning_signal_usable"])
+        self.assertGreaterEqual(summary["patch_events_count"], 2)
+        self.assertGreaterEqual(summary["patch_events_while_humans_present_count"], 1)
+        self.assertFalse(summary["patching_happened_only_while_humans_absent"])
+        self.assertIn(summary["evidence_quality"], {"usable-signal", "strong-signal"})
 
 
 if __name__ == "__main__":

@@ -60,12 +60,44 @@ def _lane_markdown(summary: dict[str, Any], heading: str) -> list[str]:
             f"- Seconds with human presence: "
             f"{summary.get('seconds_with_human_presence', 0)}"
         ),
+        (
+            f"- First human seen offset: "
+            f"{summary.get('first_human_seen_offset_seconds', None)}"
+        ),
+        (
+            f"- Last human seen offset: "
+            f"{summary.get('last_human_seen_offset_seconds', None)}"
+        ),
         f"- Telemetry snapshots: {summary.get('telemetry_snapshots_count', 0)}",
         f"- Patch events: {summary.get('patch_events_count', 0)}",
+        (
+            f"- Patch events while humans present: "
+            f"{summary.get('patch_events_while_humans_present_count', 0)}"
+        ),
         f"- Patch applies: {summary.get('patch_apply_count', 0)}",
+        (
+            f"- Patch applies while humans present: "
+            f"{summary.get('patch_apply_count_while_humans_present', 0)}"
+        ),
         (
             f"- Human-reactive patch events: "
             f"{summary.get('human_reactive_patch_events_count', 0)}"
+        ),
+        (
+            f"- Rebalance opportunities: "
+            f"{summary.get('rebalance_opportunities_count', 0)}"
+        ),
+        (
+            f"- Post-patch observation windows: "
+            f"{summary.get('response_after_patch_observation_window_count', 0)}"
+        ),
+        (
+            f"- Post-patch frag-gap trend: "
+            f"{summary.get('post_patch_frag_gap_trend', 'inconclusive')}"
+        ),
+        (
+            f"- Evidence quality: "
+            f"{summary.get('evidence_quality', 'insufficient-data')}"
         ),
         (
             f"- Unique skill targets: {summary.get('unique_skill_targets_seen', [])}"
@@ -87,7 +119,12 @@ def _lane_markdown(summary: dict[str, Any], heading: str) -> list[str]:
             f"{summary.get('lane_quality_verdict', 'insufficient-data')}"
         ),
         f"- Tuning usable: {summary.get('tuning_signal_usable', False)}",
+        (
+            f"- Ever became tuning-usable: "
+            f"{summary.get('lane_ever_became_tuning_usable', False)}"
+        ),
         f"- Stability verdict: {summary.get('behavior_verdict', 'insufficient-data')}",
+        f"- Evidence notes: {summary.get('evidence_quality_reason', '')}",
         f"- Explanation: {summary.get('explanation', '')}",
     ]
 
@@ -133,6 +170,10 @@ def render_markdown(
                 (
                     f"- Treatment lane quality: "
                     f"{comparison_summary.get('treatment_lane_quality_verdict', 'insufficient-data')}"
+                ),
+                (
+                    f"- Treatment evidence quality: "
+                    f"{comparison_summary.get('treatment_evidence_quality', 'insufficient-data')}"
                 ),
                 (
                     f"- Comparison usable for tuning: "

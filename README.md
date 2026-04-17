@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-11
+HLDM-JKBOTTI-AI-STAND-20260415-12
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -161,6 +161,7 @@ Use the evaluation runner when the goal is behavior measurement instead of only 
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode NoAI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -DurationSeconds 50 -SkipSteamCmdUpdate -SkipMetamodDownload
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -SkipSteamCmdUpdate -SkipMetamodDownload
 powershell -NoProfile -File .\scripts\run_balance_eval.ps1 -Mode AI -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_mixed_balance_eval.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40 -LaneLabel mixed-session-treatment -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The no-AI lane remains the primary control:
@@ -182,6 +183,19 @@ The AI lane reuses the existing sidecar-backed launcher and adds copied lane art
 - `-MinPatchEventsForUsableLane` lets the runner wait a little longer for a bounded treatment response when meaningful human-vs-bot imbalance is already present.
 
 If no humans join, the lane can still be `ai-healthy`, but the summary marks it explicitly as `ai-healthy-no-humans` instead of pretending it was ready for tuning. Sparse joins are called out as `ai-healthy-human-sparse`.
+
+`scripts\run_mixed_balance_eval.ps1` is the thin workflow helper for real human-vs-bot sessions. It reuses the same evaluation runner, prints the join target up front, defaults the lane label to `mixed-session-treatment`, and writes a bounded session pack with:
+
+- `lane.json`
+- `summary.json`
+- `summary.md`
+- `session_pack.json`
+- `session_pack.md`
+- `join_instructions.txt`
+- `human_presence_timeline.ndjson`
+- copied HLDS, bootstrap, sidecar, bot-config, telemetry, and patch artifacts
+
+If `Half-Life\hl.exe` is available locally, `scripts\launch_local_hldm_client.ps1 -Port <port> -DryRun` resolves the client path and prints the launch command without starting the game. If the executable is missing, the helper fails with a precise prereq message instead of failing silently.
 
 Summarize one lane or compare control vs treatment with:
 
@@ -205,6 +219,8 @@ The replay fixture set now covers more realistic mixed-session patterns:
 
 - one human steadily outperforming bots
 - one human repeatedly getting stomped by bots
+- human joins late after the lane already started
+- human joins after an AI waiting patch was already emitted
 - alternating advantage that can become oscillatory
 - humans absent after an initial join
 - brief human joins that should stay insufficient-data
@@ -226,6 +242,13 @@ Lane quality is reported separately from the stability verdict:
 - `ai-healthy-human-rich`: enough human presence existed to treat the lane as a stronger mixed-session sample.
 
 The no-AI control lane uses the same human-signal buckets with a `control-baseline-...` prefix so control-vs-treatment comparisons can reject weak samples cleanly.
+
+Treatment-response evidence quality is reported separately so a lane can be plumbing-healthy and tuning-usable while still being weak for tuning decisions:
+
+- `insufficient-data`: not enough human signal existed to judge treatment behavior
+- `weak-signal`: humans were present, but there was little or no grounded post-patch evidence
+- `usable-signal`: humans were present long enough to observe at least one grounded post-patch window
+- `strong-signal`: a richer session captured multiple grounded post-patch windows
 
 ## Visual Studio 2022 Build
 
@@ -297,6 +320,7 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 - AI director logs: `lab/logs/ai_director.stdout.log` and `lab/logs/ai_director.stderr.log`
 - HLDS logs: `lab/logs/hlds.stdout.log` and `lab/logs/hlds.stderr.log`
 - Evaluation lane artifacts: `lab/logs/eval/<timestamp>-<mode>-...`
+- Mixed-session session packs: `lab/logs/eval/<timestamp>-<mode>-.../session_pack.json`
 - Server install root by default: `lab/hlds`
 
 The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a matching set of `addbot` lines so the requested bot pool comes up predictably and can be regenerated safely on each launcher run.
@@ -315,6 +339,10 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_standard_bots_crossfire.ps1`: baseline launcher that builds, prepares the lab, writes a deterministic no-AI map config with `jk_ai_balance_enabled 0`, and starts HLDS without the Python sidecar.
 - `scripts/run_standard_bots_crossfire.bat`: `cmd.exe` wrapper for the baseline no-AI crossfire flow, with backward-compatible positional arguments and direct named-argument passthrough.
 - `scripts/run_balance_eval.ps1`: launches one control or treatment lane, waits for the requested duration, copies artifacts into a lane folder, and writes `summary.json` plus `summary.md`.
+- `scripts/run_mixed_balance_eval.ps1`: thin helper for live mixed human-vs-bot treatment runs that prints join targets and writes the same lane/session-pack artifacts.
+- `scripts/run_mixed_balance_eval.bat`: `cmd.exe` wrapper for the mixed-session helper.
+- `scripts/launch_local_hldm_client.ps1`: optional helper that resolves a local Half-Life client and launches or dry-runs a local join command.
+- `scripts/launch_local_hldm_client.bat`: `cmd.exe` wrapper for the local client helper.
 - `scripts/summarize_balance_eval.ps1`: Windows wrapper around the Python evaluator for one lane or a control-vs-treatment pair.
 - `scripts/smoke_test.ps1`: classifies attach/load state for AI and no-AI runs, distinguishes healthy no-AI and healthy AI outcomes, and fails early on avoidable config warnings.
 - `ai_director/tools/summarize_eval.py`: machine-readable and human-readable summary generator used by the PowerShell wrapper.

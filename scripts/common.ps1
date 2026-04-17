@@ -82,6 +82,65 @@ function Get-LogsRootDefault {
     return Join-Path $LabRoot "logs"
 }
 
+function Get-LocalIPv4Address {
+    $netAddress = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and
+            $_.IPAddress -notmatch '^0\.'
+        } |
+        Sort-Object InterfaceMetric, SkipAsSource |
+        Select-Object -First 1
+
+    if ($netAddress -and $netAddress.IPAddress) {
+        return $netAddress.IPAddress
+    }
+
+    try {
+        $dnsAddress = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+            Where-Object {
+                $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+                $_.IPAddressToString -notmatch '^(127\.|169\.254\.)'
+            } |
+            Select-Object -First 1
+
+        if ($dnsAddress) {
+            return $dnsAddress.IPAddressToString
+        }
+    }
+    catch {
+    }
+
+    return ""
+}
+
+function Get-HldsJoinInfo {
+    param(
+        [int]$Port,
+        [string]$ServerHost = "127.0.0.1"
+    )
+
+    $resolvedHost = if ([string]::IsNullOrWhiteSpace($ServerHost)) {
+        "127.0.0.1"
+    }
+    else {
+        $ServerHost.Trim()
+    }
+
+    $loopbackAddress = "{0}:{1}" -f $resolvedHost, $Port
+    $lanHost = Get-LocalIPv4Address
+    $lanAddress = if ($lanHost) { "{0}:{1}" -f $lanHost, $Port } else { "" }
+
+    [pscustomobject]@{
+        LoopbackHost        = $resolvedHost
+        LoopbackAddress     = $loopbackAddress
+        LanHost             = $lanHost
+        LanAddress          = $lanAddress
+        ConsoleCommand      = "connect $loopbackAddress"
+        LanConsoleCommand   = if ($lanAddress) { "connect $lanAddress" } else { "" }
+        SteamConnectUri     = "steam://connect/$loopbackAddress"
+    }
+}
+
 function Get-ServerModRoot {
     param([string]$HldsRoot)
     return Join-Path $HldsRoot "valve"
