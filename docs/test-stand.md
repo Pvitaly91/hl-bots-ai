@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-18
+HLDM-JKBOTTI-AI-STAND-20260415-19
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -268,6 +268,18 @@ This pair runner is thin on purpose:
 - it prints and saves control and treatment join targets up front
 - it keeps the control lane sidecar-free while still honoring human-join-aware wait thresholds
 
+Before a real human pair session, run the dedicated preflight:
+
+```powershell
+powershell -NoProfile -File .\scripts\preflight_real_pair_session.ps1
+```
+
+After a pair completes, review the latest pair pack with:
+
+```powershell
+powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1
+```
+
 Run the replay/profile sweep before scheduling a longer live mixed-session:
 
 ```powershell
@@ -290,10 +302,11 @@ powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
 
 For the next real human-vs-bot session, use this sequence:
 
-1. Start `scripts\run_control_treatment_pair.ps1` with the default `conservative` treatment profile.
-2. Join the control lane on the printed `ControlPort` target and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
-3. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target and repeat.
-4. After the run, open `pair_summary.md` first, then `comparison.md`.
+1. Run `scripts\preflight_real_pair_session.ps1` and stop only if it reports `blocked`.
+2. Start `scripts\run_control_treatment_pair.ps1` with the default `conservative` treatment profile.
+3. Join the control lane on the printed `ControlPort` target first and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
+4. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
+5. After the run, open `pair_summary.md` first, then `comparison.md`, or run `scripts\review_latest_pair_run.ps1`.
 
 The saved join helpers make the roles explicit:
 
@@ -308,6 +321,21 @@ Why `conservative` is the default next live treatment profile:
 - it is the safest way to learn whether live treatment is too quiet before escalating to `responsive`
 
 Try `responsive` only after a conservative pair says the treatment lane stayed too quiet relative to control or never produced a grounded human-present patch window.
+
+Treat the first real human pair session like an operator checklist, not a tuning experiment. `docs\operator-checklist.md` is the concise runbook for:
+
+- prerequisites
+- default control and treatment ports
+- what counts as insufficient-data
+- what counts as usable-signal
+- what to do if no humans join
+- what to do if treatment never patches while humans are present
+
+Preflight verdicts mean:
+
+- `ready-for-human-pair-session`: required scripts, build output, ports, and profile selection are ready without current warnings
+- `ready-with-warnings`: the pair can be run, but at least one non-blocking prerequisite or optional helper still needs attention
+- `blocked`: do not spend a human session yet; fix the reported blockers first
 
 Run the replay/scenario tests:
 

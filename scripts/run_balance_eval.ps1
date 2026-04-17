@@ -624,7 +624,7 @@ $copiedArtifacts["join_instructions"] = $joinInstructionsPath
 
 $laneManifest = [ordered]@{
     schema_version = 2
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-14"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-19"
     mode = $Mode
     lane_label = $LaneLabel
     map = $Map
@@ -704,7 +704,7 @@ $sessionPackMarkdownPath = Join-Path $laneRoot "session_pack.md"
 
 $sessionPack = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-14"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-19"
     lane_root = $laneRoot
     mode = $Mode
     lane_label = $LaneLabel

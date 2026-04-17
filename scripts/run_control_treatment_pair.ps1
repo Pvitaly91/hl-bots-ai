@@ -121,6 +121,7 @@ function Get-PairJoinInstructionsText {
         "Treatment becomes most interpretable when it patches while humans are present and there is time to observe the aftermath.",
         "If humans never join, the pair should be treated as insufficient-data only.",
         "If humans join briefly, the pair should be treated as weak-signal.",
+        "After the run, review pair_summary.md first, then comparison.md, or run scripts\review_latest_pair_run.ps1.",
         "Human-join grace window: $HumanJoinGraceSeconds seconds",
         "Pair pack root: $PairRoot"
     )
@@ -339,8 +340,11 @@ Write-TextFile -Path $pairJoinInstructionsPath -Value (
         -HumanJoinGraceSeconds $HumanJoinGraceSeconds
 )
 
+$operatorChecklistPath = Join-Path (Get-RepoRoot) "docs\operator-checklist.md"
+$reviewHelperCommand = "powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1 -PairRoot `"$pairRoot`""
+
 Write-Host "Paired control+treatment evaluation:"
-Write-Host "  Pair root: $pairRoot"
+Write-Host "  Pair pack root: $pairRoot"
 Write-Host "  Map: $Map"
 Write-Host "  Bot count: $BotCount"
 Write-Host "  Bot skill: $BotSkill"
@@ -350,11 +354,32 @@ Write-Host "  Human join grace seconds: $HumanJoinGraceSeconds"
 Write-Host "  Minimum human snapshots: $MinHumanSnapshots"
 Write-Host "  Minimum human presence seconds: $MinHumanPresenceSeconds"
 Write-Host "  Minimum treatment patch events for usable lane: $MinPatchEventsForUsableLane"
-Write-Host "  Control lane: $ControlLaneLabel ($($controlJoinInfo.LoopbackAddress))"
-Write-Host "  Treatment lane: $TreatmentLaneLabel ($($treatmentJoinInfo.LoopbackAddress))"
-Write-Host "  Treatment profile: $($resolvedTuningProfile.name)"
-Write-Host "  Sequence: control lane first, treatment lane second"
+Write-Host "Operator join plan:"
+Write-Host "  CONTROL lane (join first): $ControlLaneLabel"
+Write-Host "    Role: no-AI control baseline"
+Write-Host "    Loopback join target: $($controlJoinInfo.LoopbackAddress)"
+Write-Host "    Console command: $($controlJoinInfo.ConsoleCommand)"
+if (-not [string]::IsNullOrWhiteSpace([string]$controlJoinInfo.LanAddress)) {
+    Write-Host "    LAN join target: $($controlJoinInfo.LanAddress)"
+}
+Write-Host "    Join instructions: $controlJoinInstructionsPath"
+Write-Host "  TREATMENT lane (join second): $TreatmentLaneLabel"
+Write-Host "    Role: AI treatment"
+Write-Host "    Loopback join target: $($treatmentJoinInfo.LoopbackAddress)"
+Write-Host "    Console command: $($treatmentJoinInfo.ConsoleCommand)"
+if (-not [string]::IsNullOrWhiteSpace([string]$treatmentJoinInfo.LanAddress)) {
+    Write-Host "    LAN join target: $($treatmentJoinInfo.LanAddress)"
+}
+Write-Host "    Treatment profile: $($resolvedTuningProfile.name)"
+Write-Host "    Join instructions: $treatmentJoinInstructionsPath"
+Write-Host "Success means:"
+Write-Host "  Keep at least one human in each lane for about $MinHumanPresenceSeconds seconds."
+Write-Host "  Treatment is strongest when it patches while humans are present and there is time to observe the aftermath."
+Write-Host "  No-human or sparse-human runs are plumbing validation only, not tuning evidence."
+Write-Host "After the run:"
+Write-Host "  Review helper: $reviewHelperCommand"
 Write-Host "  Pair join instructions: $pairJoinInstructionsPath"
+Write-Host "  Operator checklist: $operatorChecklistPath"
 
 $sharedEvalArgs = @{
     Map = $Map
@@ -442,7 +467,7 @@ $pairSummaryMarkdownPath = Join-Path $pairRoot "pair_summary.md"
 
 $pairSummary = [ordered]@{
     schema_version = 1
-    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-14"
+    prompt_id = "HLDM-JKBOTTI-AI-STAND-20260415-19"
     pair_id = $pairFolderName
     pair_root = $pairRoot
     map = $Map
@@ -508,9 +533,14 @@ Write-JsonFile -Path $pairSummaryJsonPath -Value $pairSummary
 Write-TextFile -Path $pairSummaryMarkdownPath -Value (Get-PairSummaryMarkdown -PairSummary $pairSummary)
 
 Write-Host "Pair evaluation finished."
+Write-Host "  Pair pack root: $pairRoot"
 Write-Host "  Pair summary JSON: $pairSummaryJsonPath"
+Write-Host "  Pair summary Markdown: $pairSummaryMarkdownPath"
 Write-Host "  Comparison JSON: $comparisonJsonPath"
+Write-Host "  Comparison Markdown: $comparisonMarkdownPath"
 Write-Host "  Operator note: $operatorNote"
+Write-Host "  Next step: $reviewHelperCommand"
+Write-Host "  Operator checklist: $operatorChecklistPath"
 
 [pscustomobject]@{
     PairRoot = $pairRoot
@@ -528,4 +558,6 @@ Write-Host "  Operator note: $operatorNote"
     ComparisonVerdict = [string]$comparisonSummary.comparison_verdict
     OperatorNoteClassification = $operatorClassification
     TreatmentProfile = $resolvedTuningProfile.name
+    ReviewCommand = $reviewHelperCommand
+    OperatorChecklistPath = $operatorChecklistPath
 }

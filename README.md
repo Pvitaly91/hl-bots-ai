@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-18
+HLDM-JKBOTTI-AI-STAND-20260415-19
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -18,6 +18,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `docs/test-stand.md` with local HLDS lab details.
+- `docs/operator-checklist.md` with the first real human pair-session operator flow.
 - `AGENTS.md` for future repository automation guidance.
 
 ## Architecture Overview
@@ -222,6 +223,22 @@ Interpret the operator note conservatively:
 
 If `Half-Life\hl.exe` is available locally, `scripts\launch_local_hldm_client.ps1 -Port <port> -DryRun` resolves the client path and prints the launch command without starting the game. If the executable is missing, the helper fails with a precise prereq message instead of failing silently.
 
+For the first real human pair session, use this operator flow:
+
+1. `powershell -NoProfile -File .\scripts\preflight_real_pair_session.ps1`
+2. `powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload`
+3. join the printed control lane first
+4. join the printed treatment lane second
+5. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
+
+Preflight verdicts mean:
+
+- `ready-for-human-pair-session`: required scripts, build output, ports, and profile selection are ready without current warnings.
+- `ready-with-warnings`: the pair can be run, but at least one non-blocking prerequisite or optional helper still needs attention.
+- `blocked`: do not spend a human session yet; fix the reported blockers first.
+
+Use `docs\operator-checklist.md` as the concise runbook for the first real human pair session.
+
 Summarize one lane or compare control vs treatment with:
 
 ```powershell
@@ -409,6 +426,9 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_mixed_balance_eval.bat`: `cmd.exe` wrapper for the mixed-session helper.
 - `scripts/run_control_treatment_pair.ps1`: thin paired workflow helper that runs the control lane and treatment lane, preserves both session packs, and writes the combined pair summary/comparison pack.
 - `scripts/run_control_treatment_pair.bat`: `cmd.exe` wrapper for the paired control-vs-treatment helper.
+- `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
+- `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
+- `scripts/review_latest_pair_run.ps1`: finds the newest pair pack, prints the key artifact paths, summarizes the control/treatment verdicts, and points to the next artifact worth reading.
 - `scripts/launch_local_hldm_client.ps1`: optional helper that resolves a local Half-Life client and launches or dry-runs a local join command.
 - `scripts/launch_local_hldm_client.bat`: `cmd.exe` wrapper for the local client helper.
 - `scripts/summarize_balance_eval.ps1`: Windows wrapper around the Python evaluator for one lane or a control-vs-treatment pair.
