@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-23
+HLDM-JKBOTTI-AI-STAND-20260415-24
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -239,7 +239,8 @@ For the first real human pair session, use this operator flow:
 7. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
 8. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
 9. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
-10. use the scorecard, shadow recommendation, and registry summary together before choosing the next live action
+10. run `powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1`
+11. use the scorecard, shadow recommendation, registry summary, and responsive-trial gate together before choosing the next live action
 
 Preflight verdicts mean:
 
@@ -327,6 +328,7 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 - notes are optional: either pass `-NotesPath` explicitly or place a notes file in the pair root. Missing notes never block registration.
 - subjective notes are carried as context only; the promotion logic still keys off lane evidence, pair classification, and scorecard fields first.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
+- `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
 - the registry summary reports total registered sessions, sessions by pair classification, sessions by treatment profile, counts for insufficient-data / weak-signal / tuning-usable / strong-signal sessions, human-present patch counts, meaningful post-patch window counts, treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`, and how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive.
 - the profile recommendation stays intentionally conservative. It will not recommend `responsive` from no-human or weak-signal runs, and it requires repeated grounded conservative evidence before promotion.
 - `keep-conservative` means the current live default is still behaving safely.
@@ -338,6 +340,35 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 
 Conservative remains the default next live treatment profile until the ledger says otherwise. That keeps profile promotion bounded, reversible, and driven by accumulated evidence instead of one noisy session.
 
+## Responsive Trial Gate
+
+Use `scripts\evaluate_responsive_trial_gate.ps1` when you need a disciplined operator-facing answer to "is the first real live responsive trial justified yet?"
+
+- it writes `responsive_trial_gate.json`, `responsive_trial_gate.md`, `responsive_trial_plan.json`, and `responsive_trial_plan.md` under `lab\logs\eval\registry\`
+- it reads the registry first and reuses `registry_summary.json` / `profile_recommendation.json` when they already exist
+- thresholds live in `ai_director/testdata/responsive_trial_gate.json` and are intentionally strict
+- synthetic-only evidence, insufficient-data sessions, weak-signal sessions, and one-off noisy sessions must not unlock the live responsive trial
+- repeated real grounded conservative-too-quiet sessions across distinct pair runs may open the gate
+- grounded responsive-too-reactive evidence closes the gate and recommends reverting to `conservative`
+- ambiguous grounded evidence stays `manual-review-needed`
+
+Run it directly after summarizing the registry:
+
+```powershell
+powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1
+```
+
+Read the next live action like this:
+
+- `responsive-trial-not-allowed`: the gate is still blocked because the real evidence is still insufficient, weak, or synthetic-only
+- `collect-more-conservative-evidence`: some real grounded conservative evidence exists, but not enough repeated too-quiet evidence exists yet
+- `keep-conservative`: real grounded conservative evidence already looks acceptable, so responsive should stay blocked
+- `responsive-trial-allowed`: exactly one bounded live responsive trial is justified, and the generated plan becomes the operator runbook
+- `responsive-revert-recommended`: grounded responsive evidence already shows overreaction, so the live default should move back to conservative
+- `manual-review-needed`: the grounded evidence conflicts or still carries risk that needs an operator read
+
+If the gate is blocked, `responsive_trial_plan.md` is a "not yet" explanation, not a ready launch plan. If the gate opens, the plan file carries the exact lane settings, success criteria, rollback rule, and post-run workflow.
+
 ## Synthetic Fixture Validation
 
 The repository also carries deterministic synthetic pair packs under `ai_director/testdata/pair_sessions/`. They exist to validate the post-run decision stack before another real human-rich session is spent on the wrong branch.
@@ -346,6 +377,7 @@ The repository also carries deterministic synthetic pair packs under `ai_directo
 - each fixture reuses the same pair-pack shape as the live workflow: `pair_summary.json`, `comparison.json`, nested lane summaries/session packs, and replayable telemetry history
 - the fixture families cover plumbing-only insufficient-data, sparse-human weak-signal, usable conservative keep/repeat cases, conservative-too-quiet responsive-candidate cases, responsive-too-reactive revert cases, and an ambiguous manual-review case
 - the fixtures help prove that insufficient-data does not justify responsive, that one noisy run does not auto-promote responsive, and that too-quiet / too-reactive branches stay grounded and honest
+- by default the responsive-trial gate excludes synthetic-only evidence from live promotion; the validation-only synthetic override exists only to exercise gate branches in tests
 
 Regenerate the synthetic pair packs if the deterministic fixture source changes:
 
@@ -401,7 +433,7 @@ The sweep writes `summary.json`, `summary.md`, `comparison.json`, and `compariso
 - which profile best avoids underreaction
 - which profile is the best next candidate for a live mixed-session run
 
-Use the sweep results to pick the next live treatment profile, then pass the same name back into `scripts\run_balance_eval.ps1`, `scripts\run_mixed_balance_eval.ps1`, or `scripts\run_control_treatment_pair.ps1` with `-TuningProfile <name>`. Start live pair work with `conservative`. Only move to `responsive` after a conservative pair pack says the treatment lane stayed too quiet relative to control or never produced a grounded human-present patch window.
+Use the sweep results to pick the next live treatment profile, then pass the same name back into `scripts\run_balance_eval.ps1`, `scripts\run_mixed_balance_eval.ps1`, or `scripts\run_control_treatment_pair.ps1` with `-TuningProfile <name>`. Start live pair work with `conservative`. Only move to `responsive` after the responsive-trial gate opens on repeated real grounded conservative-too-quiet evidence.
 
 ## Replay Scenarios
 

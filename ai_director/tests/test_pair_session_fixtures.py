@@ -185,6 +185,63 @@ def summarize_registry(registry_path: Path, output_root: Path) -> tuple[dict[str
     )
 
 
+def summarize_registry_with_gate(
+    registry_path: Path,
+    output_root: Path,
+    *,
+    include_synthetic_evidence_for_gate: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    args = [
+        "-RegistryPath",
+        str(registry_path),
+        "-OutputRoot",
+        str(output_root),
+        "-EvaluateResponsiveTrialGate",
+    ]
+    if include_synthetic_evidence_for_gate:
+        args.append("-IncludeSyntheticEvidenceForResponsiveTrialGate")
+
+    run_powershell(
+        REPO_ROOT / "scripts" / "summarize_pair_session_registry.ps1",
+        *args,
+    )
+    return (
+        read_json(output_root / "registry_summary.json"),
+        read_json(output_root / "profile_recommendation.json"),
+        read_json(output_root / "responsive_trial_gate.json"),
+        read_json(output_root / "responsive_trial_plan.json"),
+    )
+
+
+def evaluate_responsive_gate(
+    registry_path: Path,
+    output_root: Path,
+    *,
+    include_synthetic_evidence_for_validation: bool = False,
+) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+    args = [
+        "-RegistryPath",
+        str(registry_path),
+        "-OutputRoot",
+        str(output_root),
+    ]
+    if include_synthetic_evidence_for_validation:
+        args.append("-IncludeSyntheticEvidenceForValidation")
+
+    run_powershell(
+        REPO_ROOT / "scripts" / "evaluate_responsive_trial_gate.ps1",
+        *args,
+    )
+    gate_md_path = output_root / "responsive_trial_gate.md"
+    plan_md_path = output_root / "responsive_trial_plan.md"
+    return (
+        read_json(output_root / "responsive_trial_gate.json"),
+        gate_md_path.read_text(encoding="utf-8"),
+        read_json(output_root / "responsive_trial_plan.json"),
+        plan_md_path.read_text(encoding="utf-8"),
+    )
+
+
 @unittest.skipUnless(POWERSHELL, "PowerShell is required for fixture-backed pair-session tests.")
 class PairSessionFixtureDecisionTests(unittest.TestCase):
     @classmethod
@@ -343,6 +400,118 @@ class PairSessionRegistryTests(unittest.TestCase):
         )
         self.assertEqual(recommendation["recommended_live_profile"], "conservative")
         self.assertFalse(recommendation["questions"]["responsive_justified_as_next_trial"])
+
+
+@unittest.skipUnless(POWERSHELL, "PowerShell is required for fixture-backed pair-session tests.")
+class ResponsiveTrialGateTests(unittest.TestCase):
+    def _run_gate_combination(
+        self,
+        fixture_ids: list[str],
+        *,
+        duplicate_suffixes: dict[int, str] | None = None,
+        include_synthetic_evidence_for_validation: bool = False,
+    ) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            registry_path = tempdir / "registry" / "pair_sessions.ndjson"
+            output_root = tempdir / "registry" / "summary"
+            for index, fixture_id in enumerate(fixture_ids):
+                suffix = None if duplicate_suffixes is None else duplicate_suffixes.get(index)
+                pair_root = copy_fixture(fixture_id, tempdir / "pairs", pair_id_suffix=suffix)
+                run_fixture_pipeline(pair_root)
+                register_fixture(pair_root, registry_path)
+            summarize_registry(registry_path, output_root)
+            return evaluate_responsive_gate(
+                registry_path,
+                output_root,
+                include_synthetic_evidence_for_validation=include_synthetic_evidence_for_validation,
+            )
+
+    def test_gate_blocks_insufficient_and_weak_signal_registries(self) -> None:
+        gate, gate_md, plan, plan_md = self._run_gate_combination(
+            ["no_humans_insufficient_data", "sparse_humans_weak_signal"]
+        )
+        self.assertEqual(gate["gate_verdict"], "closed")
+        self.assertEqual(gate["next_live_action"], "responsive-trial-not-allowed")
+        self.assertTrue(gate["synthetic_only_evidence_excluded_from_promotion"])
+        self.assertEqual(plan["plan_status"], "blocked")
+        self.assertIn("responsive-trial-not-allowed", gate_md)
+        self.assertIn("Not Yet", plan_md)
+
+    def test_gate_keeps_single_too_quiet_case_below_threshold_even_in_validation_mode(self) -> None:
+        gate, _, plan, _ = self._run_gate_combination(
+            ["conservative_too_quiet_responsive_candidate"],
+            include_synthetic_evidence_for_validation=True,
+        )
+        self.assertEqual(gate["gate_verdict"], "closed")
+        self.assertEqual(gate["next_live_action"], "collect-more-conservative-evidence")
+        self.assertEqual(plan["plan_status"], "blocked")
+
+    def test_gate_excludes_synthetic_only_promotion_by_default(self) -> None:
+        gate, _, plan, _ = self._run_gate_combination(
+            [
+                "conservative_too_quiet_responsive_candidate",
+                "conservative_too_quiet_responsive_candidate",
+            ],
+            duplicate_suffixes={1: "repeat"},
+        )
+        self.assertEqual(gate["gate_verdict"], "closed")
+        self.assertEqual(gate["next_live_action"], "responsive-trial-not-allowed")
+        self.assertTrue(gate["synthetic_only_evidence_excluded_from_promotion"])
+        self.assertEqual(plan["plan_status"], "blocked")
+
+    def test_gate_can_open_for_repeated_too_quiet_evidence_in_validation_mode(self) -> None:
+        gate, gate_md, plan, plan_md = self._run_gate_combination(
+            [
+                "conservative_too_quiet_responsive_candidate",
+                "conservative_too_quiet_responsive_candidate",
+            ],
+            duplicate_suffixes={1: "repeat"},
+            include_synthetic_evidence_for_validation=True,
+        )
+        self.assertEqual(gate["gate_verdict"], "open")
+        self.assertEqual(gate["next_live_action"], "responsive-trial-allowed")
+        self.assertFalse(gate["synthetic_only_evidence_excluded_from_promotion"])
+        self.assertEqual(plan["plan_status"], "ready")
+        self.assertEqual(plan["treatment_lane"]["treatment_profile"], "responsive")
+        self.assertIn("responsive-trial-allowed", gate_md)
+        self.assertIn("run_control_treatment_pair.ps1", plan_md)
+
+    def test_gate_can_recommend_revert_for_responsive_overreaction_in_validation_mode(self) -> None:
+        gate, _, plan, _ = self._run_gate_combination(
+            [
+                "responsive_too_reactive_revert_candidate",
+                "responsive_too_reactive_revert_candidate",
+            ],
+            duplicate_suffixes={1: "repeat"},
+            include_synthetic_evidence_for_validation=True,
+        )
+        self.assertEqual(gate["gate_verdict"], "revert-recommended")
+        self.assertEqual(gate["next_live_action"], "responsive-revert-recommended")
+        self.assertEqual(plan["plan_status"], "blocked")
+
+    def test_gate_can_escalate_ambiguous_grounded_evidence_to_manual_review(self) -> None:
+        gate, _, plan, _ = self._run_gate_combination(
+            ["strong_signal_keep_conservative", "ambiguous_manual_review_needed"],
+            include_synthetic_evidence_for_validation=True,
+        )
+        self.assertEqual(gate["gate_verdict"], "manual-review-needed")
+        self.assertEqual(gate["next_live_action"], "manual-review-needed")
+        self.assertEqual(plan["plan_status"], "blocked")
+
+    def test_registry_summary_can_reference_gate_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            registry_path = tempdir / "registry" / "pair_sessions.ndjson"
+            output_root = tempdir / "registry" / "summary"
+            pair_root = copy_fixture("no_humans_insufficient_data", tempdir / "pairs")
+            run_fixture_pipeline(pair_root)
+            register_fixture(pair_root, registry_path)
+            summary, _, gate, plan = summarize_registry_with_gate(registry_path, output_root)
+            self.assertTrue(summary["responsive_trial_gate_present"])
+            self.assertEqual(summary["responsive_trial_gate_verdict"], gate["gate_verdict"])
+            self.assertEqual(summary["responsive_trial_gate_next_live_action"], gate["next_live_action"])
+            self.assertEqual(plan["plan_status"], "blocked")
 
 
 if __name__ == "__main__":

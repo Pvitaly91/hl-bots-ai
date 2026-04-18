@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-23
+HLDM-JKBOTTI-AI-STAND-20260415-24
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -340,7 +340,8 @@ For the next real human-vs-bot session, use this sequence:
 7. Run `scripts\score_latest_pair_session.ps1`.
 8. Run `scripts\register_pair_session_result.ps1`.
 9. Run `scripts\summarize_pair_session_registry.ps1`.
-10. Use the scorecard, shadow recommendation, and registry recommendation together before the next live action.
+10. Run `scripts\evaluate_responsive_trial_gate.ps1`.
+11. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before the next live action.
 
 The saved join helpers make the roles explicit:
 
@@ -354,7 +355,7 @@ Why `conservative` is the default next live treatment profile:
 - it reacts more slowly near the boundary, which reduces the chance of overreading one noisy session
 - it is the safest way to learn whether live treatment is too quiet before escalating to `responsive`
 
-Try `responsive` only after a conservative pair says the treatment lane stayed too quiet relative to control or never produced a grounded human-present patch window.
+Try `responsive` only after the responsive-trial gate opens on repeated real grounded conservative-too-quiet evidence. One noisy scorecard or synthetic fixture alone is not enough.
 
 Shadow review is the intermediate check before doing that with a real human session. It answers what `default` and `responsive` would have done against the same captured treatment-lane history without pretending that offline replay is stronger than real human evidence.
 
@@ -376,6 +377,7 @@ Use the registry helpers to move from single scorecards to accumulated live evid
 - registry entries record the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, optional shadow-review decision fields when present, whether the session is tuning-usable, optional notes path, and embedded prompt/commit metadata when available.
 - notes remain optional. Pass `-NotesPath` or drop a notes file into the pair root if an operator wants to keep lightweight context with the objective evidence.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
+- `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
 - the summary answers how many usable sessions exist for each profile, how often treatment patched while humans were present, whether the dataset is still dominated by insufficient-data or weak-signal runs, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and whether responsive is justified or should be rejected or reverted.
 - profile promotion stays intentionally conservative: no-human and weak-signal sessions do not justify responsive, one noisy session does not justify a profile change, and conservative remains the default until repeated grounded evidence says otherwise.
 
@@ -388,6 +390,35 @@ Interpret the aggregate recommendation like this:
 - `insufficient-data-repeat-session`: the registry is still dominated by plumbing-only or no-human evidence.
 - `weak-signal-repeat-session`: humans joined, but the accumulated post-patch evidence is still too weak for a profile change.
 - `manual-review-needed`: the ledger has conflicting grounded evidence or a guardrail concern that needs a manual read before the next live action.
+
+## Responsive Trial Gate
+
+Use `scripts\evaluate_responsive_trial_gate.ps1` when you need an explicit go/no-go verdict for the first real live `responsive` treatment session.
+
+- it writes `responsive_trial_gate.json`, `responsive_trial_gate.md`, `responsive_trial_plan.json`, and `responsive_trial_plan.md` under `lab\logs\eval\registry\`
+- it reads the registry first and reuses the latest `registry_summary.json` / `profile_recommendation.json` when they already exist
+- the thresholds live in `ai_director\testdata\responsive_trial_gate.json` so the promotion rule is explicit and inspectable
+- synthetic-only evidence, insufficient-data sessions, weak-signal sessions, and one-off noisy sessions must never unlock the live responsive trial
+- repeated real grounded conservative-too-quiet evidence across distinct pair runs may unlock one bounded responsive trial
+- grounded responsive-too-reactive evidence closes the gate and recommends reverting to conservative
+- ambiguous grounded evidence remains `manual-review-needed`
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1
+```
+
+Interpret the gate action like this:
+
+- `responsive-trial-not-allowed`: the live gate is closed because the evidence is still insufficient, weak, or synthetic-only
+- `collect-more-conservative-evidence`: more real grounded conservative evidence is needed before responsive can be considered
+- `keep-conservative`: the real grounded conservative evidence already looks acceptable, so responsive should remain blocked
+- `responsive-trial-allowed`: one bounded live responsive trial is justified and the generated plan becomes the operator runbook
+- `responsive-revert-recommended`: grounded responsive evidence already shows overreaction, so the next live profile should move back to conservative
+- `manual-review-needed`: the grounded evidence conflicts or still carries risk that needs an operator read
+
+If the gate is blocked, `responsive_trial_plan.md` is a "not yet" explanation. If the gate is open, `responsive_trial_plan.md` carries the exact live command, minimum human-signal requirement, success criteria, rollback rule, and post-run workflow.
 
 Treat the first real human pair session like an operator checklist, not a tuning experiment. `docs\operator-checklist.md` is the concise runbook for:
 
@@ -429,6 +460,8 @@ Use them to validate the post-run decision workflow before spending another huma
 - `ambiguous_manual_review_needed`: the evidence stays grounded but still needs an operator read instead of blind promotion
 
 These fixtures do not replace real human evidence. They exist to prove that the workflow stays honest about insufficient-data, weak-signal, keep-conservative, conservative-too-quiet responsive-candidate, responsive-too-reactive revert-to-conservative, and manual-review branches before the next live session.
+
+The same rule applies to the responsive-trial gate: synthetic fixtures can exercise the gate logic in validation mode, but synthetic-only evidence must never unlock the real live gate by itself.
 
 Regenerate the synthetic pair packs if the deterministic source definitions change:
 

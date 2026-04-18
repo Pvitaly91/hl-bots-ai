@@ -50,7 +50,8 @@ Default ports and lanes:
 9. Run `scripts\score_latest_pair_session.ps1`.
 10. Run `scripts\register_pair_session_result.ps1`.
 11. Run `scripts\summarize_pair_session_registry.ps1`.
-12. Use the scorecard, shadow recommendation, and registry recommendation together before choosing the next live profile.
+12. Run `scripts\evaluate_responsive_trial_gate.ps1`.
+13. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before choosing the next live profile.
 
 ## What Counts As Insufficient Data
 
@@ -116,6 +117,12 @@ Then summarize the accumulated registry:
 powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 ```
 
+Then evaluate whether the first live `responsive` trial is actually allowed:
+
+```powershell
+powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1
+```
+
 ## If No Humans Join
 
 - keep the run only as plumbing validation
@@ -160,9 +167,29 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 - registration defaults to the newest pair pack and skips duplicate pair packs by default
 - optional notes can be linked with `-NotesPath` or by placing a notes file in the pair root; missing notes never fail the registration step
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
+- `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can also refresh the latest responsive-trial gate in the same pass
 - the registry summary tells you how many sessions are still insufficient-data or weak-signal, how many are tuning-usable or strong-signal, how often treatment patched while humans were present, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and how each treatment profile is behaving across runs
 - conservative remains the default next live profile until the registry shows repeated grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
+
+## Responsive Trial Gate
+
+- `scripts\evaluate_responsive_trial_gate.ps1` is the explicit go/no-go check for the first real live `responsive` treatment session
+- it writes `responsive_trial_gate.json`, `responsive_trial_gate.md`, `responsive_trial_plan.json`, and `responsive_trial_plan.md` under `lab\logs\eval\registry\`
+- the gate reads the registry first, then uses `registry_summary.json` and `profile_recommendation.json` when they are already present
+- gate thresholds live in `ai_director\testdata\responsive_trial_gate.json` and are intentionally strict: repeated real grounded conservative too-quiet evidence can open the gate, but insufficient-data, weak-signal, synthetic-only, or one-off noisy evidence cannot
+- synthetic fixtures help validate the gate logic, but synthetic-only evidence must never unlock the real live responsive trial
+
+Read the next live action like this:
+
+- `responsive-trial-not-allowed`: the gate is still closed because the real evidence is still insufficient, weak, or synthetic-only
+- `collect-more-conservative-evidence`: some real grounded conservative evidence exists, but not enough repeated too-quiet evidence exists yet
+- `keep-conservative`: real grounded conservative evidence already looks acceptable, so responsive should stay blocked
+- `responsive-trial-allowed`: one bounded live responsive trial is justified, and `responsive_trial_plan.md` becomes the operator plan
+- `responsive-revert-recommended`: grounded responsive evidence already shows overreaction, so the live default should move back to conservative
+- `manual-review-needed`: the grounded evidence is conflicting or risk-signaling and needs an operator read before another live profile choice
+
+If the gate is blocked, treat `responsive_trial_plan.md` as a "not yet" note, not as a ready runbook. If the gate is open, the plan file gives the exact live responsive trial settings and rollback rule.
 
 ## Synthetic Fixture Validation
 
@@ -171,6 +198,7 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 - the fixture families cover insufficient-data, weak-signal, keep-conservative, conservative-too-quiet responsive-candidate, responsive-too-reactive revert, and ambiguous manual-review branches
 - use them to validate the decision stack before another live session, not to replace real human evidence
 - a fixture that stays insufficient-data or weak-signal must never justify promoting `responsive`
+- synthetic fixtures can exercise the gate in validation mode, but they must never unlock the real live gate by themselves
 
 Regenerate the fixtures if their deterministic source definitions change:
 

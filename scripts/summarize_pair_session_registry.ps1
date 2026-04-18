@@ -1,10 +1,23 @@
 param(
     [string]$RegistryPath = "",
     [string]$LabRoot = "",
-    [string]$OutputRoot = ""
+    [string]$OutputRoot = "",
+    [switch]$EvaluateResponsiveTrialGate,
+    [string]$ResponsiveTrialGateConfigPath = "",
+    [switch]$IncludeSyntheticEvidenceForResponsiveTrialGate
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
+
+function Read-JsonFile {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+
+    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+}
 
 function Read-NdjsonFile {
     param([string]$Path)
@@ -491,6 +504,18 @@ function Get-RegistrySummaryMarkdown {
         $lines += "- $($profile.treatment_profile): total=$($profile.total_sessions), insufficient=$($profile.insufficient_data_count), weak=$($profile.weak_signal_count), tuning-usable=$($profile.tuning_usable_count), strong=$($profile.strong_signal_count), usable-or-strong=$($profile.tuning_usable_or_strong_count)"
     }
 
+    if ([bool](Get-ObjectPropertyValue -Object $Summary -Name "responsive_trial_gate_present" -Default $false)) {
+        $lines += @(
+            "",
+            "## Responsive Trial Gate",
+            "",
+            "- Gate verdict: $([string](Get-ObjectPropertyValue -Object $Summary -Name 'responsive_trial_gate_verdict' -Default ''))",
+            "- Next live action: $([string](Get-ObjectPropertyValue -Object $Summary -Name 'responsive_trial_gate_next_live_action' -Default ''))",
+            "- Gate JSON: $([string](Get-ObjectPropertyValue -Object $Summary -Name 'responsive_trial_gate_json' -Default ''))",
+            "- Gate Markdown: $([string](Get-ObjectPropertyValue -Object $Summary -Name 'responsive_trial_gate_markdown' -Default ''))"
+        )
+    }
+
     $lines += @(
         "",
         "## Recent Sessions",
@@ -708,6 +733,11 @@ $summary = [ordered]@{
     shadow_recommendation_decision_counts = $shadowRecommendationDecisionCounts
     shadow_recommendation_bucket_counts = $shadowRecommendationBucketCounts
     sessions_with_notes_count = Get-CountValue -Items $normalizedEntries -Predicate { param($entry) -not [string]::IsNullOrWhiteSpace($entry.notes_path) }
+    responsive_trial_gate_present = $false
+    responsive_trial_gate_verdict = ""
+    responsive_trial_gate_next_live_action = ""
+    responsive_trial_gate_json = ""
+    responsive_trial_gate_markdown = ""
     profiles = $profileStats
     recent_sessions = @($sortedEntries | Select-Object -First 10)
 }
@@ -771,6 +801,39 @@ Write-TextFile -Path $registrySummaryMarkdownPath -Value (Get-RegistrySummaryMar
 Write-JsonFile -Path $profileRecommendationJsonPath -Value $profileRecommendation
 Write-TextFile -Path $profileRecommendationMarkdownPath -Value (Get-ProfileRecommendationMarkdown -Recommendation $profileRecommendation)
 
+$responsiveTrialGateJsonPath = Join-Path $resolvedOutputRoot "responsive_trial_gate.json"
+$responsiveTrialGateMarkdownPath = Join-Path $resolvedOutputRoot "responsive_trial_gate.md"
+
+if ($EvaluateResponsiveTrialGate) {
+    $gateScriptPath = Join-Path $PSScriptRoot "evaluate_responsive_trial_gate.ps1"
+    $gateScriptParams = @{
+        RegistryPath = $resolvedRegistryPath
+        OutputRoot = $resolvedOutputRoot
+        RegistrySummaryPath = $registrySummaryJsonPath
+        ProfileRecommendationPath = $profileRecommendationJsonPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ResponsiveTrialGateConfigPath)) {
+        $gateScriptParams.GateConfigPath = $ResponsiveTrialGateConfigPath
+    }
+    if ($IncludeSyntheticEvidenceForResponsiveTrialGate) {
+        $gateScriptParams.IncludeSyntheticEvidenceForValidation = $true
+    }
+
+    & $gateScriptPath @gateScriptParams | Out-Null
+}
+
+$responsiveTrialGate = Read-JsonFile -Path $responsiveTrialGateJsonPath
+if ($null -ne $responsiveTrialGate) {
+    $summary.responsive_trial_gate_present = $true
+    $summary.responsive_trial_gate_verdict = [string](Get-ObjectPropertyValue -Object $responsiveTrialGate -Name "gate_verdict" -Default "")
+    $summary.responsive_trial_gate_next_live_action = [string](Get-ObjectPropertyValue -Object $responsiveTrialGate -Name "next_live_action" -Default "")
+    $summary.responsive_trial_gate_json = $responsiveTrialGateJsonPath
+    $summary.responsive_trial_gate_markdown = $responsiveTrialGateMarkdownPath
+
+    Write-JsonFile -Path $registrySummaryJsonPath -Value $summary
+    Write-TextFile -Path $registrySummaryMarkdownPath -Value (Get-RegistrySummaryMarkdown -Summary $summary)
+}
+
 Write-Host "Pair-session registry summary:"
 Write-Host "  Registry path: $resolvedRegistryPath"
 Write-Host "  Registered pair sessions: $($summary.total_registered_pair_sessions)"
@@ -780,6 +843,10 @@ Write-Host "  Profile recommendation JSON: $profileRecommendationJsonPath"
 Write-Host "  Profile recommendation Markdown: $profileRecommendationMarkdownPath"
 Write-Host "  Recommendation: $($profileRecommendation.decision)"
 Write-Host "  Recommended next live profile: $($profileRecommendation.recommended_live_profile)"
+if ($summary.responsive_trial_gate_present) {
+    Write-Host "  Responsive trial gate verdict: $($summary.responsive_trial_gate_verdict)"
+    Write-Host "  Responsive trial next live action: $($summary.responsive_trial_gate_next_live_action)"
+}
 
 [pscustomobject]@{
     RegistryPath = $resolvedRegistryPath
@@ -790,4 +857,8 @@ Write-Host "  Recommended next live profile: $($profileRecommendation.recommende
     ProfileRecommendationMarkdownPath = $profileRecommendationMarkdownPath
     Recommendation = $profileRecommendation.decision
     RecommendedLiveProfile = $profileRecommendation.recommended_live_profile
+    ResponsiveTrialGateJsonPath = if ($summary.responsive_trial_gate_present) { $responsiveTrialGateJsonPath } else { "" }
+    ResponsiveTrialGateMarkdownPath = if ($summary.responsive_trial_gate_present) { $responsiveTrialGateMarkdownPath } else { "" }
+    ResponsiveTrialGateVerdict = $summary.responsive_trial_gate_verdict
+    ResponsiveTrialGateNextLiveAction = $summary.responsive_trial_gate_next_live_action
 }

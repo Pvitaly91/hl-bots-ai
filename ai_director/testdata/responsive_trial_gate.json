@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "description": "Conservative defaults for deciding whether the first real live responsive trial is justified.",
+  "gate_thresholds": {
+    "min_grounded_conservative_sessions_for_responsive_trial": 2,
+    "min_grounded_conservative_too_quiet_sessions_for_responsive_trial": 2,
+    "min_distinct_grounded_conservative_too_quiet_pair_ids_for_responsive_trial": 2,
+    "max_grounded_conservative_appropriate_sessions_for_responsive_trial": 0,
+    "min_grounded_responsive_too_reactive_sessions_for_revert": 1,
+    "min_grounded_conservative_appropriate_sessions_for_keep": 1,
+    "min_grounded_conservative_sessions_for_keep": 2,
+    "min_grounded_conservative_strong_signal_sessions_for_keep": 1
+  },
+  "trial_defaults": {
+    "map": "crossfire",
+    "bot_count": 4,
+    "bot_skill": 3,
+    "duration_seconds": 80,
+    "wait_for_human_join": true,
+    "human_join_grace_seconds": 120,
+    "min_human_snapshots": 3,
+    "min_human_presence_seconds": 60.0,
+    "control_port": 27016,
+    "treatment_port": 27017,
+    "control_lane_label": "control-baseline",
+    "treatment_lane_label": "treatment-responsive",
+    "treatment_profile": "responsive"
+  }
+}
