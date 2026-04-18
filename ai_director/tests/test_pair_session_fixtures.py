@@ -239,11 +239,60 @@ def summarize_registry_with_gate(
     )
 
 
+def summarize_registry_with_gate_and_plan(
+    registry_path: Path,
+    output_root: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    run_powershell(
+        REPO_ROOT / "scripts" / "summarize_pair_session_registry.ps1",
+        "-RegistryPath",
+        str(registry_path),
+        "-OutputRoot",
+        str(output_root),
+        "-EvaluateResponsiveTrialGate",
+        "-EvaluateNextLiveSessionPlan",
+    )
+    return (
+        read_json(output_root / "registry_summary.json"),
+        read_json(output_root / "profile_recommendation.json"),
+        read_json(output_root / "responsive_trial_gate.json"),
+        read_json(output_root / "responsive_trial_plan.json"),
+        read_json(output_root / "next_live_plan.json"),
+    )
+
+
+def write_gate_config_override(
+    destination_path: Path,
+    *,
+    min_grounded_conservative_sessions_for_responsive_trial: int | None = None,
+    min_grounded_conservative_too_quiet_sessions_for_responsive_trial: int | None = None,
+    min_distinct_grounded_conservative_too_quiet_pair_ids_for_responsive_trial: int | None = None,
+) -> Path:
+    payload = read_json(REPO_ROOT / "ai_director" / "testdata" / "responsive_trial_gate.json")
+    thresholds = payload["gate_thresholds"]
+    if min_grounded_conservative_sessions_for_responsive_trial is not None:
+        thresholds["min_grounded_conservative_sessions_for_responsive_trial"] = (
+            min_grounded_conservative_sessions_for_responsive_trial
+        )
+    if min_grounded_conservative_too_quiet_sessions_for_responsive_trial is not None:
+        thresholds["min_grounded_conservative_too_quiet_sessions_for_responsive_trial"] = (
+            min_grounded_conservative_too_quiet_sessions_for_responsive_trial
+        )
+    if min_distinct_grounded_conservative_too_quiet_pair_ids_for_responsive_trial is not None:
+        thresholds["min_distinct_grounded_conservative_too_quiet_pair_ids_for_responsive_trial"] = (
+            min_distinct_grounded_conservative_too_quiet_pair_ids_for_responsive_trial
+        )
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return destination_path
+
+
 def evaluate_responsive_gate(
     registry_path: Path,
     output_root: Path,
     *,
     include_synthetic_evidence_for_validation: bool = False,
+    gate_config_path: Path | None = None,
 ) -> tuple[dict[str, Any], str, dict[str, Any], str]:
     args = [
         "-RegistryPath",
@@ -253,6 +302,8 @@ def evaluate_responsive_gate(
     ]
     if include_synthetic_evidence_for_validation:
         args.append("-IncludeSyntheticEvidenceForValidation")
+    if gate_config_path is not None:
+        args.extend(["-GateConfigPath", str(gate_config_path)])
 
     run_powershell(
         REPO_ROOT / "scripts" / "evaluate_responsive_trial_gate.ps1",
@@ -264,6 +315,34 @@ def evaluate_responsive_gate(
         read_json(output_root / "responsive_trial_gate.json"),
         gate_md_path.read_text(encoding="utf-8"),
         read_json(output_root / "responsive_trial_plan.json"),
+        plan_md_path.read_text(encoding="utf-8"),
+    )
+
+
+def plan_next_live_session(
+    registry_path: Path,
+    output_root: Path,
+    *,
+    gate_config_path: Path | None = None,
+) -> tuple[dict[str, Any], str]:
+    args = [
+        "-RegistryPath",
+        str(registry_path),
+        "-OutputRoot",
+        str(output_root),
+        "-RefreshRegistrySummary",
+        "-RefreshResponsiveTrialGate",
+    ]
+    if gate_config_path is not None:
+        args.extend(["-GateConfigPath", str(gate_config_path)])
+
+    run_powershell(
+        REPO_ROOT / "scripts" / "plan_next_live_session.ps1",
+        *args,
+    )
+    plan_md_path = output_root / "next_live_plan.md"
+    return (
+        read_json(output_root / "next_live_plan.json"),
         plan_md_path.read_text(encoding="utf-8"),
     )
 
@@ -480,6 +559,7 @@ class ResponsiveTrialGateTests(unittest.TestCase):
         *,
         duplicate_suffixes: dict[int, str] | None = None,
         live_like_indices: set[int] | None = None,
+        gate_config_path: Path | None = None,
     ) -> tuple[dict[str, Any], str, dict[str, Any], str]:
         with tempfile.TemporaryDirectory() as tempdir_name:
             tempdir = Path(tempdir_name)
@@ -493,7 +573,11 @@ class ResponsiveTrialGateTests(unittest.TestCase):
                 run_fixture_pipeline(pair_root)
                 register_fixture(pair_root, registry_path)
             summarize_registry(registry_path, output_root)
-            return evaluate_responsive_gate(registry_path, output_root)
+            return evaluate_responsive_gate(
+                registry_path,
+                output_root,
+                gate_config_path=gate_config_path,
+            )
 
     def test_gate_blocks_insufficient_and_weak_signal_registries(self) -> None:
         gate, gate_md, plan, plan_md = self._run_gate_combination(
@@ -581,6 +665,159 @@ class ResponsiveTrialGateTests(unittest.TestCase):
             self.assertEqual(summary["responsive_trial_gate_verdict"], gate["gate_verdict"])
             self.assertEqual(summary["responsive_trial_gate_next_live_action"], gate["next_live_action"])
             self.assertEqual(plan["plan_status"], "blocked")
+
+    def test_registry_summary_can_optionally_emit_next_live_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            registry_path = tempdir / "registry" / "pair_sessions.ndjson"
+            output_root = tempdir / "registry" / "summary"
+            pair_root = copy_fixture("no_humans_insufficient_data", tempdir / "pairs")
+            run_fixture_pipeline(pair_root)
+            register_fixture(pair_root, registry_path)
+            summary, _, gate, _, next_live_plan = summarize_registry_with_gate_and_plan(
+                registry_path,
+                output_root,
+            )
+            self.assertTrue(summary["next_live_plan_present"])
+            self.assertEqual(summary["responsive_trial_gate_verdict"], gate["gate_verdict"])
+            self.assertEqual(
+                summary["next_live_session_objective"],
+                next_live_plan["recommended_next_session_objective"],
+            )
+            self.assertEqual(
+                summary["next_live_recommended_live_profile"],
+                next_live_plan["recommended_next_live_profile"],
+            )
+
+
+@unittest.skipUnless(POWERSHELL, "PowerShell is required for fixture-backed pair-session tests.")
+class NextLiveSessionPlannerTests(unittest.TestCase):
+    def _run_planner_combination(
+        self,
+        fixture_ids: list[str],
+        *,
+        duplicate_suffixes: dict[int, str] | None = None,
+        live_like_indices: set[int] | None = None,
+        gate_config_path: Path | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            registry_path = tempdir / "registry" / "pair_sessions.ndjson"
+            output_root = tempdir / "registry" / "summary"
+            for index, fixture_id in enumerate(fixture_ids):
+                suffix = None if duplicate_suffixes is None else duplicate_suffixes.get(index)
+                pair_root = copy_fixture(fixture_id, tempdir / "pairs", pair_id_suffix=suffix)
+                if live_like_indices and index in live_like_indices:
+                    mutate_pair_to_live_like(pair_root, label=f"plan-{index}")
+                run_fixture_pipeline(pair_root)
+                register_fixture(pair_root, registry_path)
+            return plan_next_live_session(
+                registry_path,
+                output_root,
+                gate_config_path=gate_config_path,
+            )
+
+    def test_planner_keeps_synthetic_and_no_human_evidence_out_of_promotion_gap(self) -> None:
+        plan, plan_md = self._run_planner_combination(["no_humans_insufficient_data"])
+        self.assertEqual(
+            plan["recommended_next_session_objective"],
+            "collect-first-grounded-conservative-session",
+        )
+        self.assertEqual(plan["recommended_next_live_profile"], "conservative")
+        self.assertEqual(plan["current_responsive_gate_verdict"], "closed")
+        self.assertEqual(plan["current_certified_grounded_session_counts"]["total"], 0)
+        self.assertEqual(plan["exclusions"]["workflow_validation_only_sessions_count"], 1)
+        self.assertEqual(plan["evidence_gap"]["grounded_sessions_current"], 0)
+        self.assertIn("Synthetic or rehearsal sessions excluded from promotion: True", plan_md)
+
+    def test_planner_requests_more_grounded_conservative_evidence_after_one_usable_session(self) -> None:
+        plan, _ = self._run_planner_combination(
+            ["conservative_acceptable_usable_signal"],
+            live_like_indices={0},
+        )
+        self.assertEqual(
+            plan["recommended_next_session_objective"],
+            "collect-more-grounded-conservative-sessions",
+        )
+        self.assertEqual(plan["recommended_next_live_profile"], "conservative")
+        self.assertEqual(plan["evidence_gap"]["grounded_sessions_current"], 1)
+        self.assertEqual(plan["evidence_gap"]["grounded_too_quiet_current"], 0)
+        self.assertFalse(
+            plan["session_target"]["could_theoretically_open_responsive_gate_if_successful"]
+        )
+
+    def test_planner_keeps_repeated_too_quiet_evidence_conservative_when_thresholds_are_still_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            gate_config_path = write_gate_config_override(
+                tempdir / "responsive_trial_gate.override.json",
+                min_grounded_conservative_sessions_for_responsive_trial=3,
+                min_grounded_conservative_too_quiet_sessions_for_responsive_trial=3,
+                min_distinct_grounded_conservative_too_quiet_pair_ids_for_responsive_trial=3,
+            )
+            plan, _ = self._run_planner_combination(
+                [
+                    "conservative_too_quiet_responsive_candidate",
+                    "conservative_too_quiet_responsive_candidate",
+                ],
+                duplicate_suffixes={1: "repeat"},
+                live_like_indices={0, 1},
+                gate_config_path=gate_config_path,
+            )
+        self.assertEqual(
+            plan["recommended_next_session_objective"],
+            "collect-grounded-conservative-too-quiet-evidence",
+        )
+        self.assertEqual(plan["recommended_next_live_profile"], "conservative")
+        self.assertEqual(plan["evidence_gap"]["grounded_too_quiet_current"], 2)
+        self.assertEqual(plan["evidence_gap"]["grounded_too_quiet_missing"], 1)
+        self.assertTrue(plan["session_target"]["can_reduce_promotion_gap"])
+        self.assertTrue(
+            plan["session_target"]["could_theoretically_open_responsive_gate_if_successful"]
+        )
+
+    def test_planner_marks_responsive_trial_ready_when_grounded_too_quiet_threshold_is_met(self) -> None:
+        plan, plan_md = self._run_planner_combination(
+            [
+                "conservative_too_quiet_responsive_candidate",
+                "conservative_too_quiet_responsive_candidate",
+            ],
+            duplicate_suffixes={1: "repeat"},
+            live_like_indices={0, 1},
+        )
+        self.assertEqual(plan["recommended_next_session_objective"], "responsive-trial-ready")
+        self.assertEqual(plan["recommended_next_live_profile"], "responsive")
+        self.assertEqual(plan["current_responsive_gate_verdict"], "open")
+        self.assertEqual(plan["session_target"]["next_session_profile"], "responsive")
+        self.assertIn("Recommended next-session objective: responsive-trial-ready", plan_md)
+
+    def test_planner_blocks_responsive_when_grounded_overreaction_history_exists(self) -> None:
+        plan, _ = self._run_planner_combination(
+            ["responsive_too_reactive_revert_candidate"],
+            live_like_indices={0},
+        )
+        self.assertEqual(
+            plan["recommended_next_session_objective"],
+            "responsive-blocked-by-overreaction-history",
+        )
+        self.assertEqual(plan["recommended_next_live_profile"], "conservative")
+        self.assertGreater(
+            plan["evidence_gap"]["responsive_overreaction_blockers_current"],
+            0,
+        )
+        self.assertEqual(plan["session_target"]["priorities"], ["manual-review"])
+
+    def test_planner_escalates_ambiguous_grounded_registry_to_manual_review(self) -> None:
+        plan, _ = self._run_planner_combination(
+            ["strong_signal_keep_conservative", "ambiguous_manual_review_needed"],
+            live_like_indices={0, 1},
+        )
+        self.assertEqual(
+            plan["recommended_next_session_objective"],
+            "manual-review-before-next-session",
+        )
+        self.assertEqual(plan["recommended_next_live_profile"], "conservative")
+        self.assertEqual(plan["session_target"]["priorities"], ["manual-review"])
 
 
 if __name__ == "__main__":

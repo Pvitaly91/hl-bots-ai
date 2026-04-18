@@ -449,6 +449,8 @@ function Get-FinalSessionDocketMarkdown {
         "- Registry recommended live profile: $($Docket.recommendations.registry_recommended_live_profile)",
         "- Responsive gate verdict: $($Docket.recommendations.responsive_gate_verdict)",
         "- Responsive gate next live action: $($Docket.recommendations.responsive_gate_next_live_action)",
+        "- Next-live planner objective: $($Docket.recommendations.next_live_session_objective)",
+        "- Next-live planner profile: $($Docket.recommendations.next_live_recommended_live_profile)",
         "- Primary operator action: $($Docket.recommendations.operator_action.primary)",
         "- Keep conservative: $($Docket.recommendations.operator_action.keep_conservative)",
         "- Collect another conservative session: $($Docket.recommendations.operator_action.collect_another_conservative_session)",
@@ -462,6 +464,7 @@ function Get-FinalSessionDocketMarkdown {
         "- Shadow recommendation JSON: $($Docket.artifacts.shadow_recommendation_json)",
         "- Profile recommendation JSON: $($Docket.artifacts.profile_recommendation_json)",
         "- Responsive trial gate JSON: $($Docket.artifacts.responsive_trial_gate_json)",
+        "- Next-live plan JSON: $($Docket.artifacts.next_live_plan_json)",
         "- Registry path: $($Docket.artifacts.registry_path)",
         "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
         "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
@@ -852,6 +855,7 @@ $scoreResult = $null
 $registerResult = $null
 $registrySummaryResult = $null
 $gateResult = $null
+$nextLivePlanResult = $null
 
 if ($runPostPipelineEnabled) {
     $reviewResult = & $reviewScriptPath -PairRoot $pairRoot
@@ -888,6 +892,28 @@ if ($runPostPipelineEnabled) {
         $gateArgs.RegistryPath = [string]$registerResult.RegistryPath
     }
     $gateResult = & $gateScriptPath @gateArgs
+
+    $plannerScriptPath = Join-Path $PSScriptRoot "plan_next_live_session.ps1"
+    $plannerArgs = @{}
+    if (-not $postPipelineRegistryPath) {
+        $plannerArgs.LabRoot = $LabRoot
+    }
+    if ($rehearsalRegistryRoot) {
+        $plannerArgs.OutputRoot = $rehearsalRegistryRoot
+    }
+    if ($registerResult -and $registerResult.RegistryPath) {
+        $plannerArgs.RegistryPath = [string]$registerResult.RegistryPath
+    }
+    if ($registrySummaryResult -and $registrySummaryResult.RegistrySummaryJsonPath) {
+        $plannerArgs.RegistrySummaryPath = [string]$registrySummaryResult.RegistrySummaryJsonPath
+    }
+    if ($registrySummaryResult -and $registrySummaryResult.ProfileRecommendationJsonPath) {
+        $plannerArgs.ProfileRecommendationPath = [string]$registrySummaryResult.ProfileRecommendationJsonPath
+    }
+    if ($gateResult -and $gateResult.ResponsiveTrialGateJsonPath) {
+        $plannerArgs.ResponsiveTrialGatePath = [string]$gateResult.ResponsiveTrialGateJsonPath
+    }
+    $nextLivePlanResult = & $plannerScriptPath @plannerArgs
 }
 
 $pairSummary = Read-JsonFile -Path $pairSummaryJsonPath
@@ -913,6 +939,25 @@ else {
 }
 $profileRecommendation = Read-JsonFile -Path $profileRecommendationPath
 $responsiveTrialGate = Read-JsonFile -Path $responsiveTrialGatePath
+$nextLivePlanPath = if ($nextLivePlanResult -and $nextLivePlanResult.NextLivePlanJsonPath) {
+    [string]$nextLivePlanResult.NextLivePlanJsonPath
+}
+elseif ($rehearsalRegistryRoot) {
+    Join-Path $rehearsalRegistryRoot "next_live_plan.json"
+}
+else {
+    Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "next_live_plan.json"
+}
+$nextLivePlan = Read-JsonFile -Path $nextLivePlanPath
+$nextLivePlanMarkdownPath = if ($nextLivePlanResult -and $nextLivePlanResult.NextLivePlanMarkdownPath) {
+    [string]$nextLivePlanResult.NextLivePlanMarkdownPath
+}
+elseif ($rehearsalRegistryRoot) {
+    Join-Path $rehearsalRegistryRoot "next_live_plan.md"
+}
+else {
+    Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "next_live_plan.md"
+}
 
 $pairClassification = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "operator_note_classification" -Default "")
 $comparison = Get-ObjectPropertyValue -Object $pairSummary -Name "comparison" -Default $null
@@ -923,6 +968,8 @@ $registryDecision = [string](Get-ObjectPropertyValue -Object $profileRecommendat
 $registryRecommendedLiveProfile = [string](Get-ObjectPropertyValue -Object $profileRecommendation -Name "recommended_live_profile" -Default "")
 $responsiveGateVerdict = [string](Get-ObjectPropertyValue -Object $responsiveTrialGate -Name "gate_verdict" -Default "")
 $responsiveGateNextLiveAction = [string](Get-ObjectPropertyValue -Object $responsiveTrialGate -Name "next_live_action" -Default "")
+$nextLiveSessionObjective = [string](Get-ObjectPropertyValue -Object $nextLivePlan -Name "recommended_next_session_objective" -Default "")
+$nextLiveRecommendedLiveProfile = [string](Get-ObjectPropertyValue -Object $nextLivePlan -Name "recommended_next_live_profile" -Default "")
 $operatorAction = Get-RecommendedOperatorAction `
     -ScorecardRecommendation $scorecardRecommendation `
     -ShadowDecision $shadowDecision `
@@ -948,7 +995,7 @@ $sessionSufficientForTuningUsableReview = $monitorVerdict -in @(
 )
 
 $docket = [ordered]@{
-    schema_version = 2
+    schema_version = 3
     prompt_id = Get-RepoPromptId
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     source_commit_sha = Get-RepoHeadCommitSha
@@ -990,6 +1037,8 @@ $docket = [ordered]@{
         registry_recommended_live_profile = $registryRecommendedLiveProfile
         responsive_gate_verdict = $responsiveGateVerdict
         responsive_gate_next_live_action = $responsiveGateNextLiveAction
+        next_live_session_objective = $nextLiveSessionObjective
+        next_live_recommended_live_profile = $nextLiveRecommendedLiveProfile
         operator_action = [ordered]@{
             primary = $operatorAction.Primary
             keep_conservative = $operatorAction.KeepConservative
@@ -1014,6 +1063,8 @@ $docket = [ordered]@{
         shadow_recommendation_json = Join-Path $pairRoot "shadow_review\shadow_recommendation.json"
         profile_recommendation_json = $profileRecommendationPath
         responsive_trial_gate_json = $responsiveTrialGatePath
+        next_live_plan_json = $nextLivePlanPath
+        next_live_plan_markdown = $nextLivePlanMarkdownPath
         registry_path = if ($registerResult -and $registerResult.RegistryPath) { [string]$registerResult.RegistryPath } elseif ($postPipelineRegistryPath) { $postPipelineRegistryPath } else { Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "pair_sessions.ndjson" }
         monitor_history_ndjson = $monitorHistoryPath
         rehearsal_metadata_json = Join-Path $pairRoot "rehearsal_metadata.json"
@@ -1036,6 +1087,7 @@ Write-Host "  Scorecard recommendation: $scorecardRecommendation"
 Write-Host "  Shadow recommendation: $shadowDecision"
 Write-Host "  Registry recommendation: $registryDecision"
 Write-Host "  Responsive gate verdict: $responsiveGateVerdict"
+Write-Host "  Next-live planner objective: $nextLiveSessionObjective"
 Write-Host "  Evidence origin: $evidenceOrigin"
 Write-Host "  Primary operator action: $($operatorAction.Primary)"
 

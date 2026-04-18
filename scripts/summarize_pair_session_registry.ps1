@@ -3,6 +3,7 @@ param(
     [string]$LabRoot = "",
     [string]$OutputRoot = "",
     [switch]$EvaluateResponsiveTrialGate,
+    [switch]$EvaluateNextLiveSessionPlan,
     [string]$ResponsiveTrialGateConfigPath = "",
     [switch]$IncludeSyntheticEvidenceForResponsiveTrialGate
 )
@@ -825,6 +826,11 @@ $summary = [ordered]@{
     responsive_trial_gate_next_live_action = ""
     responsive_trial_gate_json = ""
     responsive_trial_gate_markdown = ""
+    next_live_plan_present = $false
+    next_live_session_objective = ""
+    next_live_recommended_live_profile = ""
+    next_live_plan_json = ""
+    next_live_plan_markdown = ""
     profiles = $profileStats
     recent_sessions = @($sortedEntries | Select-Object -First 10)
 }
@@ -925,6 +931,36 @@ if ($null -ne $responsiveTrialGate) {
     Write-TextFile -Path $registrySummaryMarkdownPath -Value (Get-RegistrySummaryMarkdown -Summary $summary)
 }
 
+$nextLivePlanJsonPath = Join-Path $resolvedOutputRoot "next_live_plan.json"
+$nextLivePlanMarkdownPath = Join-Path $resolvedOutputRoot "next_live_plan.md"
+if ($EvaluateNextLiveSessionPlan) {
+    $plannerScriptPath = Join-Path $PSScriptRoot "plan_next_live_session.ps1"
+    $plannerParams = @{
+        RegistryPath = $resolvedRegistryPath
+        OutputRoot = $resolvedOutputRoot
+        RegistrySummaryPath = $registrySummaryJsonPath
+        ProfileRecommendationPath = $profileRecommendationJsonPath
+        ResponsiveTrialGatePath = $responsiveTrialGateJsonPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ResponsiveTrialGateConfigPath)) {
+        $plannerParams.GateConfigPath = $ResponsiveTrialGateConfigPath
+    }
+
+    & $plannerScriptPath @plannerParams | Out-Null
+}
+
+$nextLivePlan = Read-JsonFile -Path $nextLivePlanJsonPath
+if ($null -ne $nextLivePlan) {
+    $summary.next_live_plan_present = $true
+    $summary.next_live_session_objective = [string](Get-ObjectPropertyValue -Object $nextLivePlan -Name "recommended_next_session_objective" -Default "")
+    $summary.next_live_recommended_live_profile = [string](Get-ObjectPropertyValue -Object $nextLivePlan -Name "recommended_next_live_profile" -Default "")
+    $summary.next_live_plan_json = $nextLivePlanJsonPath
+    $summary.next_live_plan_markdown = $nextLivePlanMarkdownPath
+
+    Write-JsonFile -Path $registrySummaryJsonPath -Value $summary
+    Write-TextFile -Path $registrySummaryMarkdownPath -Value (Get-RegistrySummaryMarkdown -Summary $summary)
+}
+
 Write-Host "Pair-session registry summary:"
 Write-Host "  Registry path: $resolvedRegistryPath"
 Write-Host "  Registered pair sessions: $($summary.total_registered_pair_sessions)"
@@ -937,6 +973,10 @@ Write-Host "  Recommended next live profile: $($profileRecommendation.recommende
 if ($summary.responsive_trial_gate_present) {
     Write-Host "  Responsive trial gate verdict: $($summary.responsive_trial_gate_verdict)"
     Write-Host "  Responsive trial next live action: $($summary.responsive_trial_gate_next_live_action)"
+}
+if ($summary.next_live_plan_present) {
+    Write-Host "  Next-live plan objective: $($summary.next_live_session_objective)"
+    Write-Host "  Next-live recommended profile: $($summary.next_live_recommended_live_profile)"
 }
 
 [pscustomobject]@{
@@ -952,4 +992,8 @@ if ($summary.responsive_trial_gate_present) {
     ResponsiveTrialGateMarkdownPath = if ($summary.responsive_trial_gate_present) { $responsiveTrialGateMarkdownPath } else { "" }
     ResponsiveTrialGateVerdict = $summary.responsive_trial_gate_verdict
     ResponsiveTrialGateNextLiveAction = $summary.responsive_trial_gate_next_live_action
+    NextLivePlanJsonPath = if ($summary.next_live_plan_present) { $nextLivePlanJsonPath } else { "" }
+    NextLivePlanMarkdownPath = if ($summary.next_live_plan_present) { $nextLivePlanMarkdownPath } else { "" }
+    NextLiveSessionObjective = $summary.next_live_session_objective
+    NextLiveRecommendedLiveProfile = $summary.next_live_recommended_live_profile
 }

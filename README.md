@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-28
+HLDM-JKBOTTI-AI-STAND-20260415-29
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -19,6 +19,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
 - `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
+- `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
 - `scripts/certify_latest_pair_session.ps1` and `scripts/certify_latest_pair_session.bat` for strict grounded-evidence certification of the latest pair pack or a specified pair root.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
@@ -192,8 +193,9 @@ The paired live-session runner is the recommended next human workflow:
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
 - `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
 - `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, and the final session docket.
+- `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
-- each guided paired run also writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root so the operator has one concise end-of-run answer.
+- each guided paired run also writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root so the operator has one concise end-of-run answer, including the current next-live planner objective and profile.
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -275,6 +277,7 @@ The guided workflow still stays thin:
 - scoring remains `scripts\score_latest_pair_session.ps1`
 - registration remains `scripts\register_pair_session_result.ps1`
 - registry summary remains `scripts\summarize_pair_session_registry.ps1`
+- next-live promotion-gap planning remains `scripts\plan_next_live_session.ps1`
 - responsive promotion gating remains `scripts\evaluate_responsive_trial_gate.ps1`
 
 Read the final guided docket like this:
@@ -390,6 +393,7 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 - subjective notes are carried as context only; the promotion logic still keys off lane evidence, pair classification, and scorecard fields first.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
+- `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` after the registry summary is written.
 - a pair counts toward promotion only when the certification helper says it is real grounded evidence: live origin, not rehearsal, not synthetic, minimum human-signal thresholds met in both lanes, treatment patched while humans were present, a meaningful post-patch observation window exists, and the pair clears `tuning-usable` or stronger.
 - rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, and weak-signal sessions remain visible in the ledger but are excluded from promotion counts by reason.
 - the registry summary reports total registered sessions, total certified grounded sessions, total non-certified sessions, workflow-validation-only sessions, excluded sessions by reason, sessions by pair classification, sessions by treatment profile, grounded counts for insufficient-data / weak-signal / tuning-usable / strong-signal evidence buckets, human-present patch counts, meaningful post-patch window counts, treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`, and how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive.
@@ -402,6 +406,41 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 - `manual-review-needed` means the cross-session evidence conflicts or a grounded guardrail concern needs an operator read before another live choice.
 
 Conservative remains the default next live treatment profile until the ledger says otherwise. That keeps profile promotion bounded, reversible, and driven by accumulated evidence instead of one noisy session.
+
+## Next Live Session Planner
+
+Use `scripts\plan_next_live_session.ps1` when the question is not only "is responsive blocked?" but "what exact certified grounded evidence is still missing, and what should the next conservative live session accomplish?"
+
+- it writes `next_live_plan.json` and `next_live_plan.md` under `lab\logs\eval\registry\`
+- it reuses the certified registry state first, then reuses `registry_summary.json`, `profile_recommendation.json`, and `responsive_trial_gate.json` when those artifacts already exist
+- it is advisory and read-only. Basic scoring, registration, and responsive-gate evaluation still work if the planner is never run.
+- it computes the evidence gap from certified grounded evidence only
+- rehearsal, synthetic, workflow-validation-only, no-human, weak-signal, insufficient-data, and other non-certified live sessions stay visible in the explanation, but they do not shrink the real promotion gap
+- it formalizes the missing-count fields that matter for promotion, including grounded conservative sessions, grounded conservative too-quiet sessions, distinct grounded too-quiet pair IDs, strong-signal keep-conservative thresholds, and responsive too-reactive blockers
+- it emits a concrete next-session objective such as `collect-first-grounded-conservative-session`, `collect-more-grounded-conservative-sessions`, `collect-grounded-conservative-too-quiet-evidence`, `responsive-trial-ready`, `responsive-blocked-by-overreaction-history`, or `manual-review-before-next-session`
+- it also emits a session target block with the next session profile, unchanged no-AI control lane, map, bot count, bot skill, minimum human-presence target, minimum patch-while-human-present target, minimum post-patch observation window, whether the next session can reduce the gap, whether it could open responsive if successful, and whether another conservative session would still be required afterward
+
+Run it directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\plan_next_live_session.ps1
+```
+
+Or use the thin wrapper:
+
+```bat
+scripts\plan_next_live_session.bat
+```
+
+Read the planner outputs like this:
+
+- certification answers whether one pair counts toward promotion
+- scorecard answers how one pair behaved
+- registry summary answers the accumulated cross-session recommendation
+- responsive gate answers whether the first live responsive trial is currently allowed
+- next-live planner answers what evidence gap still remains and what the next real conservative session should try to prove
+
+In the planner, "evidence gap" means the configured promotion thresholds minus the currently certified grounded evidence counts. If the next plan still says responsive is blocked, use `next_live_plan.md` before scheduling the next conservative session so the operator knows whether the goal is first grounded certification, another grounded conservative run, repeated grounded too-quiet evidence, or manual review.
 
 ## Responsive Trial Gate
 
@@ -644,7 +683,7 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 - Pair summaries: `lab/logs/eval/pairs/<timestamp>-.../pair_summary.json` and `pair_summary.md`
 - Pair comparisons: `lab/logs/eval/pairs/<timestamp>-.../comparison.json` and `comparison.md`
 - Pair-session registry ledger: `lab/logs/eval/registry/pair_sessions.ndjson`
-- Pair-session registry summaries: `lab/logs/eval/registry/registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
+- Pair-session registry summaries and planning artifacts: `lab/logs/eval/registry/registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, `profile_recommendation.md`, `responsive_trial_gate.json`, `responsive_trial_plan.json`, `next_live_plan.json`, and `next_live_plan.md`
 - Server install root by default: `lab/hlds`
 
 The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a matching set of `addbot` lines so the requested bot pool comes up predictably and can be regenerated safely on each launcher run.
@@ -669,6 +708,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_control_treatment_pair.bat`: `cmd.exe` wrapper for the paired control-vs-treatment helper.
 - `scripts/run_guided_live_pair_session.ps1`: guided conservative-first operator workflow that runs preflight, the paired capture, optional auto-start monitoring with sufficient-only auto-stop, the full post-session evidence pipeline, and the final session docket.
 - `scripts/run_guided_live_pair_session.bat`: `cmd.exe` wrapper for the guided live pair-session workflow.
+- `scripts/plan_next_live_session.ps1`: computes the certified-grounded promotion gap, emits `next_live_plan.json` plus `next_live_plan.md`, and recommends the next live profile and session objective.
+- `scripts/plan_next_live_session.bat`: `cmd.exe` wrapper for the next-live session planner.
 - `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
@@ -677,7 +718,7 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/score_latest_pair_session.bat`: `cmd.exe` wrapper for the scorecard helper.
 - `scripts/register_pair_session_result.ps1`: appends one normalized pair-session result into the persistent registry ledger and skips duplicate pair packs by default.
 - `scripts/register_pair_session_result.bat`: `cmd.exe` wrapper for the pair-session registry helper.
-- `scripts/summarize_pair_session_registry.ps1`: summarizes accumulated pair-session evidence and emits a conservative profile recommendation for the next live action.
+- `scripts/summarize_pair_session_registry.ps1`: summarizes accumulated pair-session evidence, emits a conservative profile recommendation for the next live action, and can optionally refresh the responsive gate or next-live planner artifacts.
 - `scripts/launch_local_hldm_client.ps1`: optional helper that resolves a local Half-Life client and launches or dry-runs a local join command.
 - `scripts/launch_local_hldm_client.bat`: `cmd.exe` wrapper for the local client helper.
 - `scripts/summarize_balance_eval.ps1`: Windows wrapper around the Python evaluator for one lane or a control-vs-treatment pair.

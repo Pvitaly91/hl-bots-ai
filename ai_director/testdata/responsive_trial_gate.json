@@ -20,6 +20,7 @@
     "human_join_grace_seconds": 120,
     "min_human_snapshots": 3,
     "min_human_presence_seconds": 60.0,
+    "min_post_patch_observation_seconds": 20.0,
     "control_port": 27016,
     "treatment_port": 27017,
     "control_lane_label": "control-baseline",

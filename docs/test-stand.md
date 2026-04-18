@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-28
+HLDM-JKBOTTI-AI-STAND-20260415-29
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -321,6 +321,7 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it can auto-start `scripts\monitor_live_pair_session.ps1` against the active pair root
 - it can request an early stop only after the live monitor reaches a sufficient verdict, never on the `waiting-*` or insufficient-data states
 - it still runs `scripts\review_latest_pair_run.ps1`, `scripts\run_shadow_profile_review.ps1`, `scripts\score_latest_pair_session.ps1`, `scripts\register_pair_session_result.ps1`, `scripts\summarize_pair_session_registry.ps1`, and `scripts\evaluate_responsive_trial_gate.ps1`
+- it also runs `scripts\plan_next_live_session.ps1` in the normal post-run pipeline so the final docket can carry the current next-live objective and recommended profile
 - it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
@@ -369,6 +370,13 @@ Summarize the accumulated pair-session ledger after registration:
 
 ```powershell
 powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
+```
+
+Emit the current next-live promotion-gap plan:
+
+```powershell
+powershell -NoProfile -File .\scripts\plan_next_live_session.ps1
+powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan
 ```
 
 Run the replay/profile sweep before scheduling a longer live mixed-session:
@@ -480,6 +488,7 @@ Use the registry helpers to move from single scorecards to accumulated live evid
 - notes remain optional. Pass `-NotesPath` or drop a notes file into the pair root if an operator wants to keep lightweight context with the objective evidence.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
+- `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass.
 - a pair counts toward promotion only when it is certified as grounded evidence: live origin, not rehearsal, not synthetic, minimum human-signal thresholds met, treatment patched while humans were present, a meaningful post-patch observation window exists, and the pair clears `tuning-usable` or stronger.
 - rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, and weak-signal sessions stay in the ledger for auditability but are excluded from promotion counts by reason.
 - the summary answers how many total registered sessions exist, how many are certified grounded sessions, how many were excluded, why they were excluded, how often treatment patched while humans were present, whether the certified dataset is still dominated by insufficient-data or weak-signal runs, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and whether responsive is justified or should be rejected or reverted.
@@ -494,6 +503,40 @@ Interpret the aggregate recommendation like this:
 - `insufficient-data-repeat-session`: the registry is still dominated by plumbing-only or no-human evidence.
 - `weak-signal-repeat-session`: humans joined, but the accumulated post-patch evidence is still too weak for a profile change.
 - `manual-review-needed`: the ledger has conflicting grounded evidence or a guardrail concern that needs a manual read before the next live action.
+
+## Next Live Session Planner
+
+Use `scripts\plan_next_live_session.ps1` when you need the explicit promotion gap instead of only the current gate verdict.
+
+- it writes `next_live_plan.json` and `next_live_plan.md` under `lab\logs\eval\registry\`
+- it reuses the existing registry summary, profile recommendation, and responsive gate outputs instead of creating a separate decision engine
+- it computes all promotion counts from certified grounded evidence only
+- synthetic, rehearsal, workflow-validation-only, weak-signal, insufficient-data, and other non-certified live sessions still appear in the explanation, but they do not reduce the real responsive-promotion gap
+- it formalizes the gap fields for grounded conservative sessions, grounded conservative too-quiet sessions, distinct grounded too-quiet pair IDs, strong-signal keep-conservative thresholds, and responsive too-reactive blockers
+- it emits a concrete next-session objective instead of only a yes/no gate answer
+- it emits a session target block for the next live run: profile, unchanged no-AI control lane, minimum human presence, minimum patch-while-human-present events, minimum post-patch observation window, whether the session can reduce the gap, whether it could open responsive if successful, and whether another conservative session would still be required afterward
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\plan_next_live_session.ps1
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\plan_next_live_session.bat
+```
+
+Read the stack like this:
+
+- certification decides whether one pair counts toward promotion
+- scorecard decides how one captured pair behaved
+- registry summary decides the accumulated conservative-vs-responsive recommendation
+- responsive gate decides whether the first live responsive trial is open right now
+- next-live planner decides what evidence is still missing and what the next real session should try to prove
+
+Here, "evidence gap" means the configured threshold minus the current certified grounded count for that evidence type. Before the next conservative live session, read `next_live_plan.md` so the operator knows whether the goal is first grounded certification, another grounded conservative session, repeated grounded too-quiet evidence, or manual review.
 
 ## Responsive Trial Gate
 
@@ -524,6 +567,8 @@ Interpret the gate action like this:
 - `manual-review-needed`: the grounded evidence conflicts or still carries risk that needs an operator read
 
 If the gate is blocked, `responsive_trial_plan.md` is a "not yet" explanation. If the gate is open, `responsive_trial_plan.md` carries the exact live command, minimum human-signal requirement, success criteria, rollback rule, and post-run workflow.
+
+Use the planner before the gate when you need to make the next conservative session purposeful. Use the gate after that when you need the final go/no-go verdict on a responsive trial.
 
 Treat the first real human pair session like an operator checklist, not a tuning experiment. `docs\operator-checklist.md` is the concise runbook for:
 

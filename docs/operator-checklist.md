@@ -82,7 +82,8 @@ Default ports and lanes:
 10. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
 11. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
 12. Read `guided_session\final_session_docket.md` first after the run.
-13. If the docket says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
+13. Run `scripts\plan_next_live_session.ps1` or read the `next_live_plan` artifact referenced by the final docket before scheduling the next real live session.
+14. If the docket or planner says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
 
 ## What Counts As Insufficient Data
 
@@ -245,9 +246,28 @@ How to read grounded evidence certification:
 - optional notes can be linked with `-NotesPath` or by placing a notes file in the pair root; missing notes never fail the registration step
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can also refresh the latest responsive-trial gate in the same pass
+- `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass
 - the registry summary now distinguishes total registered sessions from certified grounded sessions, non-certified excluded sessions, workflow-validation-only sessions, and excluded sessions by reason
 - conservative remains the default next live profile until the registry shows repeated certified grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
+
+## Next-Live Planner
+
+- `scripts\plan_next_live_session.ps1` is the promotion-gap helper for the next real live session
+- it writes `next_live_plan.json` and `next_live_plan.md` under `lab\logs\eval\registry\`
+- it uses certified grounded evidence only when it computes how much promotion evidence is still missing
+- rehearsal, synthetic, workflow-validation-only, no-human, weak-signal, insufficient-data, and other non-certified live sessions do not reduce the real responsive-promotion gap
+- "evidence gap" means the configured threshold minus the current certified grounded count for that evidence type
+- the planner tells the operator whether the next session should aim for first grounded certification, another grounded conservative session, repeated grounded conservative-too-quiet evidence, a responsive trial, or manual review
+- the planner also prints the next session target: conservative vs responsive profile, unchanged no-AI control lane, minimum human snapshots, minimum human-presence window, minimum patch-while-human-present events, minimum post-patch observation window, whether the session can reduce the gap, and whether another conservative session would still be required afterward
+
+Run it after the registry summary and before choosing the next live slot:
+
+```powershell
+powershell -NoProfile -File .\scripts\plan_next_live_session.ps1
+```
+
+Use it as the operator answer to "what must the next conservative session prove?" The scorecard and certification are per-pair. The registry summary is cross-session. The responsive gate is the final responsive go/no-go check. The next-live planner is the bridge that turns those outputs into a concrete next-session objective.
 
 ## Responsive Trial Gate
 

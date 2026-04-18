@@ -368,6 +368,8 @@ function Get-ResponsiveTrialPlanMarkdown {
             "- Human join grace seconds: $($Plan.human_join_grace_seconds)",
             "- Minimum human snapshots: $($Plan.minimum_human_signal_required.min_human_snapshots)",
             "- Minimum human presence seconds: $($Plan.minimum_human_signal_required.min_human_presence_seconds)",
+            "- Minimum treatment patch-while-human-present events: $($Plan.minimum_treatment_patch_events_while_humans_present)",
+            "- Minimum post-patch observation seconds: $($Plan.minimum_post_patch_observation_seconds)",
             "",
             "## Lane Settings",
             "",
@@ -798,7 +800,10 @@ $waitForHumanJoin = [bool]$trialDefaults.wait_for_human_join
 $humanJoinGraceSeconds = [int]$trialDefaults.human_join_grace_seconds
 $minHumanSnapshots = [int]$trialDefaults.min_human_snapshots
 $minHumanPresenceSeconds = [double]$trialDefaults.min_human_presence_seconds
-$trialCommand = "powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map $([string]$trialDefaults.map) -BotCount $([int]$trialDefaults.bot_count) -BotSkill $([int]$trialDefaults.bot_skill) -ControlPort $controlPort -TreatmentPort $treatmentPort -DurationSeconds $durationSeconds -WaitForHumanJoin -HumanJoinGraceSeconds $humanJoinGraceSeconds -TreatmentProfile $([string]$trialDefaults.treatment_profile) -SkipSteamCmdUpdate -SkipMetamodDownload"
+$minPostPatchObservationSeconds = [double](Get-ObjectPropertyValue -Object $trialDefaults -Name "min_post_patch_observation_seconds" -Default 20.0)
+$trialProfileDefinition = Get-TuningProfileDefinition -Name ([string]$trialDefaults.treatment_profile)
+$minPatchEventsForUsableLane = [int]$trialProfileDefinition.evaluation.min_patch_events_for_usable_lane
+$trialCommand = "powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map $([string]$trialDefaults.map) -BotCount $([int]$trialDefaults.bot_count) -BotSkill $([int]$trialDefaults.bot_skill) -ControlPort $controlPort -TreatmentPort $treatmentPort -DurationSeconds $durationSeconds -WaitForHumanJoin -HumanJoinGraceSeconds $humanJoinGraceSeconds -MinHumanSnapshots $minHumanSnapshots -MinHumanPresenceSeconds $minHumanPresenceSeconds -MinPatchEventsForUsableLane $minPatchEventsForUsableLane -MinPostPatchObservationSeconds $minPostPatchObservationSeconds -TreatmentProfile $([string]$trialDefaults.treatment_profile) -SkipSteamCmdUpdate -SkipMetamodDownload"
 
 $postRunWorkflow = @(
     "powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1",
@@ -829,6 +834,8 @@ $plan = if ($nextLiveAction -eq "responsive-trial-allowed") {
             min_human_snapshots = $minHumanSnapshots
             min_human_presence_seconds = $minHumanPresenceSeconds
         }
+        minimum_treatment_patch_events_while_humans_present = $minPatchEventsForUsableLane
+        minimum_post_patch_observation_seconds = $minPostPatchObservationSeconds
         control_lane = [ordered]@{
             port = $controlPort
             lane_label = [string]$trialDefaults.control_lane_label
