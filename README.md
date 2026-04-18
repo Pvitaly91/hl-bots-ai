@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-27
+HLDM-JKBOTTI-AI-STAND-20260415-28
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -20,6 +20,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
 - `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
+- `scripts/certify_latest_pair_session.ps1` and `scripts/certify_latest_pair_session.bat` for strict grounded-evidence certification of the latest pair pack or a specified pair root.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
 - `ai_director/testdata/pair_sessions/`, `scripts/generate_pair_session_fixtures.py`, and `scripts/run_fixture_decision_demo.ps1` for synthetic post-run decision validation.
 - `docs/test-stand.md` with local HLDS lab details.
@@ -317,6 +318,13 @@ powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot
 powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -NotesPath .\lab\logs\eval\pairs\<pair-pack>\session_notes.md
 ```
 
+Certify whether the saved pair pack counts as real grounded promotion evidence:
+
+```powershell
+powershell -NoProfile -File .\scripts\certify_latest_pair_session.ps1
+powershell -NoProfile -File .\scripts\certify_latest_pair_session.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
 Summarize the accumulated pair-session ledger after registration:
 
 ```powershell
@@ -376,13 +384,16 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 
 - `scripts\register_pair_session_result.ps1` reads the latest pair pack by default, or a specific `-PairRoot`, and appends one normalized entry into `lab\logs\eval\registry\pair_sessions.ndjson`.
 - duplicate registration is blocked by default; the helper skips with a clear message instead of silently writing the same pair pack twice.
-- each registry entry records the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, optional shadow-review recommendation fields when present, whether the session is tuning-usable, optional notes path, and any embedded prompt ID or commit SHA metadata.
+- registration also writes `grounded_evidence_certificate.json` and `grounded_evidence_certificate.md` into the pair root. `scripts\certify_latest_pair_session.ps1` can rerun the same certification later without mutating the append-only ledger.
+- each registry entry records the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, optional shadow-review recommendation fields when present, whether the session is tuning-usable, optional notes path, embedded prompt ID or commit SHA metadata, and grounded-evidence certification fields.
 - notes are optional: either pass `-NotesPath` explicitly or place a notes file in the pair root. Missing notes never block registration.
 - subjective notes are carried as context only; the promotion logic still keys off lane evidence, pair classification, and scorecard fields first.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
-- the registry summary reports total registered sessions, sessions by pair classification, sessions by treatment profile, counts for insufficient-data / weak-signal / tuning-usable / strong-signal sessions, human-present patch counts, meaningful post-patch window counts, treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`, and how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive.
-- the profile recommendation stays intentionally conservative. It will not recommend `responsive` from no-human or weak-signal runs, and it requires repeated grounded conservative evidence before promotion.
+- a pair counts toward promotion only when the certification helper says it is real grounded evidence: live origin, not rehearsal, not synthetic, minimum human-signal thresholds met in both lanes, treatment patched while humans were present, a meaningful post-patch observation window exists, and the pair clears `tuning-usable` or stronger.
+- rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, and weak-signal sessions remain visible in the ledger but are excluded from promotion counts by reason.
+- the registry summary reports total registered sessions, total certified grounded sessions, total non-certified sessions, workflow-validation-only sessions, excluded sessions by reason, sessions by pair classification, sessions by treatment profile, grounded counts for insufficient-data / weak-signal / tuning-usable / strong-signal evidence buckets, human-present patch counts, meaningful post-patch window counts, treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`, and how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive.
+- the profile recommendation stays intentionally conservative. It will not recommend `responsive` from non-certified sessions, and it requires repeated certified grounded conservative evidence before promotion.
 - `keep-conservative` means the current live default is still behaving safely.
 - `collect-more-conservative-evidence` means there is some usable signal, but not enough repeated grounded evidence yet to justify promotion.
 - `conservative-validated-try-responsive` is only justified after repeated grounded conservative sessions show that conservative is consistently too quiet under real human presence.
@@ -399,8 +410,9 @@ Use `scripts\evaluate_responsive_trial_gate.ps1` when you need a disciplined ope
 - it writes `responsive_trial_gate.json`, `responsive_trial_gate.md`, `responsive_trial_plan.json`, and `responsive_trial_plan.md` under `lab\logs\eval\registry\`
 - it reads the registry first and reuses `registry_summary.json` / `profile_recommendation.json` when they already exist
 - thresholds live in `ai_director/testdata/responsive_trial_gate.json` and are intentionally strict
-- synthetic-only evidence, insufficient-data sessions, weak-signal sessions, and one-off noisy sessions must not unlock the live responsive trial
-- repeated real grounded conservative-too-quiet sessions across distinct pair runs may open the gate
+- it uses certified grounded evidence only. Registered sessions that fail certification still appear in the explanation, but they do not count toward promotion thresholds.
+- rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, weak-signal, and validation-only sessions must not unlock the live responsive trial
+- repeated certified grounded conservative-too-quiet sessions across distinct pair runs may open the gate
 - grounded responsive-too-reactive evidence closes the gate and recommends reverting to `conservative`
 - ambiguous grounded evidence stays `manual-review-needed`
 
@@ -462,6 +474,7 @@ Read that rehearsal output conservatively:
 - `guided_session\monitor_verdict_history.ndjson` should show the staged progression from `waiting-for-control-human-signal` through `sufficient-for-tuning-usable-review`
 - `guided_session\final_session_docket.json` and `.md` should say the evidence origin is `rehearsal`
 - `guided_session\registry\pair_sessions.ndjson` is isolated from the real registry on purpose
+- `grounded_evidence_certificate.json` and `.md` in the rehearsal pair root should say the session is excluded from promotion and counts only as workflow validation
 - `guided_session\registry\responsive_trial_gate.json` must stay closed when the registry contains only rehearsal evidence
 
 Summarize one lane or compare control vs treatment with:

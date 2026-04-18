@@ -8,6 +8,7 @@ param(
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
+. (Join-Path $PSScriptRoot "pair_session_certification.ps1")
 
 function Read-JsonFile {
     param([string]$Path)
@@ -387,6 +388,10 @@ $shadowProfilesMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPai
 $shadowRecommendationJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.json")
 $shadowRecommendationMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.md")
 $shadowRecommendation = Read-JsonFile -Path $shadowRecommendationJsonPath
+$liveMonitorStatusJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "live_monitor_status.json")
+$liveMonitorStatus = Read-JsonFile -Path $liveMonitorStatusJsonPath
+$guidedDocketJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "guided_session\final_session_docket.json")
+$guidedDocket = Read-JsonFile -Path $guidedDocketJsonPath
 
 $pairId = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "pair_id" -Default "")
 $pairRunIdentity = Get-PairRunIdentity -PairId $pairId -ResolvedPairRoot $resolvedPairRoot
@@ -405,6 +410,12 @@ $treatmentUsableHumanSignal = Test-UsableHumanSignal -Label $treatmentHumanSigna
 $comparisonIsTuningUsable = [bool](Get-ObjectPropertyValue -Object $comparison -Name "comparison_is_tuning_usable" -Default $false)
 $treatmentPatchedWhileHumansPresent = [bool](Get-ObjectPropertyValue -Object $comparison -Name "treatment_patched_while_humans_present" -Default (Get-ObjectPropertyValue -Object $scorecard -Name "treatment_patched_while_humans_present" -Default $false))
 $meaningfulPostPatchObservationWindowExists = [bool](Get-ObjectPropertyValue -Object $comparison -Name "meaningful_post_patch_observation_window_exists" -Default (Get-ObjectPropertyValue -Object $scorecard -Name "meaningful_post_patch_observation_window_exists" -Default $false))
+$minHumanSnapshots = [int](Get-ObjectPropertyValue -Object $pairSummary -Name "min_human_snapshots" -Default 0)
+$minHumanPresenceSeconds = [double](Get-ObjectPropertyValue -Object $pairSummary -Name "min_human_presence_seconds" -Default 0.0)
+$controlHumanSnapshotsCount = [int](Get-ObjectPropertyValue -Object $comparison -Name "control_human_snapshots_count" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "human_signal" -Default $null) -Name "control_human_snapshots_count" -Default -1))
+$treatmentHumanSnapshotsCount = [int](Get-ObjectPropertyValue -Object $comparison -Name "treatment_human_snapshots_count" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "human_signal" -Default $null) -Name "treatment_human_snapshots_count" -Default -1))
+$controlSecondsWithHumanPresence = [double](Get-ObjectPropertyValue -Object $comparison -Name "control_seconds_with_human_presence" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "human_signal" -Default $null) -Name "control_seconds_with_human_presence" -Default -1.0))
+$treatmentSecondsWithHumanPresence = [double](Get-ObjectPropertyValue -Object $comparison -Name "treatment_seconds_with_human_presence" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "human_signal" -Default $null) -Name "treatment_seconds_with_human_presence" -Default -1.0))
 $treatmentRelativeToControl = [string](Get-ObjectPropertyValue -Object $comparison -Name "treatment_relative_to_control" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "treatment_patch_signal" -Default $null) -Name "treatment_relative_to_control" -Default ""))
 $relativeBehaviorDiscussionReady = [bool](Get-ObjectPropertyValue -Object $comparison -Name "relative_behavior_discussion_ready" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "treatment_patch_signal" -Default $null) -Name "relative_behavior_discussion_ready" -Default $false))
 $apparentBenefitTooWeakToTrust = [bool](Get-ObjectPropertyValue -Object $comparison -Name "apparent_benefit_too_weak_to_trust" -Default (Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $scorecard -Name "treatment_patch_signal" -Default $null) -Name "apparent_benefit_too_weak_to_trust" -Default $false))
@@ -446,6 +457,61 @@ $embeddedCommitSha = Get-EmbeddedCommitSha `
     -Scorecard $scorecard `
     -ControlSessionPack $controlSessionPack `
     -TreatmentSessionPack $treatmentSessionPack
+$monitorVerdict = if ($null -ne $guidedDocket) {
+    [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $guidedDocket -Name "monitor" -Default $null) -Name "last_verdict" -Default "")
+}
+else {
+    [string](Get-ObjectPropertyValue -Object $liveMonitorStatus -Name "current_verdict" -Default "")
+}
+$certificateJsonPath = Join-Path $resolvedPairRoot "grounded_evidence_certificate.json"
+$certificateMarkdownPath = Join-Path $resolvedPairRoot "grounded_evidence_certificate.md"
+$groundedEvidenceCertificate = Get-PairSessionGroundedEvidenceCertification `
+    -PairId $pairId `
+    -PairRoot $resolvedPairRoot `
+    -TreatmentProfile $treatmentProfile `
+    -EvidenceOrigin ([string](Get-ObjectPropertyValue -Object $pairSummary -Name "evidence_origin" -Default "")) `
+    -RehearsalMode ([bool](Get-ObjectPropertyValue -Object $pairSummary -Name "rehearsal_mode" -Default $false)) `
+    -Synthetic ([bool](Get-ObjectPropertyValue -Object $pairSummary -Name "synthetic_fixture" -Default $false)) `
+    -ValidationOnly ([bool](Get-ObjectPropertyValue -Object $pairSummary -Name "validation_only" -Default $false)) `
+    -PairClassification $pairClassification `
+    -ComparisonVerdict $comparisonVerdict `
+    -ControlEvidenceQuality $controlEvidenceQuality `
+    -TreatmentEvidenceQuality $treatmentEvidenceQuality `
+    -ControlHumanSignalVerdict $controlHumanSignalVerdict `
+    -TreatmentHumanSignalVerdict $treatmentHumanSignalVerdict `
+    -MinHumanSnapshots $minHumanSnapshots `
+    -MinHumanPresenceSeconds $minHumanPresenceSeconds `
+    -ControlHumanSnapshotsCount $controlHumanSnapshotsCount `
+    -TreatmentHumanSnapshotsCount $treatmentHumanSnapshotsCount `
+    -ControlSecondsWithHumanPresence $controlSecondsWithHumanPresence `
+    -TreatmentSecondsWithHumanPresence $treatmentSecondsWithHumanPresence `
+    -TreatmentPatchedWhileHumansPresent $treatmentPatchedWhileHumansPresent `
+    -MeaningfulPostPatchObservationWindowExists $meaningfulPostPatchObservationWindowExists `
+    -SessionIsTuningUsable $sessionIsTuningUsable `
+    -SessionIsStrongSignal $sessionIsStrongSignal `
+    -EvidenceBucket $evidenceBucket `
+    -ScorecardRecommendation ([string](Get-ObjectPropertyValue -Object $scorecard -Name "recommendation" -Default "")) `
+    -TreatmentBehaviorAssessment $scorecardTreatmentBehaviorAssessment `
+    -ShadowDecision ([string](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "decision" -Default "")) `
+    -ShadowManualReviewNeeded ([bool](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "manual_review_needed" -Default $false)) `
+    -MonitorVerdict $monitorVerdict
+$groundedEvidenceCertificate["prompt_id"] = $currentPromptId
+$groundedEvidenceCertificate["generated_at_utc"] = (Get-Date).ToUniversalTime().ToString("o")
+$groundedEvidenceCertificate["source_commit_sha"] = Get-RepoHeadCommitSha
+$groundedEvidenceCertificate["artifacts"] = [ordered]@{
+    pair_summary_json = $pairSummaryJsonPath
+    comparison_json = $comparisonJsonPath
+    scorecard_json = $scorecardJsonPath
+    scorecard_markdown = $scorecardMarkdownPath
+    shadow_recommendation_json = $shadowRecommendationJsonPath
+    shadow_recommendation_markdown = $shadowRecommendationMarkdownPath
+    live_monitor_status_json = $liveMonitorStatusJsonPath
+    guided_final_session_docket_json = $guidedDocketJsonPath
+    grounded_evidence_certificate_json = $certificateJsonPath
+    grounded_evidence_certificate_markdown = $certificateMarkdownPath
+}
+Write-PairSessionCertificationJsonFile -Path $certificateJsonPath -Value $groundedEvidenceCertificate
+Write-PairSessionCertificationTextFile -Path $certificateMarkdownPath -Value (Get-PairSessionGroundedEvidenceCertificateMarkdown -Certificate $groundedEvidenceCertificate)
 
 $resolvedRegistryPath = if ([string]::IsNullOrWhiteSpace($RegistryPath)) {
     Join-Path (Ensure-Directory -Path (Get-RegistryRootDefault -LabRoot $resolvedLabRoot)) "pair_sessions.ndjson"
@@ -509,6 +575,12 @@ $entry = [ordered]@{
     treatment_evidence_quality = $treatmentEvidenceQuality
     control_human_signal_verdict = $controlHumanSignalVerdict
     treatment_human_signal_verdict = $treatmentHumanSignalVerdict
+    min_human_snapshots = $minHumanSnapshots
+    min_human_presence_seconds = $minHumanPresenceSeconds
+    control_human_snapshots_count = $controlHumanSnapshotsCount
+    treatment_human_snapshots_count = $treatmentHumanSnapshotsCount
+    control_seconds_with_human_presence = $controlSecondsWithHumanPresence
+    treatment_seconds_with_human_presence = $treatmentSecondsWithHumanPresence
     treatment_patched_while_humans_present = $treatmentPatchedWhileHumansPresent
     meaningful_post_patch_observation_window_exists = $meaningfulPostPatchObservationWindowExists
     scorecard_recommendation = [string](Get-ObjectPropertyValue -Object $scorecard -Name "recommendation" -Default "")
@@ -523,6 +595,17 @@ $entry = [ordered]@{
     shadow_manual_review_needed = [bool](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "manual_review_needed" -Default $false)
     session_is_tuning_usable = $sessionIsTuningUsable
     session_is_strong_signal = $sessionIsStrongSignal
+    monitor_verdict = $monitorVerdict
+    grounded_evidence_certification_verdict = [string]$groundedEvidenceCertificate["certification_verdict"]
+    grounded_evidence_certified = [bool]$groundedEvidenceCertificate["certified_grounded_evidence"]
+    counts_toward_promotion = [bool]$groundedEvidenceCertificate["counts_toward_promotion"]
+    counts_only_as_workflow_validation = [bool]$groundedEvidenceCertificate["counts_only_as_workflow_validation"]
+    grounded_evidence_manual_review_needed = [bool]$groundedEvidenceCertificate["manual_review_needed"]
+    grounded_evidence_explanation = [string]$groundedEvidenceCertificate["explanation"]
+    grounded_evidence_exclusion_reasons = @($groundedEvidenceCertificate["exclusion_reasons"])
+    minimum_human_signal_thresholds_met = [bool]$groundedEvidenceCertificate["minimum_human_signal_thresholds_met"]
+    control_meets_minimum_human_signal = [bool]$groundedEvidenceCertificate["control_meets_minimum_human_signal"]
+    treatment_meets_minimum_human_signal = [bool]$groundedEvidenceCertificate["treatment_meets_minimum_human_signal"]
     notes_path = $resolvedNotesPath
     pair_prompt_id = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "prompt_id" -Default "")
     scorecard_prompt_id = [string](Get-ObjectPropertyValue -Object $scorecard -Name "prompt_id" -Default "")
@@ -544,6 +627,8 @@ $entry = [ordered]@{
         shadow_profiles_markdown = $shadowProfilesMarkdownPath
         shadow_recommendation_json = $shadowRecommendationJsonPath
         shadow_recommendation_markdown = $shadowRecommendationMarkdownPath
+        grounded_evidence_certificate_json = $certificateJsonPath
+        grounded_evidence_certificate_markdown = $certificateMarkdownPath
         control_session_pack_json = $controlSessionPackJsonPath
         treatment_session_pack_json = $treatmentSessionPackJsonPath
         notes_path = $resolvedNotesPath
@@ -561,6 +646,8 @@ Write-Host "  Registry path: $resolvedRegistryPath"
 Write-Host "  Evidence bucket: $evidenceBucket"
 Write-Host "  Treatment profile: $treatmentProfile"
 Write-Host "  Scorecard recommendation: $scorecardRecommendation"
+Write-Host "  Grounded evidence certification: $([string]$groundedEvidenceCertificate['certification_verdict'])"
+Write-Host "  Counts toward promotion: $([bool]$groundedEvidenceCertificate['counts_toward_promotion'])"
 if ($null -ne $shadowRecommendation) {
     Write-Host "  Shadow recommendation: $([string]$shadowRecommendation.decision)"
 }
@@ -577,5 +664,7 @@ if ($resolvedNotesPath) {
     TreatmentProfile = $treatmentProfile
     ScorecardRecommendation = $scorecardRecommendation
     ShadowRecommendation = [string](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "decision" -Default "")
+    GroundedEvidenceCertificationVerdict = [string]$groundedEvidenceCertificate["certification_verdict"]
+    CountsTowardPromotion = [bool]$groundedEvidenceCertificate["counts_toward_promotion"]
     NotesPath = $resolvedNotesPath
 }

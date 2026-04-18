@@ -123,6 +123,32 @@ def copy_fixture(
     return destination
 
 
+def mutate_pair_to_live_like(pair_root: Path, *, label: str) -> None:
+    pair_summary_path = pair_root / "pair_summary.json"
+    pair_summary = read_json(pair_summary_path)
+    pair_summary["pair_id"] = f"{pair_summary['pair_id']}-{label}"
+    pair_summary["prompt_id"] = f"HLDM-JKBOTTI-AI-STAND-TEST-{label.upper()}"
+    pair_summary["synthetic_fixture"] = False
+    pair_summary["rehearsal_mode"] = False
+    pair_summary["validation_only"] = False
+    pair_summary["evidence_origin"] = "live"
+    pair_summary["source_commit_sha"] = f"test-live-like-{label}"
+    pair_summary["operator_note"] = (
+        "Test-only live-like certification branch derived from a deterministic fixture. "
+        "This is not operator-facing lab evidence."
+    )
+    pair_summary_path.write_text(json.dumps(pair_summary, indent=2) + "\n", encoding="utf-8")
+
+
+def certify_pair_session(pair_root: Path) -> dict[str, Any]:
+    run_powershell(
+        REPO_ROOT / "scripts" / "certify_latest_pair_session.ps1",
+        "-PairRoot",
+        str(pair_root),
+    )
+    return read_json(pair_root / "grounded_evidence_certificate.json")
+
+
 def run_fixture_pipeline(pair_root: Path) -> dict[str, Any]:
     metadata = read_json(pair_root / "fixture_metadata.json")
     min_human_snapshots = str(metadata["min_human_snapshots"])
@@ -326,6 +352,41 @@ class PairSessionFixtureDecisionTests(unittest.TestCase):
 
 
 @unittest.skipUnless(POWERSHELL, "PowerShell is required for fixture-backed pair-session tests.")
+class PairSessionCertificationTests(unittest.TestCase):
+    def test_synthetic_fixture_is_not_certified_for_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            pair_root = copy_fixture("strong_signal_keep_conservative", tempdir / "pairs")
+            run_fixture_pipeline(pair_root)
+            certificate = certify_pair_session(pair_root)
+            self.assertEqual(certificate["certification_verdict"], "excluded-not-grounded-evidence")
+            self.assertFalse(certificate["counts_toward_promotion"])
+            self.assertTrue(certificate["counts_only_as_workflow_validation"])
+            self.assertIn("synthetic-evidence", certificate["exclusion_reasons"])
+
+    def test_no_human_fixture_is_not_certified(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            pair_root = copy_fixture("no_humans_insufficient_data", tempdir / "pairs")
+            run_fixture_pipeline(pair_root)
+            certificate = certify_pair_session(pair_root)
+            self.assertFalse(certificate["counts_toward_promotion"])
+            self.assertIn("minimum-human-signal-thresholds-not-met", certificate["exclusion_reasons"])
+            self.assertIn("treatment-never-patched-while-humans-present", certificate["exclusion_reasons"])
+
+    def test_live_like_test_fixture_can_exercise_positive_certification_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir_name:
+            tempdir = Path(tempdir_name)
+            pair_root = copy_fixture("strong_signal_keep_conservative", tempdir / "pairs")
+            mutate_pair_to_live_like(pair_root, label="cert-positive")
+            run_fixture_pipeline(pair_root)
+            certificate = certify_pair_session(pair_root)
+            self.assertEqual(certificate["certification_verdict"], "certified-grounded-evidence")
+            self.assertTrue(certificate["counts_toward_promotion"])
+            self.assertEqual(certificate["evidence_origin"], "live")
+
+
+@unittest.skipUnless(POWERSHELL, "PowerShell is required for fixture-backed pair-session tests.")
 class PairSessionRegistryTests(unittest.TestCase):
     fixture_definitions = load_fixture_definitions()["fixtures"]
 
@@ -334,6 +395,7 @@ class PairSessionRegistryTests(unittest.TestCase):
         fixture_ids: list[str],
         *,
         duplicate_suffixes: dict[int, str] | None = None,
+        live_like_indices: set[int] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
         with tempfile.TemporaryDirectory() as tempdir_name:
             tempdir = Path(tempdir_name)
@@ -343,6 +405,8 @@ class PairSessionRegistryTests(unittest.TestCase):
             for index, fixture_id in enumerate(fixture_ids):
                 suffix = None if duplicate_suffixes is None else duplicate_suffixes.get(index)
                 pair_root = copy_fixture(fixture_id, tempdir / "pairs", pair_id_suffix=suffix)
+                if live_like_indices and index in live_like_indices:
+                    mutate_pair_to_live_like(pair_root, label=f"registry-{index}")
                 run_fixture_pipeline(pair_root)
                 registered_entries.append(register_fixture(pair_root, registry_path))
             registry_summary, profile_recommendation = summarize_registry(registry_path, output_root)
@@ -355,11 +419,13 @@ class PairSessionRegistryTests(unittest.TestCase):
         self.assertEqual(recommendation["recommended_live_profile"], "conservative")
         self.assertFalse(recommendation["questions"]["responsive_justified_as_next_trial"])
         self.assertTrue(recommendation["questions"]["evidence_too_weak_for_profile_change"])
+        self.assertEqual(summary["total_certified_grounded_sessions"], 0)
         self.assertGreaterEqual(summary["insufficient_data_count"], 1)
 
     def test_registry_can_keep_conservative_on_repeated_grounded_conservative_evidence(self) -> None:
         _, _, recommendation = self._run_registry_combination(
-            ["conservative_acceptable_usable_signal", "strong_signal_keep_conservative"]
+            ["conservative_acceptable_usable_signal", "strong_signal_keep_conservative"],
+            live_like_indices={0, 1},
         )
         self.assertEqual(recommendation["decision"], "keep-conservative")
         self.assertEqual(recommendation["recommended_live_profile"], "conservative")
@@ -372,6 +438,7 @@ class PairSessionRegistryTests(unittest.TestCase):
                 "conservative_too_quiet_responsive_candidate",
             ],
             duplicate_suffixes={1: "repeat"},
+            live_like_indices={0, 1},
         )
         self.assertEqual(recommendation["decision"], "conservative-validated-try-responsive")
         self.assertEqual(recommendation["recommended_live_profile"], "responsive")
@@ -379,7 +446,8 @@ class PairSessionRegistryTests(unittest.TestCase):
 
     def test_registry_reverts_from_responsive_when_responsive_is_groundedly_too_reactive(self) -> None:
         _, _, recommendation = self._run_registry_combination(
-            ["responsive_too_reactive_revert_candidate"]
+            ["responsive_too_reactive_revert_candidate"],
+            live_like_indices={0},
         )
         self.assertEqual(
             recommendation["decision"], "responsive-too-reactive-revert-to-conservative"
@@ -389,14 +457,16 @@ class PairSessionRegistryTests(unittest.TestCase):
 
     def test_registry_can_still_escalate_to_manual_review_on_mixed_ambiguous_evidence(self) -> None:
         _, _, recommendation = self._run_registry_combination(
-            ["strong_signal_keep_conservative", "ambiguous_manual_review_needed"]
+            ["strong_signal_keep_conservative", "ambiguous_manual_review_needed"],
+            live_like_indices={0, 1},
         )
         self.assertEqual(recommendation["decision"], "manual-review-needed")
         self.assertTrue(recommendation["questions"]["manual_review_needed"])
 
     def test_single_too_quiet_fixture_does_not_promote_responsive_by_itself(self) -> None:
         _, _, recommendation = self._run_registry_combination(
-            ["conservative_too_quiet_responsive_candidate"]
+            ["conservative_too_quiet_responsive_candidate"],
+            live_like_indices={0},
         )
         self.assertEqual(recommendation["recommended_live_profile"], "conservative")
         self.assertFalse(recommendation["questions"]["responsive_justified_as_next_trial"])
@@ -409,7 +479,7 @@ class ResponsiveTrialGateTests(unittest.TestCase):
         fixture_ids: list[str],
         *,
         duplicate_suffixes: dict[int, str] | None = None,
-        include_synthetic_evidence_for_validation: bool = False,
+        live_like_indices: set[int] | None = None,
     ) -> tuple[dict[str, Any], str, dict[str, Any], str]:
         with tempfile.TemporaryDirectory() as tempdir_name:
             tempdir = Path(tempdir_name)
@@ -418,14 +488,12 @@ class ResponsiveTrialGateTests(unittest.TestCase):
             for index, fixture_id in enumerate(fixture_ids):
                 suffix = None if duplicate_suffixes is None else duplicate_suffixes.get(index)
                 pair_root = copy_fixture(fixture_id, tempdir / "pairs", pair_id_suffix=suffix)
+                if live_like_indices and index in live_like_indices:
+                    mutate_pair_to_live_like(pair_root, label=f"gate-{index}")
                 run_fixture_pipeline(pair_root)
                 register_fixture(pair_root, registry_path)
             summarize_registry(registry_path, output_root)
-            return evaluate_responsive_gate(
-                registry_path,
-                output_root,
-                include_synthetic_evidence_for_validation=include_synthetic_evidence_for_validation,
-            )
+            return evaluate_responsive_gate(registry_path, output_root)
 
     def test_gate_blocks_insufficient_and_weak_signal_registries(self) -> None:
         gate, gate_md, plan, plan_md = self._run_gate_combination(
@@ -434,14 +502,15 @@ class ResponsiveTrialGateTests(unittest.TestCase):
         self.assertEqual(gate["gate_verdict"], "closed")
         self.assertEqual(gate["next_live_action"], "responsive-trial-not-allowed")
         self.assertTrue(gate["synthetic_only_evidence_excluded_from_promotion"])
+        self.assertEqual(gate["certified_grounded_sessions"], 0)
         self.assertEqual(plan["plan_status"], "blocked")
         self.assertIn("responsive-trial-not-allowed", gate_md)
         self.assertIn("Not Yet", plan_md)
 
-    def test_gate_keeps_single_too_quiet_case_below_threshold_even_in_validation_mode(self) -> None:
+    def test_gate_keeps_single_certified_too_quiet_case_below_threshold(self) -> None:
         gate, _, plan, _ = self._run_gate_combination(
             ["conservative_too_quiet_responsive_candidate"],
-            include_synthetic_evidence_for_validation=True,
+            live_like_indices={0},
         )
         self.assertEqual(gate["gate_verdict"], "closed")
         self.assertEqual(gate["next_live_action"], "collect-more-conservative-evidence")
@@ -458,33 +527,33 @@ class ResponsiveTrialGateTests(unittest.TestCase):
         self.assertEqual(gate["gate_verdict"], "closed")
         self.assertEqual(gate["next_live_action"], "responsive-trial-not-allowed")
         self.assertTrue(gate["synthetic_only_evidence_excluded_from_promotion"])
+        self.assertEqual(gate["certified_grounded_sessions"], 0)
         self.assertEqual(plan["plan_status"], "blocked")
 
-    def test_gate_can_open_for_repeated_too_quiet_evidence_in_validation_mode(self) -> None:
+    def test_gate_can_open_for_repeated_certified_too_quiet_evidence(self) -> None:
         gate, gate_md, plan, plan_md = self._run_gate_combination(
             [
                 "conservative_too_quiet_responsive_candidate",
                 "conservative_too_quiet_responsive_candidate",
             ],
             duplicate_suffixes={1: "repeat"},
-            include_synthetic_evidence_for_validation=True,
+            live_like_indices={0, 1},
         )
         self.assertEqual(gate["gate_verdict"], "open")
         self.assertEqual(gate["next_live_action"], "responsive-trial-allowed")
-        self.assertFalse(gate["synthetic_only_evidence_excluded_from_promotion"])
         self.assertEqual(plan["plan_status"], "ready")
         self.assertEqual(plan["treatment_lane"]["treatment_profile"], "responsive")
         self.assertIn("responsive-trial-allowed", gate_md)
         self.assertIn("run_control_treatment_pair.ps1", plan_md)
 
-    def test_gate_can_recommend_revert_for_responsive_overreaction_in_validation_mode(self) -> None:
+    def test_gate_can_recommend_revert_for_certified_responsive_overreaction(self) -> None:
         gate, _, plan, _ = self._run_gate_combination(
             [
                 "responsive_too_reactive_revert_candidate",
                 "responsive_too_reactive_revert_candidate",
             ],
             duplicate_suffixes={1: "repeat"},
-            include_synthetic_evidence_for_validation=True,
+            live_like_indices={0, 1},
         )
         self.assertEqual(gate["gate_verdict"], "revert-recommended")
         self.assertEqual(gate["next_live_action"], "responsive-revert-recommended")
@@ -493,7 +562,7 @@ class ResponsiveTrialGateTests(unittest.TestCase):
     def test_gate_can_escalate_ambiguous_grounded_evidence_to_manual_review(self) -> None:
         gate, _, plan, _ = self._run_gate_combination(
             ["strong_signal_keep_conservative", "ambiguous_manual_review_needed"],
-            include_synthetic_evidence_for_validation=True,
+            live_like_indices={0, 1},
         )
         self.assertEqual(gate["gate_verdict"], "manual-review-needed")
         self.assertEqual(gate["next_live_action"], "manual-review-needed")

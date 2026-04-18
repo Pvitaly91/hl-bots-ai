@@ -144,6 +144,13 @@ Then score it with:
 powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
 ```
 
+Then certify whether the pair counts as real grounded promotion evidence:
+
+```powershell
+powershell -NoProfile -File .\scripts\certify_latest_pair_session.ps1
+powershell -NoProfile -File .\scripts\certify_latest_pair_session.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
 Run the shadow review against the latest pair pack before you decide whether `responsive` is worth a real follow-up session:
 
 ```powershell
@@ -183,6 +190,14 @@ How to read the final session docket:
 - `responsive gate verdict` comes from `scripts\evaluate_responsive_trial_gate.ps1`
 - the docket's primary operator action stays conservative-first and honest about insufficient evidence
 - in rehearsal mode the docket must also say the evidence is `synthetic`, `rehearsal`, and `validation only`
+
+How to read grounded evidence certification:
+
+- `grounded_evidence_certificate.json` is the machine-readable answer to whether the pair counts toward future responsive-promotion thresholds
+- `grounded_evidence_certificate.md` is the human-readable explanation of the same verdict
+- `counts toward promotion` means the session is real live evidence, not rehearsal, not synthetic, both lanes cleared the minimum human-signal gate, treatment patched while humans were present, a meaningful post-patch observation window exists, and the pair cleared `tuning-usable` or stronger
+- `workflow validation only` means the workflow behaved correctly, but the run must stay excluded from promotion logic
+- rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, and weak-signal sessions do not count toward responsive promotion
 
 ## If No Humans Join
 
@@ -226,11 +241,12 @@ How to read the final session docket:
 
 - `scripts\register_pair_session_result.ps1` appends the reviewed and scored pair pack into `lab\logs\eval\registry\pair_sessions.ndjson`
 - registration defaults to the newest pair pack and skips duplicate pair packs by default
+- registration also writes `grounded_evidence_certificate.json` and `grounded_evidence_certificate.md` into the pair root
 - optional notes can be linked with `-NotesPath` or by placing a notes file in the pair root; missing notes never fail the registration step
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can also refresh the latest responsive-trial gate in the same pass
-- the registry summary tells you how many sessions are still insufficient-data or weak-signal, how many are tuning-usable or strong-signal, how often treatment patched while humans were present, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and how each treatment profile is behaving across runs
-- conservative remains the default next live profile until the registry shows repeated grounded evidence that responsive is justified
+- the registry summary now distinguishes total registered sessions from certified grounded sessions, non-certified excluded sessions, workflow-validation-only sessions, and excluded sessions by reason
+- conservative remains the default next live profile until the registry shows repeated certified grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
 
 ## Responsive Trial Gate
@@ -238,7 +254,7 @@ How to read the final session docket:
 - `scripts\evaluate_responsive_trial_gate.ps1` is the explicit go/no-go check for the first real live `responsive` treatment session
 - it writes `responsive_trial_gate.json`, `responsive_trial_gate.md`, `responsive_trial_plan.json`, and `responsive_trial_plan.md` under `lab\logs\eval\registry\`
 - the gate reads the registry first, then uses `registry_summary.json` and `profile_recommendation.json` when they are already present
-- gate thresholds live in `ai_director\testdata\responsive_trial_gate.json` and are intentionally strict: repeated real grounded conservative too-quiet evidence can open the gate, but insufficient-data, weak-signal, synthetic-only, or one-off noisy evidence cannot
+- gate thresholds live in `ai_director\testdata\responsive_trial_gate.json` and are intentionally strict: repeated certified grounded conservative too-quiet evidence can open the gate, but rehearsal, synthetic-only, no-human, insufficient-data, weak-signal, validation-only, or one-off noisy evidence cannot
 - synthetic fixtures help validate the gate logic, but synthetic-only evidence must never unlock the real live responsive trial
 
 Read the next live action like this:
