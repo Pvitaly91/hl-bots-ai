@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-25
+HLDM-JKBOTTI-AI-STAND-20260415-26
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -18,6 +18,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
+- `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
 - `ai_director/testdata/pair_sessions/`, `scripts/generate_pair_session_fixtures.py`, and `scripts/run_fixture_decision_demo.ps1` for synthetic post-run decision validation.
 - `docs/test-stand.md` with local HLDS lab details.
@@ -188,7 +189,9 @@ The paired live-session runner is the recommended next human workflow:
 - the control lane now supports the same human-join-aware waiting thresholds as the treatment lane, while still staying sidecar-free with `jk_ai_balance_enabled 0`.
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
 - `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
+- `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, and the final session docket.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
+- each guided paired run also writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root so the operator has one concise end-of-run answer.
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -230,22 +233,36 @@ Interpret the operator note conservatively:
 
 If `Half-Life\hl.exe` is available locally, `scripts\launch_local_hldm_client.ps1 -Port <port> -DryRun` resolves the client path and prints the launch command without starting the game. If the executable is missing, the helper fails with a precise prereq message instead of failing silently.
 
-For the first real human pair session, use this operator flow:
+For the next real conservative human pair session, use the guided workflow first:
 
-1. `powershell -NoProfile -File .\scripts\preflight_real_pair_session.ps1`
-2. `powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload`
-3. in a second terminal, run the exact monitor command printed by the pair runner, or use `powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient`
-4. join the printed control lane first
-5. join the printed treatment lane second
-6. stop the live session only when the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`
-7. keep the live session running when the monitor says `waiting-for-control-human-signal`, `waiting-for-treatment-human-signal`, `waiting-for-treatment-patch-while-humans-present`, or `waiting-for-post-patch-observation-window`
-8. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
-9. `powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`
-10. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
-11. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
-12. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
-13. run `powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1`
-14. use the scorecard, shadow recommendation, registry summary, and responsive-trial gate together before choosing the next live action
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Use `-AutoStopWhenSufficient` only when you want the guided runner to request an early stop after the live monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`. It must not stop on the `waiting-*` states or on insufficient-data states.
+
+Use manual stop instead when:
+
+- you want an operator to decide based on the live feel of the session
+- you want longer treatment observation even after the minimum grounded bar is met
+- you are validating the no-human path and expect the session to finish honestly as insufficient-data
+
+The guided workflow still stays thin:
+
+- preflight remains `scripts\preflight_real_pair_session.ps1`
+- paired capture remains `scripts\run_control_treatment_pair.ps1`
+- monitoring remains `scripts\monitor_live_pair_session.ps1`
+- post-run review remains `scripts\review_latest_pair_run.ps1`
+- offline counterfactual review remains `scripts\run_shadow_profile_review.ps1`
+- scoring remains `scripts\score_latest_pair_session.ps1`
+- registration remains `scripts\register_pair_session_result.ps1`
+- registry summary remains `scripts\summarize_pair_session_registry.ps1`
+- responsive promotion gating remains `scripts\evaluate_responsive_trial_gate.ps1`
+
+Read the final guided docket like this:
+
+- `final_session_docket.json`: machine-readable final state for the pair, monitor, post-run outputs, and operator recommendation flags
+- `final_session_docket.md`: concise human-facing end-of-run answer that says whether the session was sufficient, whether conservative should stay live, and whether responsive must remain blocked
 
 Interpret the live monitor conservatively:
 
@@ -607,6 +624,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_mixed_balance_eval.bat`: `cmd.exe` wrapper for the mixed-session helper.
 - `scripts/run_control_treatment_pair.ps1`: thin paired workflow helper that runs the control lane and treatment lane, preserves both session packs, and writes the combined pair summary/comparison pack.
 - `scripts/run_control_treatment_pair.bat`: `cmd.exe` wrapper for the paired control-vs-treatment helper.
+- `scripts/run_guided_live_pair_session.ps1`: guided conservative-first operator workflow that runs preflight, the paired capture, optional auto-start monitoring with sufficient-only auto-stop, the full post-session evidence pipeline, and the final session docket.
+- `scripts/run_guided_live_pair_session.bat`: `cmd.exe` wrapper for the guided live pair-session workflow.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
 - `scripts/review_latest_pair_run.ps1`: finds the newest pair pack, prints the key artifact paths, summarizes the control/treatment verdicts, and points to the next artifact worth reading.

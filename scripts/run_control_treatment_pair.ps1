@@ -11,6 +11,7 @@ param(
     [int]$MinHumanSnapshots = -1,
     [int]$MinHumanPresenceSeconds = -1,
     [int]$MinPatchEventsForUsableLane = -1,
+    [int]$MinPostPatchObservationSeconds = 20,
     [ValidateSet("conservative", "default", "responsive")]
     [string]$TreatmentProfile = "conservative",
     [string]$ControlLaneLabel = "control-baseline",
@@ -21,6 +22,7 @@ param(
     [string]$Platform = "Win32",
     [string]$SteamCmdPath = "",
     [string]$PythonPath = "",
+    [string]$GuidedStopSignalPath = "",
     [switch]$SkipSteamCmdUpdate,
     [switch]$SkipMetamodDownload
 )
@@ -280,6 +282,9 @@ if ($MinHumanPresenceSeconds -lt 1) {
 if ($MinPatchEventsForUsableLane -lt 0) {
     throw "MinPatchEventsForUsableLane cannot be negative."
 }
+if ($MinPostPatchObservationSeconds -lt 1) {
+    throw "MinPostPatchObservationSeconds must be at least 1."
+}
 
 $waitForHumanJoinEnabled = $true
 if ($PSBoundParameters.ContainsKey("WaitForHumanJoin")) {
@@ -348,7 +353,7 @@ $reviewHelperCommand = "powershell -NoProfile -File .\scripts\review_latest_pair
 $scoreHelperCommand = "powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1 -PairRoot `"$pairRoot`""
 $registerHelperCommand = "powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot `"$pairRoot`""
 $registrySummaryCommand = "powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1"
-$monitorHelperCommand = "powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -PairRoot `"$pairRoot`" -PollSeconds 5 -MinControlHumanSnapshots $MinHumanSnapshots -MinControlHumanPresenceSeconds $MinHumanPresenceSeconds -MinTreatmentHumanSnapshots $MinHumanSnapshots -MinTreatmentHumanPresenceSeconds $MinHumanPresenceSeconds -MinTreatmentPatchEventsWhileHumansPresent $MinPatchEventsForUsableLane -MinPostPatchObservationSeconds 20 -StopWhenSufficient"
+$monitorHelperCommand = "powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -PairRoot `"$pairRoot`" -PollSeconds 5 -MinControlHumanSnapshots $MinHumanSnapshots -MinControlHumanPresenceSeconds $MinHumanPresenceSeconds -MinTreatmentHumanSnapshots $MinHumanSnapshots -MinTreatmentHumanPresenceSeconds $MinHumanPresenceSeconds -MinTreatmentPatchEventsWhileHumansPresent $MinPatchEventsForUsableLane -MinPostPatchObservationSeconds $MinPostPatchObservationSeconds -StopWhenSufficient"
 
 Write-Host "Paired control+treatment evaluation:"
 Write-Host "  Pair pack root: $pairRoot"
@@ -361,6 +366,7 @@ Write-Host "  Human join grace seconds: $HumanJoinGraceSeconds"
 Write-Host "  Minimum human snapshots: $MinHumanSnapshots"
 Write-Host "  Minimum human presence seconds: $MinHumanPresenceSeconds"
 Write-Host "  Minimum treatment patch events for usable lane: $MinPatchEventsForUsableLane"
+Write-Host "  Minimum post-patch observation seconds: $MinPostPatchObservationSeconds"
 Write-Host "Operator join plan:"
 Write-Host "  CONTROL lane (join first): $ControlLaneLabel"
 Write-Host "    Role: no-AI control baseline"
@@ -410,6 +416,9 @@ $sharedEvalArgs = @{
 
 if ($PythonPath) {
     $sharedEvalArgs.PythonPath = $PythonPath
+}
+if ($GuidedStopSignalPath) {
+    $sharedEvalArgs.ExternalStopSignalPath = $GuidedStopSignalPath
 }
 if ($waitForHumanJoinEnabled) {
     $sharedEvalArgs.WaitForHumanJoin = $true
@@ -493,6 +502,7 @@ $pairSummary = [ordered]@{
     min_human_snapshots = $MinHumanSnapshots
     min_human_presence_seconds = $MinHumanPresenceSeconds
     min_patch_events_for_usable_lane = $MinPatchEventsForUsableLane
+    min_post_patch_observation_seconds = $MinPostPatchObservationSeconds
     treatment_profile = $resolvedTuningProfile.name
     control_lane = [ordered]@{
         lane_root = $controlResult.LaneRoot

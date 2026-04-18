@@ -18,7 +18,22 @@ Run this first:
 powershell -NoProfile -File .\scripts\preflight_real_pair_session.ps1
 ```
 
-Then start the live pair:
+Then prefer the guided live workflow:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Use `-AutoStopWhenSufficient` only when you want the guided runner to request a safe early stop after the live monitor reaches a sufficient verdict.
+
+The guided runner stays thin:
+
+- it still runs `scripts\preflight_real_pair_session.ps1`
+- it still uses `scripts\run_control_treatment_pair.ps1` for the pair capture
+- it still uses `scripts\monitor_live_pair_session.ps1` for live evidence-sufficiency decisions
+- it still uses the same review, shadow, scoring, registry, and responsive-gate helpers after the run
+
+If you need the old manual flow, start the live pair like this:
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
@@ -30,7 +45,7 @@ Then start the live monitor in a second terminal:
 powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient
 ```
 
-The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack.
+The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack. The guided runner can auto-start that same monitor logic and, after the run, writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root.
 
 Default ports and lanes:
 
@@ -48,20 +63,18 @@ Default ports and lanes:
 ## Operator Sequence
 
 1. Run preflight and stop only if the verdict is `blocked`.
-2. Start the paired workflow.
-3. Start the live monitor and keep it running while the pair is active.
+2. Start the guided workflow unless you explicitly need the manual helper-by-helper flow.
+3. Read the printed control join target, treatment join target, monitor status or exact monitor command, pair output root, and final-docket target.
 4. Join the control lane first.
 5. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
 6. Let the runner advance to the treatment lane, then join the treatment lane second.
-7. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
-8. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
-9. Run `scripts\review_latest_pair_run.ps1`.
-10. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
-11. Run `scripts\score_latest_pair_session.ps1`.
-12. Run `scripts\register_pair_session_result.ps1`.
-13. Run `scripts\summarize_pair_session_registry.ps1`.
-14. Run `scripts\evaluate_responsive_trial_gate.ps1`.
-15. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before choosing the next live profile.
+7. If the guided runner auto-started the monitor, let it keep polling. If not, run the printed monitor command manually.
+8. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
+9. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
+10. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
+11. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
+12. Read `guided_session\final_session_docket.md` first after the run.
+13. If the docket says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
 
 ## What Counts As Insufficient Data
 
@@ -96,15 +109,18 @@ This is the minimum bar for `tuning-usable`. Multiple grounded post-patch window
 
 Stop the live session only on one of the `sufficient-*` verdicts. Keep it running on the `waiting-*` verdicts. If the monitor ends on `insufficient-data-timeout`, keep the artifacts as plumbing or weak-signal evidence only and schedule another conservative live pair before trying anything riskier.
 
+Auto-start monitor means the guided workflow runs the live monitor for you and keeps writing `live_monitor_status.json` / `live_monitor_status.md` into the active pair root. Auto-stop means the guided workflow requests a safe early stop only after one of the `sufficient-*` verdicts appears. It must never stop on `waiting-*`, `insufficient-data-timeout`, or `blocked-no-active-pair-run`.
+
 ## Files To Inspect After The Run
 
 Open these in order:
 
-1. `scorecard.md`
-2. `pair_summary.md`
-3. `comparison.md`
-4. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
-5. control `summary.md` if the control lane looks weak or sparse
+1. `guided_session\final_session_docket.md`
+2. `scorecard.md`
+3. `pair_summary.md`
+4. `comparison.md`
+5. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
+6. control `summary.md` if the control lane looks weak or sparse
 
 The fastest way to review the newest pair is:
 
@@ -147,6 +163,15 @@ Then evaluate whether the first live `responsive` trial is actually allowed:
 ```powershell
 powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1
 ```
+
+How to read the final session docket:
+
+- `control lane verdict`, `treatment lane verdict`, and `pair classification` come from the saved pair pack
+- `scorecard recommendation` comes from `scripts\score_latest_pair_session.ps1`
+- `shadow recommendation` comes from `scripts\run_shadow_profile_review.ps1`
+- `registry recommendation state` comes from `scripts\summarize_pair_session_registry.ps1`
+- `responsive gate verdict` comes from `scripts\evaluate_responsive_trial_gate.ps1`
+- the docket's primary operator action stays conservative-first and honest about insufficient evidence
 
 ## If No Humans Join
 

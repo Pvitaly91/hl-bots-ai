@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-25
+HLDM-JKBOTTI-AI-STAND-20260415-26
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -270,6 +270,32 @@ This pair runner is thin on purpose:
 - it prints an exact threshold-aware `scripts\monitor_live_pair_session.ps1` command so the operator can watch live evidence sufficiency in a second terminal
 - it keeps the control lane sidecar-free while still honoring human-join-aware wait thresholds
 
+Run the guided conservative-first workflow when the goal is to execute the whole next live pair correctly with the least operator error:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 `
+  -Map crossfire `
+  -BotCount 4 `
+  -BotSkill 3 `
+  -ControlPort 27016 `
+  -TreatmentPort 27017 `
+  -DurationSeconds 80 `
+  -WaitForHumanJoin `
+  -HumanJoinGraceSeconds 120 `
+  -TreatmentProfile conservative `
+  -SkipSteamCmdUpdate `
+  -SkipMetamodDownload
+```
+
+The guided runner remains a thin orchestrator over the existing helpers:
+
+- it still runs `scripts\preflight_real_pair_session.ps1` first
+- it still uses `scripts\run_control_treatment_pair.ps1` for the actual control and treatment capture
+- it can auto-start `scripts\monitor_live_pair_session.ps1` against the active pair root
+- it can request an early stop only after the live monitor reaches a sufficient verdict, never on the `waiting-*` or insufficient-data states
+- it still runs `scripts\review_latest_pair_run.ps1`, `scripts\run_shadow_profile_review.ps1`, `scripts\score_latest_pair_session.ps1`, `scripts\register_pair_session_result.ps1`, `scripts\summarize_pair_session_registry.ps1`, and `scripts\evaluate_responsive_trial_gate.ps1`
+- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run
+
 Start the live monitor like this while the pair is running:
 
 ```powershell
@@ -338,22 +364,19 @@ powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
 
 ## Paired Live Procedure
 
-For the next real human-vs-bot session, use this sequence:
+For the next real human-vs-bot session, prefer this sequence:
 
-1. Run `scripts\preflight_real_pair_session.ps1` and stop only if it reports `blocked`.
-2. Start `scripts\run_control_treatment_pair.ps1` with the default `conservative` treatment profile.
-3. In a second terminal, start `scripts\monitor_live_pair_session.ps1` and keep it running throughout the pair.
-4. Join the control lane on the printed `ControlPort` target first and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
-5. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
-6. Stop the live session only after the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
-7. Keep the pair running longer when the monitor still says `waiting-for-control-human-signal`, `waiting-for-treatment-human-signal`, `waiting-for-treatment-patch-while-humans-present`, or `waiting-for-post-patch-observation-window`.
-8. Run `scripts\review_latest_pair_run.ps1`.
-9. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
-10. Run `scripts\score_latest_pair_session.ps1`.
-11. Run `scripts\register_pair_session_result.ps1`.
-12. Run `scripts\summarize_pair_session_registry.ps1`.
-13. Run `scripts\evaluate_responsive_trial_gate.ps1`.
-14. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before the next live action.
+1. Start `scripts\run_guided_live_pair_session.ps1` with the default `conservative` treatment profile.
+2. Read the printed control join target, treatment join target, monitor status or exact monitor command, pair output root, and final-docket target.
+3. Join the control lane first and keep a human present long enough to clear the printed human-signal thresholds.
+4. Let the paired workflow advance to treatment, then join the treatment lane second.
+5. If the guided runner auto-started the monitor, leave it alone. If it did not, run the printed exact `scripts\monitor_live_pair_session.ps1 -PairRoot ...` command in a second terminal.
+6. Use `-AutoStopWhenSufficient` only when you want the guided runner to request an early stop after the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
+7. Keep the session running when the monitor still says any `waiting-*` verdict, and never treat `insufficient-data-timeout` as tuning proof.
+8. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
+9. Read `guided_session\final_session_docket.md` first after the run, then open the pair/score/shadow artifacts only if the docket says more inspection is needed.
+
+The guided runner still delegates the work to the individual helpers above. It does not replace them with a second scoring engine.
 
 The saved join helpers make the roles explicit:
 
@@ -368,6 +391,15 @@ Why `conservative` is the default next live treatment profile:
 - it is the safest way to learn whether live treatment is too quiet before escalating to `responsive`
 
 Try `responsive` only after the responsive-trial gate opens on repeated real grounded conservative-too-quiet evidence. One noisy scorecard or synthetic fixture alone is not enough.
+
+Read the final guided docket like this:
+
+- `control lane verdict`, `treatment lane verdict`, and `pair classification` come from the saved pair pack, not from an extra guided-only evaluator
+- `scorecard recommendation` comes from `scripts\score_latest_pair_session.ps1`
+- `shadow recommendation` comes from `scripts\run_shadow_profile_review.ps1`
+- `registry recommendation state` comes from `scripts\summarize_pair_session_registry.ps1`
+- `responsive gate verdict` comes from `scripts\evaluate_responsive_trial_gate.ps1`
+- `primary operator action` compresses those real artifacts into one conservative next-step summary
 
 Read the live monitor verdicts like this:
 

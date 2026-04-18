@@ -20,6 +20,7 @@ param(
     [int]$MinHumanSnapshots = 2,
     [int]$MinHumanPresenceSeconds = 40,
     [int]$MinPatchEventsForUsableLane = 1,
+    [string]$ExternalStopSignalPath = "",
     [switch]$SkipSteamCmdUpdate,
     [switch]$SkipMetamodDownload
 )
@@ -480,6 +481,9 @@ $matchId = ""
 $humanJoinObserved = $false
 $humanJoinTimedOut = $false
 $humanSignalPreview = $null
+$externalStopRequested = $false
+$externalStopObservedAtUtc = $null
+$externalStopReason = ""
 $telemetryHistoryPath = ""
 $patchHistoryPath = ""
 $telemetryRecords = @()
@@ -510,6 +514,23 @@ try {
 
     while ($true) {
         $nowUtc = (Get-Date).ToUniversalTime()
+
+        if (
+            -not $externalStopRequested -and
+            -not [string]::IsNullOrWhiteSpace($ExternalStopSignalPath) -and
+            (Test-Path -LiteralPath $ExternalStopSignalPath)
+        ) {
+            $externalStopRequested = $true
+            $externalStopObservedAtUtc = $nowUtc
+            try {
+                $stopRequest = Get-Content -LiteralPath $ExternalStopSignalPath -Raw | ConvertFrom-Json
+                $externalStopReason = [string]$stopRequest.reason
+            }
+            catch {
+                $externalStopReason = "external-stop-requested"
+            }
+            break
+        }
 
         $telemetryPath = Join-Path $runtimeDir "telemetry.json"
         $patchPath = Join-Path $runtimeDir "patch.json"
@@ -652,6 +673,10 @@ $laneManifest = [ordered]@{
     human_join_deadline_utc = $humanJoinDeadlineUtc.ToString("o")
     human_join_observed = $humanJoinObserved
     human_join_timed_out = $humanJoinTimedOut
+    external_stop_requested = $externalStopRequested
+    external_stop_signal_path = $ExternalStopSignalPath
+    external_stop_observed_at_utc = if ($null -ne $externalStopObservedAtUtc) { $externalStopObservedAtUtc.ToString("o") } else { "" }
+    external_stop_reason = $externalStopReason
     min_human_snapshots = $MinHumanSnapshots
     min_human_presence_seconds = $MinHumanPresenceSeconds
     min_patch_events_for_usable_lane = $MinPatchEventsForUsableLane
