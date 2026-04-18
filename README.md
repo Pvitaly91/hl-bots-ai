@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-26
+HLDM-JKBOTTI-AI-STAND-20260415-27
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -19,6 +19,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
 - `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
+- `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
 - `ai_director/testdata/pair_sessions/`, `scripts/generate_pair_session_fixtures.py`, and `scripts/run_fixture_decision_demo.ps1` for synthetic post-run decision validation.
 - `docs/test-stand.md` with local HLDS lab details.
@@ -239,6 +240,22 @@ For the next real conservative human pair session, use the guided workflow first
 powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
+Rehearse the same guided workflow end to end without a real human participant like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -RehearsalMode -RehearsalFixtureId strong_signal_keep_conservative -RehearsalStepSeconds 2 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 18 -WaitForHumanJoin -HumanJoinGraceSeconds 20 -MinHumanSnapshots 3 -MinHumanPresenceSeconds 60 -MinPatchEventsForUsableLane 2 -MinPostPatchObservationSeconds 20 -TreatmentProfile conservative -AutoStartMonitor -AutoStopWhenSufficient -MonitorPollSeconds 1 -RunPostPipeline
+```
+
+That rehearsal path validates only workflow behavior:
+
+- the live monitor advances through the normal `waiting-*` verdicts
+- the guided runner auto-stops only after `sufficient-for-tuning-usable-review`
+- the pair pack finalizes to `sufficient-for-scorecard`
+- the full post-run pipeline still runs and writes the final docket
+- the saved evidence is marked `synthetic_fixture=true`, `rehearsal_mode=true`, `validation_only=true`, and `evidence_origin=rehearsal`
+- the guided workflow writes the rehearsal registry under `guided_session\registry\` so real promotion ledgers stay untouched
+- rehearsal success does not validate tuning quality and must never be treated as real human-rich promotion evidence
+
 Use `-AutoStopWhenSufficient` only when you want the guided runner to request an early stop after the live monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`. It must not stop on the `waiting-*` states or on insufficient-data states.
 
 Use manual stop instead when:
@@ -434,6 +451,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decisi
 
 That demo copies the synthetic pair packs into a temporary evaluation root, runs shadow review, scores every pair, registers them into a synthetic registry, and emits a compact summary. The demo is for workflow validation only. It does not replace real human evidence when choosing the next live profile.
 
+Use the guided sufficiency rehearsal when you specifically need to validate the missing auto-stop success branch before the next real session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -RehearsalMode -RehearsalFixtureId strong_signal_keep_conservative -RehearsalStepSeconds 2 -AutoStartMonitor -AutoStopWhenSufficient -MonitorPollSeconds 1 -RunPostPipeline
+```
+
+Read that rehearsal output conservatively:
+
+- `guided_session\monitor_verdict_history.ndjson` should show the staged progression from `waiting-for-control-human-signal` through `sufficient-for-tuning-usable-review`
+- `guided_session\final_session_docket.json` and `.md` should say the evidence origin is `rehearsal`
+- `guided_session\registry\pair_sessions.ndjson` is isolated from the real registry on purpose
+- `guided_session\registry\responsive_trial_gate.json` must stay closed when the registry contains only rehearsal evidence
+
 Summarize one lane or compare control vs treatment with:
 
 ```powershell
@@ -626,6 +656,7 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_control_treatment_pair.bat`: `cmd.exe` wrapper for the paired control-vs-treatment helper.
 - `scripts/run_guided_live_pair_session.ps1`: guided conservative-first operator workflow that runs preflight, the paired capture, optional auto-start monitoring with sufficient-only auto-stop, the full post-session evidence pipeline, and the final session docket.
 - `scripts/run_guided_live_pair_session.bat`: `cmd.exe` wrapper for the guided live pair-session workflow.
+- `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
 - `scripts/review_latest_pair_run.ps1`: finds the newest pair pack, prints the key artifact paths, summarizes the control/treatment verdicts, and points to the next artifact worth reading.

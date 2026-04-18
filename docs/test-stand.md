@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-26
+HLDM-JKBOTTI-AI-STAND-20260415-27
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -287,14 +287,42 @@ powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 `
   -SkipMetamodDownload
 ```
 
+Run the same guided workflow in deterministic rehearsal mode when you need to validate the sufficient auto-stop branch without a real human-rich session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 `
+  -RehearsalMode `
+  -RehearsalFixtureId strong_signal_keep_conservative `
+  -RehearsalStepSeconds 2 `
+  -Map crossfire `
+  -BotCount 4 `
+  -BotSkill 3 `
+  -ControlPort 27016 `
+  -TreatmentPort 27017 `
+  -DurationSeconds 18 `
+  -WaitForHumanJoin `
+  -HumanJoinGraceSeconds 20 `
+  -MinHumanSnapshots 3 `
+  -MinHumanPresenceSeconds 60 `
+  -MinPatchEventsForUsableLane 2 `
+  -MinPostPatchObservationSeconds 20 `
+  -TreatmentProfile conservative `
+  -AutoStartMonitor `
+  -AutoStopWhenSufficient `
+  -MonitorPollSeconds 1 `
+  -RunPostPipeline
+```
+
 The guided runner remains a thin orchestrator over the existing helpers:
 
 - it still runs `scripts\preflight_real_pair_session.ps1` first
 - it still uses `scripts\run_control_treatment_pair.ps1` for the actual control and treatment capture
+- in rehearsal mode it swaps only the pair runner for `scripts\run_guided_pair_rehearsal.ps1`, which stages monitor-compatible pair artifacts and then hands the finalized pair pack back to the same post-run helpers
 - it can auto-start `scripts\monitor_live_pair_session.ps1` against the active pair root
 - it can request an early stop only after the live monitor reaches a sufficient verdict, never on the `waiting-*` or insufficient-data states
 - it still runs `scripts\review_latest_pair_run.ps1`, `scripts\run_shadow_profile_review.ps1`, `scripts\score_latest_pair_session.ps1`, `scripts\register_pair_session_result.ps1`, `scripts\summarize_pair_session_registry.ps1`, and `scripts\evaluate_responsive_trial_gate.ps1`
 - it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run
+- in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
 Start the live monitor like this while the pair is running:
 
@@ -375,6 +403,14 @@ For the next real human-vs-bot session, prefer this sequence:
 7. Keep the session running when the monitor still says any `waiting-*` verdict, and never treat `insufficient-data-timeout` as tuning proof.
 8. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
 9. Read `guided_session\final_session_docket.md` first after the run, then open the pair/score/shadow artifacts only if the docket says more inspection is needed.
+
+Use rehearsal mode for workflow validation only:
+
+- it should progress through `waiting-for-control-human-signal`, `waiting-for-treatment-human-signal`, `waiting-for-treatment-patch-while-humans-present`, `waiting-for-post-patch-observation-window`, and `sufficient-for-tuning-usable-review`
+- with `-AutoStopWhenSufficient`, the guided runner should request stop only after the sufficient verdict appears
+- after the rehearsal pair finalizes, the last monitor verdict should become `sufficient-for-scorecard`
+- the saved pair pack, scorecard, final docket, and rehearsal registry should all make the synthetic rehearsal labeling explicit
+- rehearsal success proves the workflow branch works; it does not prove the live tuning is good
 
 The guided runner still delegates the work to the individual helpers above. It does not replace them with a second scoring engine.
 
@@ -539,6 +575,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decisi
 ```
 
 The demo copies the synthetic pair packs into a scratch evaluation root, runs shadow review, scores every pair, registers them into a synthetic registry, and emits a compact branch summary. Treat that output as workflow validation only, never as a substitute for real live human evidence.
+
+When the specific goal is guided-workflow sufficiency rehearsal instead of broad fixture coverage, prefer `scripts\run_guided_live_pair_session.ps1 -RehearsalMode ...`. That path exercises the real guided monitor, auto-stop, docket, and post-run orchestration on a labeled rehearsal pair root and keeps the resulting registry under `guided_session\registry\`.
 
 If a local Half-Life client is installed, you can resolve or dry-run the join command with:
 

@@ -25,6 +25,9 @@ param(
     [switch]$AutoStopWhenSufficient,
     [int]$MonitorPollSeconds = 5,
     [switch]$RunPostPipeline,
+    [switch]$RehearsalMode,
+    [string]$RehearsalFixtureId = "strong_signal_keep_conservative",
+    [int]$RehearsalStepSeconds = 2,
     [Alias("EvalRoot")]
     [string]$OutputRoot = ""
 )
@@ -50,6 +53,17 @@ function Write-TextFile {
 
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Value, $encoding)
+}
+
+function Append-NdjsonRecord {
+    param(
+        [string]$Path,
+        [object]$Record
+    )
+
+    $json = $Record | ConvertTo-Json -Depth 12 -Compress
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::AppendAllText($Path, $json + [Environment]::NewLine, $encoding)
 }
 
 function Get-LogTailText {
@@ -313,6 +327,33 @@ function Invoke-MonitorSnapshot {
     return & $MonitorScriptPath @monitorArgs
 }
 
+function Write-MonitorHistoryRecord {
+    param(
+        [string]$Path,
+        [object]$MonitorStatus,
+        [string]$Source
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or $null -eq $MonitorStatus) {
+        return
+    }
+
+    Append-NdjsonRecord -Path $Path -Record ([ordered]@{
+        recorded_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+        source = $Source
+        current_verdict = [string](Get-ObjectPropertyValue -Object $MonitorStatus -Name "current_verdict" -Default "")
+        phase = [string](Get-ObjectPropertyValue -Object $MonitorStatus -Name "phase" -Default "")
+        pair_complete = [bool](Get-ObjectPropertyValue -Object $MonitorStatus -Name "pair_complete" -Default $false)
+        control_human_snapshots_count = [int](Get-ObjectPropertyValue -Object $MonitorStatus -Name "control_human_snapshots_count" -Default 0)
+        control_human_presence_seconds = [double](Get-ObjectPropertyValue -Object $MonitorStatus -Name "control_human_presence_seconds" -Default 0.0)
+        treatment_human_snapshots_count = [int](Get-ObjectPropertyValue -Object $MonitorStatus -Name "treatment_human_snapshots_count" -Default 0)
+        treatment_human_presence_seconds = [double](Get-ObjectPropertyValue -Object $MonitorStatus -Name "treatment_human_presence_seconds" -Default 0.0)
+        treatment_patch_events_while_humans_present = [int](Get-ObjectPropertyValue -Object $MonitorStatus -Name "treatment_patch_events_while_humans_present" -Default 0)
+        meaningful_post_patch_observation_seconds = [double](Get-ObjectPropertyValue -Object $MonitorStatus -Name "meaningful_post_patch_observation_seconds" -Default 0.0)
+        explanation = [string](Get-ObjectPropertyValue -Object $MonitorStatus -Name "explanation" -Default "")
+    })
+}
+
 function Get-RecommendedOperatorAction {
     param(
         [string]$ScorecardRecommendation,
@@ -383,6 +424,10 @@ function Get-FinalSessionDocketMarkdown {
         "- Guided session root: $($Docket.guided_session_root)",
         "- Preflight verdict: $($Docket.preflight.verdict)",
         "- Treatment profile: $($Docket.treatment_profile)",
+        "- Synthetic fixture: $($Docket.evidence.synthetic_fixture)",
+        "- Rehearsal mode: $($Docket.evidence.rehearsal_mode)",
+        "- Evidence origin: $($Docket.evidence.evidence_origin)",
+        "- Validation only: $($Docket.evidence.validation_only)",
         "- Auto-start monitor: $($Docket.monitor.auto_started)",
         "- Auto-stop when sufficient: $($Docket.monitor.auto_stop_when_sufficient)",
         "- Auto-stop triggered: $($Docket.monitor.auto_stop_triggered)",
@@ -417,6 +462,9 @@ function Get-FinalSessionDocketMarkdown {
         "- Shadow recommendation JSON: $($Docket.artifacts.shadow_recommendation_json)",
         "- Profile recommendation JSON: $($Docket.artifacts.profile_recommendation_json)",
         "- Responsive trial gate JSON: $($Docket.artifacts.responsive_trial_gate_json)",
+        "- Registry path: $($Docket.artifacts.registry_path)",
+        "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
+        "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
         "- Final docket JSON: $($Docket.artifacts.final_session_docket_json)"
     )
 
@@ -442,6 +490,9 @@ if ($HumanJoinGraceSeconds -lt 5) {
 }
 if ($MonitorPollSeconds -lt 1) {
     throw "MonitorPollSeconds must be at least 1."
+}
+if ($RehearsalStepSeconds -lt 1) {
+    throw "RehearsalStepSeconds must be at least 1."
 }
 if ($MinPostPatchObservationSeconds -lt 1) {
     throw "MinPostPatchObservationSeconds must be at least 1."
@@ -504,7 +555,9 @@ $stopSignalPath = Join-Path $guidanceRoot "stop_when_sufficient.request.json"
 $pairRunnerStdoutPath = Join-Path $guidanceRoot "pair_runner.stdout.log"
 $pairRunnerStderrPath = Join-Path $guidanceRoot "pair_runner.stderr.log"
 $monitorScriptPath = Join-Path $PSScriptRoot "monitor_live_pair_session.ps1"
-$pairScriptPath = Join-Path $PSScriptRoot "run_control_treatment_pair.ps1"
+$livePairScriptPath = Join-Path $PSScriptRoot "run_control_treatment_pair.ps1"
+$rehearsalPairScriptPath = Join-Path $PSScriptRoot "run_guided_pair_rehearsal.ps1"
+$pairScriptPath = if ($RehearsalMode) { $rehearsalPairScriptPath } else { $livePairScriptPath }
 $preflightScriptPath = Join-Path $PSScriptRoot "preflight_real_pair_session.ps1"
 $reviewScriptPath = Join-Path $PSScriptRoot "review_latest_pair_run.ps1"
 $shadowScriptPath = Join-Path $PSScriptRoot "run_shadow_profile_review.ps1"
@@ -520,6 +573,11 @@ Write-Host "Guided live pair session:"
 Write-Host "  Control join target: $($controlJoinInfo.LoopbackAddress)"
 Write-Host "  Treatment join target: $($treatmentJoinInfo.LoopbackAddress)"
 Write-Host "  Treatment profile: $($resolvedProfile.name)"
+Write-Host "  Rehearsal mode: $RehearsalMode"
+if ($RehearsalMode) {
+    Write-Host "  Rehearsal fixture ID: $RehearsalFixtureId"
+    Write-Host "  Rehearsal evidence origin: rehearsal (synthetic, validation only)"
+}
 Write-Host "  Pair output root: $pairsRoot"
 Write-Host "  Auto-start monitor: $autoStartMonitorEnabled"
 Write-Host "  Auto-stop when sufficient: $AutoStopWhenSufficient"
@@ -538,6 +596,9 @@ Write-Host "    scripts\score_latest_pair_session.ps1"
 Write-Host "    scripts\register_pair_session_result.ps1"
 Write-Host "    scripts\summarize_pair_session_registry.ps1"
 Write-Host "    scripts\evaluate_responsive_trial_gate.ps1"
+if ($RehearsalMode) {
+    Write-Host "  Post-run registry mode: isolated rehearsal registry under guided_session\registry"
+}
 Write-Host "  Manual safe-stop request file: $stopSignalPath"
 Write-Host "  Manual safe-stop command: $(Get-ManualStopCommandText -StopSignalPath $stopSignalPath)"
 
@@ -589,12 +650,8 @@ $pairProcessArguments = @(
     [string]$ControlPort
     "-TreatmentPort"
     [string]$TreatmentPort
-    "-LabRoot"
-    $LabRoot
     "-DurationSeconds"
     [string]$DurationSeconds
-    "-HumanJoinGraceSeconds"
-    [string]$HumanJoinGraceSeconds
     "-MinHumanSnapshots"
     [string]$MinHumanSnapshots
     "-MinHumanPresenceSeconds"
@@ -605,30 +662,50 @@ $pairProcessArguments = @(
     [string]$MinPostPatchObservationSeconds
     "-TreatmentProfile"
     $resolvedProfile.name
-    "-Configuration"
-    $Configuration
-    "-Platform"
-    $Platform
     "-GuidedStopSignalPath"
     $stopSignalPath
 )
-if (-not [string]::IsNullOrWhiteSpace($OutputRoot)) {
-    $pairProcessArguments += @("-OutputRoot", $pairsRoot)
+
+if ($RehearsalMode) {
+    $pairProcessArguments += @(
+        "-FixtureId"
+        $RehearsalFixtureId
+        "-OutputRoot"
+        $pairsRoot
+        "-StageDelaySeconds"
+        [string]$RehearsalStepSeconds
+    )
 }
-if (-not [string]::IsNullOrWhiteSpace($SteamCmdPath)) {
-    $pairProcessArguments += @("-SteamCmdPath", $SteamCmdPath)
-}
-if (-not [string]::IsNullOrWhiteSpace($PythonPath)) {
-    $pairProcessArguments += @("-PythonPath", $PythonPath)
-}
-if ($waitForHumanJoinEnabled) {
-    $pairProcessArguments += "-WaitForHumanJoin"
-}
-if ($SkipSteamCmdUpdate) {
-    $pairProcessArguments += "-SkipSteamCmdUpdate"
-}
-if ($SkipMetamodDownload) {
-    $pairProcessArguments += "-SkipMetamodDownload"
+else {
+    $pairProcessArguments += @(
+        "-LabRoot"
+        $LabRoot
+        "-HumanJoinGraceSeconds"
+        [string]$HumanJoinGraceSeconds
+        "-Configuration"
+        $Configuration
+        "-Platform"
+        $Platform
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($OutputRoot)) {
+        $pairProcessArguments += @("-OutputRoot", $pairsRoot)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SteamCmdPath)) {
+        $pairProcessArguments += @("-SteamCmdPath", $SteamCmdPath)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PythonPath)) {
+        $pairProcessArguments += @("-PythonPath", $PythonPath)
+    }
+    if ($waitForHumanJoinEnabled) {
+        $pairProcessArguments += "-WaitForHumanJoin"
+    }
+    if ($SkipSteamCmdUpdate) {
+        $pairProcessArguments += "-SkipSteamCmdUpdate"
+    }
+    if ($SkipMetamodDownload) {
+        $pairProcessArguments += "-SkipMetamodDownload"
+    }
 }
 
 $pairProcessCommandLine = @($pairProcessArguments | ForEach-Object { Format-ProcessArgument -Value ([string]$_) }) -join " "
@@ -656,6 +733,19 @@ if (-not $pairRoot) {
 $guidedSessionRoot = Ensure-Directory -Path (Join-Path $pairRoot "guided_session")
 $finalDocketJsonPath = Join-Path $guidedSessionRoot "final_session_docket.json"
 $finalDocketMarkdownPath = Join-Path $guidedSessionRoot "final_session_docket.md"
+$monitorHistoryPath = Join-Path $guidedSessionRoot "monitor_verdict_history.ndjson"
+$rehearsalRegistryRoot = if ($RehearsalMode) {
+    Ensure-Directory -Path (Join-Path $guidedSessionRoot "registry")
+}
+else {
+    ""
+}
+$postPipelineRegistryPath = if ($RehearsalMode) {
+    Join-Path $rehearsalRegistryRoot "pair_sessions.ndjson"
+}
+else {
+    ""
+}
 $monitorCommandText = Get-MonitorCommandText `
     -PairRoot $pairRoot `
     -PollSeconds $MonitorPollSeconds `
@@ -668,6 +758,10 @@ $monitorCommandText = Get-MonitorCommandText `
 Write-Host "  Active pair root: $pairRoot"
 Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
+Write-Host "  Monitor history NDJSON: $monitorHistoryPath"
+if ($RehearsalMode) {
+    Write-Host "  Rehearsal registry path: $postPipelineRegistryPath"
+}
 if ($autoStartMonitorEnabled) {
     Write-Host "  Monitor status: auto-started in guided mode"
 }
@@ -696,6 +790,8 @@ while ($true) {
             -ResolvedMinPostPatchObservationSeconds $MinPostPatchObservationSeconds `
             -LabRoot $LabRoot `
             -PythonPath $PythonPath
+
+        Write-MonitorHistoryRecord -Path $monitorHistoryPath -MonitorStatus $lastMonitorStatus -Source "poll"
 
         $currentVerdict = [string](Get-ObjectPropertyValue -Object $lastMonitorStatus -Name "current_verdict" -Default "")
         if (
@@ -743,6 +839,8 @@ $lastMonitorStatus = Invoke-MonitorSnapshot `
     -LabRoot $LabRoot `
     -PythonPath $PythonPath
 
+Write-MonitorHistoryRecord -Path $monitorHistoryPath -MonitorStatus $lastMonitorStatus -Source "final"
+
 $pairSummaryJsonPath = Join-Path $pairRoot "pair_summary.json"
 if (-not (Test-Path -LiteralPath $pairSummaryJsonPath)) {
     throw "The pair runner completed without producing pair_summary.json under $pairRoot. ExitCode=$pairExitCode STDERR: $(Get-LogTailText -Path $pairRunnerStderrPath)"
@@ -759,18 +857,32 @@ if ($runPostPipelineEnabled) {
     $reviewResult = & $reviewScriptPath -PairRoot $pairRoot
     $shadowResult = & $shadowScriptPath -PairRoot $pairRoot -Profiles conservative, default, responsive
     $scoreResult = & $scoreScriptPath -PairRoot $pairRoot
-    $registerResult = & $registerScriptPath -PairRoot $pairRoot
+    $registerArgs = @{
+        PairRoot = $pairRoot
+    }
+    if ($postPipelineRegistryPath) {
+        $registerArgs.RegistryPath = $postPipelineRegistryPath
+    }
+    $registerResult = & $registerScriptPath @registerArgs
 
-    $summaryArgs = @{
-        LabRoot = $LabRoot
+    $summaryArgs = @{}
+    if (-not $postPipelineRegistryPath) {
+        $summaryArgs.LabRoot = $LabRoot
+    }
+    if ($rehearsalRegistryRoot) {
+        $summaryArgs.OutputRoot = $rehearsalRegistryRoot
     }
     if ($registerResult -and $registerResult.RegistryPath) {
         $summaryArgs.RegistryPath = [string]$registerResult.RegistryPath
     }
     $registrySummaryResult = & $summaryScriptPath @summaryArgs
 
-    $gateArgs = @{
-        LabRoot = $LabRoot
+    $gateArgs = @{}
+    if (-not $postPipelineRegistryPath) {
+        $gateArgs.LabRoot = $LabRoot
+    }
+    if ($rehearsalRegistryRoot) {
+        $gateArgs.OutputRoot = $rehearsalRegistryRoot
     }
     if ($registerResult -and $registerResult.RegistryPath) {
         $gateArgs.RegistryPath = [string]$registerResult.RegistryPath
@@ -784,11 +896,17 @@ $shadowRecommendation = Read-JsonFile -Path (Join-Path $pairRoot "shadow_review\
 $profileRecommendationPath = if ($registrySummaryResult -and $registrySummaryResult.ProfileRecommendationJsonPath) {
     [string]$registrySummaryResult.ProfileRecommendationJsonPath
 }
+elseif ($rehearsalRegistryRoot) {
+    Join-Path $rehearsalRegistryRoot "profile_recommendation.json"
+}
 else {
     Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "profile_recommendation.json"
 }
 $responsiveTrialGatePath = if ($gateResult -and $gateResult.ResponsiveTrialGateJsonPath) {
     [string]$gateResult.ResponsiveTrialGateJsonPath
+}
+elseif ($rehearsalRegistryRoot) {
+    Join-Path $rehearsalRegistryRoot "responsive_trial_gate.json"
 }
 else {
     Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "responsive_trial_gate.json"
@@ -814,6 +932,10 @@ $operatorAction = Get-RecommendedOperatorAction `
     -ResponsiveGateNextLiveAction $responsiveGateNextLiveAction
 
 $monitorVerdict = [string](Get-ObjectPropertyValue -Object $lastMonitorStatus -Name "current_verdict" -Default "")
+$syntheticFixture = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "synthetic_fixture" -Default $false)
+$rehearsalEvidence = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "rehearsal_mode" -Default $false)
+$validationOnly = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "validation_only" -Default ($syntheticFixture -or $rehearsalEvidence))
+$evidenceOrigin = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "evidence_origin" -Default $(if ($validationOnly) { "rehearsal" } else { "live" }))
 $sessionSufficientForTuningUsableReview = $monitorVerdict -in @(
     "sufficient-for-tuning-usable-review",
     "sufficient-for-scorecard"
@@ -826,7 +948,7 @@ $sessionSufficientForTuningUsableReview = $monitorVerdict -in @(
 )
 
 $docket = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     prompt_id = Get-RepoPromptId
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     source_commit_sha = Get-RepoHeadCommitSha
@@ -834,6 +956,12 @@ $docket = [ordered]@{
     guided_session_root = $guidedSessionRoot
     treatment_profile = $resolvedProfile.name
     session_sufficient_for_tuning_usable_review = $sessionSufficientForTuningUsableReview
+    evidence = [ordered]@{
+        synthetic_fixture = $syntheticFixture
+        rehearsal_mode = $rehearsalEvidence
+        evidence_origin = $evidenceOrigin
+        validation_only = $validationOnly
+    }
     preflight = [ordered]@{
         verdict = [string](Get-ObjectPropertyValue -Object $preflightResult -Name "Verdict" -Default "")
         warnings = @((Get-ObjectPropertyValue -Object $preflightResult -Name "Warnings" -Default @()))
@@ -878,6 +1006,7 @@ $docket = [ordered]@{
         register_completed = $null -ne $registerResult
         registry_summary_completed = $null -ne $registrySummaryResult
         responsive_gate_completed = $null -ne $gateResult
+        registry_isolated_for_rehearsal = [bool]($postPipelineRegistryPath)
     }
     artifacts = [ordered]@{
         pair_summary_json = $pairSummaryJsonPath
@@ -885,6 +1014,9 @@ $docket = [ordered]@{
         shadow_recommendation_json = Join-Path $pairRoot "shadow_review\shadow_recommendation.json"
         profile_recommendation_json = $profileRecommendationPath
         responsive_trial_gate_json = $responsiveTrialGatePath
+        registry_path = if ($registerResult -and $registerResult.RegistryPath) { [string]$registerResult.RegistryPath } elseif ($postPipelineRegistryPath) { $postPipelineRegistryPath } else { Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "pair_sessions.ndjson" }
+        monitor_history_ndjson = $monitorHistoryPath
+        rehearsal_metadata_json = Join-Path $pairRoot "rehearsal_metadata.json"
         pair_runner_stdout_log = $pairRunnerStdoutPath
         pair_runner_stderr_log = $pairRunnerStderrPath
         final_session_docket_json = $finalDocketJsonPath
@@ -904,6 +1036,7 @@ Write-Host "  Scorecard recommendation: $scorecardRecommendation"
 Write-Host "  Shadow recommendation: $shadowDecision"
 Write-Host "  Registry recommendation: $registryDecision"
 Write-Host "  Responsive gate verdict: $responsiveGateVerdict"
+Write-Host "  Evidence origin: $evidenceOrigin"
 Write-Host "  Primary operator action: $($operatorAction.Primary)"
 
 [pscustomobject]@{
@@ -911,6 +1044,7 @@ Write-Host "  Primary operator action: $($operatorAction.Primary)"
     FinalSessionDocketJsonPath = $finalDocketJsonPath
     FinalSessionDocketMarkdownPath = $finalDocketMarkdownPath
     MonitorVerdict = $monitorVerdict
+    EvidenceOrigin = $evidenceOrigin
     ScorecardRecommendation = $scorecardRecommendation
     ShadowRecommendation = $shadowDecision
     RegistryRecommendation = $registryDecision

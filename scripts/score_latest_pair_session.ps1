@@ -69,6 +69,25 @@ function Resolve-PairArtifactPath {
     return Resolve-ExistingPath -Path $candidate
 }
 
+function Get-ObjectPropertyValue {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$Default = $null
+    )
+
+    if ($null -eq $Object) {
+        return $Default
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $Default
+    }
+
+    return $property.Value
+}
+
 function Find-LatestPairRoot {
     param([string]$Root)
 
@@ -279,6 +298,10 @@ function Get-ScorecardMarkdown {
         "- Pair classification: $($Scorecard.pair_classification)",
         "- Comparison verdict: $($Scorecard.comparison_verdict)",
         "- Treatment profile: $($Scorecard.treatment_profile)",
+        "- Synthetic fixture: $($Scorecard.synthetic_fixture)",
+        "- Rehearsal mode: $($Scorecard.rehearsal_mode)",
+        "- Evidence origin: $($Scorecard.evidence_origin)",
+        "- Validation only: $($Scorecard.validation_only)",
         "- Treatment behavior assessment: $($Scorecard.treatment_behavior_assessment)",
         "- Recommendation: $($Scorecard.recommendation)",
         "- Recommendation reason: $($Scorecard.recommendation_reason)",
@@ -504,6 +527,10 @@ $scorecard = [ordered]@{
     pair_id = [string]$pairSummary.pair_id
     pair_classification = $pairClassification
     operator_note = [string]$pairSummary.operator_note
+    synthetic_fixture = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "synthetic_fixture" -Default $false)
+    rehearsal_mode = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "rehearsal_mode" -Default $false)
+    validation_only = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "validation_only" -Default $false)
+    evidence_origin = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "evidence_origin" -Default $(if ([bool](Get-ObjectPropertyValue -Object $pairSummary -Name "synthetic_fixture" -Default $false)) { "synthetic" } else { "live" }))
     comparison_verdict = $comparisonVerdict
     comparison_reason = [string]$comparison.comparison_reason
     control_lane_verdict = $controlLaneVerdict

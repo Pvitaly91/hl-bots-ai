@@ -138,6 +138,19 @@ function Test-SyntheticRegistryEntry {
         return [bool]$explicitFlag
     }
 
+    $evidenceOrigin = [string](Get-ObjectPropertyValue -Object $Entry -Name "evidence_origin" -Default "")
+    if ($evidenceOrigin -in @("rehearsal", "synthetic")) {
+        return $true
+    }
+
+    if ([bool](Get-ObjectPropertyValue -Object $Entry -Name "rehearsal_mode" -Default $false)) {
+        return $true
+    }
+
+    if ([bool](Get-ObjectPropertyValue -Object $Entry -Name "validation_only" -Default $false)) {
+        return $true
+    }
+
     foreach ($candidate in @(
         [string](Get-ObjectPropertyValue -Object $Entry -Name "pair_prompt_id" -Default ""),
         [string](Get-ObjectPropertyValue -Object $Entry -Name "pair_id" -Default ""),

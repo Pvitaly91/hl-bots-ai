@@ -26,12 +26,20 @@ powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -Map cros
 
 Use `-AutoStopWhenSufficient` only when you want the guided runner to request a safe early stop after the live monitor reaches a sufficient verdict.
 
+Use rehearsal mode when you need to validate the guided auto-stop success branch before the next real session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -RehearsalMode -RehearsalFixtureId strong_signal_keep_conservative -RehearsalStepSeconds 2 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 18 -WaitForHumanJoin -HumanJoinGraceSeconds 20 -MinHumanSnapshots 3 -MinHumanPresenceSeconds 60 -MinPatchEventsForUsableLane 2 -MinPostPatchObservationSeconds 20 -TreatmentProfile conservative -AutoStartMonitor -AutoStopWhenSufficient -MonitorPollSeconds 1 -RunPostPipeline
+```
+
 The guided runner stays thin:
 
 - it still runs `scripts\preflight_real_pair_session.ps1`
 - it still uses `scripts\run_control_treatment_pair.ps1` for the pair capture
+- in rehearsal mode it swaps only the pair-capture step for `scripts\run_guided_pair_rehearsal.ps1`
 - it still uses `scripts\monitor_live_pair_session.ps1` for live evidence-sufficiency decisions
 - it still uses the same review, shadow, scoring, registry, and responsive-gate helpers after the run
+- in rehearsal mode it writes the validation-only registry under `guided_session\registry\` instead of the real ledger
 
 If you need the old manual flow, start the live pair like this:
 
@@ -111,6 +119,8 @@ Stop the live session only on one of the `sufficient-*` verdicts. Keep it runnin
 
 Auto-start monitor means the guided workflow runs the live monitor for you and keeps writing `live_monitor_status.json` / `live_monitor_status.md` into the active pair root. Auto-stop means the guided workflow requests a safe early stop only after one of the `sufficient-*` verdicts appears. It must never stop on `waiting-*`, `insufficient-data-timeout`, or `blocked-no-active-pair-run`.
 
+In rehearsal mode, also inspect `guided_session\monitor_verdict_history.ndjson`. It should show the staged progression through the waiting states before the sufficient verdict appears, and only then should the stop request be written.
+
 ## Files To Inspect After The Run
 
 Open these in order:
@@ -172,6 +182,7 @@ How to read the final session docket:
 - `registry recommendation state` comes from `scripts\summarize_pair_session_registry.ps1`
 - `responsive gate verdict` comes from `scripts\evaluate_responsive_trial_gate.ps1`
 - the docket's primary operator action stays conservative-first and honest about insufficient evidence
+- in rehearsal mode the docket must also say the evidence is `synthetic`, `rehearsal`, and `validation only`
 
 ## If No Humans Join
 
@@ -267,6 +278,14 @@ Run the optional compact fixture demo when you want a one-shot branch summary:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decision_demo.ps1
 ```
+
+Use the guided rehearsal instead when you need to validate the real operator workflow rather than the broader fixture suite:
+
+- the live monitor should walk the same waiting states as a real run
+- `-AutoStopWhenSufficient` should stop only after `sufficient-for-tuning-usable-review`
+- the final monitor verdict after pair finalization should be `sufficient-for-scorecard`
+- `guided_session\final_session_docket.md` should clearly say the evidence origin is rehearsal
+- `guided_session\registry\responsive_trial_gate.json` should still stay closed because rehearsal evidence must never unlock responsive
 
 ## Optional Session Notes
 
