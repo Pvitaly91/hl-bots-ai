@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-30
+HLDM-JKBOTTI-AI-STAND-20260415-31
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -19,6 +19,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
 - `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
+- `scripts/build_latest_session_outcome_dossier.ps1` and `scripts/build_latest_session_outcome_dossier.bat` for the one-shot post-session outcome dossier that consolidates scorecard, shadow review, grounded certification, latest-session delta, responsive gate, and next-live planning into one operator-facing artifact.
 - `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -193,10 +194,10 @@ The paired live-session runner is the recommended next human workflow:
 - the control lane now supports the same human-join-aware waiting thresholds as the treatment lane, while still staying sidecar-free with `jk_ai_balance_enabled 0`.
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
 - `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
-- `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, and the final session docket.
+- `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, the next-live planner, the outcome dossier, and the final session docket.
 - `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
-- each guided paired run also writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root so the operator has one concise end-of-run answer, including the current next-live planner objective and profile.
+- each guided paired run also writes `session_outcome_dossier.json` and `session_outcome_dossier.md` under the pair root, and the final guided docket points at that dossier so the operator gets one immediate "did this count, what changed, and what now?" answer.
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -284,7 +285,8 @@ The guided workflow still stays thin:
 Read the final guided docket like this:
 
 - `final_session_docket.json`: machine-readable final state for the pair, monitor, post-run outputs, and operator recommendation flags
-- `final_session_docket.md`: concise human-facing end-of-run answer that says whether the session was sufficient, whether conservative should stay live, and whether responsive must remain blocked
+- `final_session_docket.md`: concise human-facing end-of-run pointer that says whether the session was sufficient and where to open the consolidated outcome dossier next
+- `session_outcome_dossier.json` / `session_outcome_dossier.md`: the consolidated post-session answer that merges scorecard, certification, latest-session delta, responsive gate, and next-live planning into one artifact
 
 Interpret the live monitor conservatively:
 
@@ -407,6 +409,34 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 - `manual-review-needed` means the cross-session evidence conflicts or a grounded guardrail concern needs an operator read before another live choice.
 
 Conservative remains the default next live treatment profile until the ledger says otherwise. That keeps profile promotion bounded, reversible, and driven by accumulated evidence instead of one noisy session.
+
+## Outcome Dossier
+
+Use `scripts\build_latest_session_outcome_dossier.ps1` immediately after a pair session when the operator wants one artifact instead of mentally merging the scorecard, certification, delta, gate, and planner outputs.
+
+- it writes `session_outcome_dossier.json` and `session_outcome_dossier.md` into the pair root
+- by default it finds the latest pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` when you want a specific saved pair
+- it reuses the existing scorecard, shadow review, certification, and latest-session delta helpers instead of inventing a second decision engine
+- it includes the registry/gate/planner before-vs-after state that comes from the existing latest-session delta analysis
+- it is not a replacement for scorecard alone: scorecard still answers how one pair behaved
+- it is not a replacement for certification alone: certification still answers whether one pair counts toward promotion
+- it is not a replacement for the next-live planner: the planner still defines the explicit promotion gap and the next session target
+- `what changed because of this session?` is the compact delta block. Read it as evidence accounting first: grounded sessions, grounded too-quiet evidence, strong-signal evidence, responsive blockers, next objective movement, and gate movement
+- non-grounded, rehearsal, synthetic, no-human, weak-signal, and otherwise excluded sessions can legitimately leave the dossier in a no-impact state. That is the honest answer when the real promotion gap did not move
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\build_latest_session_outcome_dossier.ps1
+powershell -NoProfile -File .\scripts\build_latest_session_outcome_dossier.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\build_latest_session_outcome_dossier.bat
+scripts\build_latest_session_outcome_dossier.bat .\lab\logs\eval\pairs\<pair-pack>
+```
 
 ## Latest-Session Delta Analysis
 
@@ -737,6 +767,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_control_treatment_pair.bat`: `cmd.exe` wrapper for the paired control-vs-treatment helper.
 - `scripts/run_guided_live_pair_session.ps1`: guided conservative-first operator workflow that runs preflight, the paired capture, optional auto-start monitoring with sufficient-only auto-stop, the full post-session evidence pipeline, and the final session docket.
 - `scripts/run_guided_live_pair_session.bat`: `cmd.exe` wrapper for the guided live pair-session workflow.
+- `scripts/build_latest_session_outcome_dossier.ps1`: consolidates the latest pair's scorecard, shadow review, grounded certification, before-vs-after delta, current gate, and current next-live plan into `session_outcome_dossier.json` plus `session_outcome_dossier.md`.
+- `scripts/build_latest_session_outcome_dossier.bat`: `cmd.exe` wrapper for the outcome-dossier helper.
 - `scripts/plan_next_live_session.ps1`: computes the certified-grounded promotion gap, emits `next_live_plan.json` plus `next_live_plan.md`, and recommends the next live profile and session objective.
 - `scripts/plan_next_live_session.bat`: `cmd.exe` wrapper for the next-live session planner.
 - `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.

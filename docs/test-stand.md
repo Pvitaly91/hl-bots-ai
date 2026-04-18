@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-30
+HLDM-JKBOTTI-AI-STAND-20260415-31
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -322,7 +322,8 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it can request an early stop only after the live monitor reaches a sufficient verdict, never on the `waiting-*` or insufficient-data states
 - it still runs `scripts\review_latest_pair_run.ps1`, `scripts\run_shadow_profile_review.ps1`, `scripts\score_latest_pair_session.ps1`, `scripts\register_pair_session_result.ps1`, `scripts\summarize_pair_session_registry.ps1`, and `scripts\evaluate_responsive_trial_gate.ps1`
 - it also runs `scripts\plan_next_live_session.ps1` in the normal post-run pipeline so the final docket can carry the current next-live objective and recommended profile
-- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run
+- it also runs `scripts\build_latest_session_outcome_dossier.ps1` so the pair root gets `session_outcome_dossier.json` and `session_outcome_dossier.md`
+- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the outcome dossier
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
 Start the live monitor like this while the pair is running:
@@ -417,7 +418,7 @@ For the next real human-vs-bot session, prefer this sequence:
 6. Use `-AutoStopWhenSufficient` only when you want the guided runner to request an early stop after the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
 7. Keep the session running when the monitor still says any `waiting-*` verdict, and never treat `insufficient-data-timeout` as tuning proof.
 8. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
-9. Read `guided_session\final_session_docket.md` first after the run, then open the pair/score/shadow artifacts only if the docket says more inspection is needed.
+9. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
 
 Use rehearsal mode for workflow validation only:
 
@@ -521,6 +522,33 @@ Run it like this:
 ```powershell
 powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1
 powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+## Outcome Dossier
+
+Use `scripts\build_latest_session_outcome_dossier.ps1` when the operator wants one post-session artifact instead of manually reading scorecard, certification, latest-session delta, responsive gate, and next-live planner outputs separately.
+
+- it writes `session_outcome_dossier.json` and `session_outcome_dossier.md` into the pair root
+- it reuses the existing scorecard, shadow review, certification, and latest-session delta helpers instead of inventing a second decision engine
+- it includes the registry/gate/planner state before and after counting the latest session when that comparison is available
+- it is broader than scorecard alone: scorecard answers how the pair behaved, while the dossier also answers whether it counted and what it changed
+- it is broader than certification alone: certification answers whether the pair counts, while the dossier also answers what changed in the gap, gate, and planner because of it
+- it is broader than the next-live planner alone: the planner answers the current gap and next objective, while the dossier answers whether the latest session moved that state or left it unchanged
+- `what changed because of this session?` is the concise delta block. Read it as evidence accounting first, not as a mood summary
+- rehearsal, synthetic, no-human, weak-signal, and otherwise non-grounded sessions may leave the dossier in a no-impact state. That means the real promotion gap did not move
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\build_latest_session_outcome_dossier.ps1
+powershell -NoProfile -File .\scripts\build_latest_session_outcome_dossier.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\build_latest_session_outcome_dossier.bat
+scripts\build_latest_session_outcome_dossier.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
 ## Next Live Session Planner

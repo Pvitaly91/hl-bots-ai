@@ -468,7 +468,8 @@ function Get-FinalSessionDocketMarkdown {
         "- Registry path: $($Docket.artifacts.registry_path)",
         "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
         "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
-        "- Final docket JSON: $($Docket.artifacts.final_session_docket_json)"
+        "- Final docket JSON: $($Docket.artifacts.final_session_docket_json)",
+        "- Outcome dossier JSON: $($Docket.artifacts.session_outcome_dossier_json)"
     )
 
     return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
@@ -856,6 +857,7 @@ $registerResult = $null
 $registrySummaryResult = $null
 $gateResult = $null
 $nextLivePlanResult = $null
+$outcomeDossierResult = $null
 
 if ($runPostPipelineEnabled) {
     $reviewResult = & $reviewScriptPath -PairRoot $pairRoot
@@ -914,6 +916,15 @@ if ($runPostPipelineEnabled) {
         $plannerArgs.ResponsiveTrialGatePath = [string]$gateResult.ResponsiveTrialGateJsonPath
     }
     $nextLivePlanResult = & $plannerScriptPath @plannerArgs
+
+    $outcomeDossierScriptPath = Join-Path $PSScriptRoot "build_latest_session_outcome_dossier.ps1"
+    $dossierArgs = @{
+        PairRoot = $pairRoot
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LabRoot)) {
+        $dossierArgs.LabRoot = $LabRoot
+    }
+    $outcomeDossierResult = & $outcomeDossierScriptPath @dossierArgs
 }
 
 $pairSummary = Read-JsonFile -Path $pairSummaryJsonPath
@@ -957,6 +968,18 @@ elseif ($rehearsalRegistryRoot) {
 }
 else {
     Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "next_live_plan.md"
+}
+$outcomeDossierJsonPath = if ($outcomeDossierResult -and $outcomeDossierResult.SessionOutcomeDossierJsonPath) {
+    [string]$outcomeDossierResult.SessionOutcomeDossierJsonPath
+}
+else {
+    Join-Path $pairRoot "session_outcome_dossier.json"
+}
+$outcomeDossierMarkdownPath = if ($outcomeDossierResult -and $outcomeDossierResult.SessionOutcomeDossierMarkdownPath) {
+    [string]$outcomeDossierResult.SessionOutcomeDossierMarkdownPath
+}
+else {
+    Join-Path $pairRoot "session_outcome_dossier.md"
 }
 
 $pairClassification = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "operator_note_classification" -Default "")
@@ -1055,6 +1078,7 @@ $docket = [ordered]@{
         register_completed = $null -ne $registerResult
         registry_summary_completed = $null -ne $registrySummaryResult
         responsive_gate_completed = $null -ne $gateResult
+        outcome_dossier_completed = $null -ne $outcomeDossierResult
         registry_isolated_for_rehearsal = [bool]($postPipelineRegistryPath)
     }
     artifacts = [ordered]@{
@@ -1072,6 +1096,8 @@ $docket = [ordered]@{
         pair_runner_stderr_log = $pairRunnerStderrPath
         final_session_docket_json = $finalDocketJsonPath
         final_session_docket_markdown = $finalDocketMarkdownPath
+        session_outcome_dossier_json = $outcomeDossierJsonPath
+        session_outcome_dossier_markdown = $outcomeDossierMarkdownPath
     }
 }
 
@@ -1082,6 +1108,8 @@ Write-Host "Guided live pair session finished."
 Write-Host "  Pair root: $pairRoot"
 Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
+Write-Host "  Outcome dossier JSON: $outcomeDossierJsonPath"
+Write-Host "  Outcome dossier Markdown: $outcomeDossierMarkdownPath"
 Write-Host "  Last live monitor verdict: $monitorVerdict"
 Write-Host "  Scorecard recommendation: $scorecardRecommendation"
 Write-Host "  Shadow recommendation: $shadowDecision"
@@ -1095,6 +1123,8 @@ Write-Host "  Primary operator action: $($operatorAction.Primary)"
     PairRoot = $pairRoot
     FinalSessionDocketJsonPath = $finalDocketJsonPath
     FinalSessionDocketMarkdownPath = $finalDocketMarkdownPath
+    OutcomeDossierJsonPath = $outcomeDossierJsonPath
+    OutcomeDossierMarkdownPath = $outcomeDossierMarkdownPath
     MonitorVerdict = $monitorVerdict
     EvidenceOrigin = $evidenceOrigin
     ScorecardRecommendation = $scorecardRecommendation

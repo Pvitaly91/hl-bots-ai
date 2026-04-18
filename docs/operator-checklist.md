@@ -53,7 +53,7 @@ Then start the live monitor in a second terminal:
 powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient
 ```
 
-The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack. The guided runner can auto-start that same monitor logic and, after the run, writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root.
+The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack. The guided runner can auto-start that same monitor logic and, after the run, writes `session_outcome_dossier.json`, `session_outcome_dossier.md`, `guided_session\final_session_docket.json`, and `guided_session\final_session_docket.md` under the pair root.
 
 Default ports and lanes:
 
@@ -81,10 +81,10 @@ Default ports and lanes:
 9. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
 10. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
 11. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
-12. Read `guided_session\final_session_docket.md` first after the run.
-13. Run `scripts\plan_next_live_session.ps1` or read the `next_live_plan` artifact referenced by the final docket before scheduling the next real live session.
-14. Run `scripts\analyze_latest_grounded_session.ps1` after the registry update when you need the explicit "what changed because of this latest pair?" answer.
-15. If the docket, planner, or latest-session analysis says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
+12. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
+13. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later if you need to rebuild the dossier after rerunning scorecard, certification, or planner helpers.
+14. Read `next_live_plan` only when you need the full session-target detail that sits behind the dossier's next-action sentence.
+15. If the dossier says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
 
 ## What Counts As Insufficient Data
 
@@ -127,12 +127,13 @@ In rehearsal mode, also inspect `guided_session\monitor_verdict_history.ndjson`.
 
 Open these in order:
 
-1. `guided_session\final_session_docket.md`
-2. `scorecard.md`
-3. `pair_summary.md`
-4. `comparison.md`
-5. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
-6. control `summary.md` if the control lane looks weak or sparse
+1. `session_outcome_dossier.md`
+2. `guided_session\final_session_docket.md`
+3. `scorecard.md`
+4. `pair_summary.md`
+5. `comparison.md`
+6. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
+7. control `summary.md` if the control lane looks weak or sparse
 
 The fastest way to review the newest pair is:
 
@@ -249,9 +250,21 @@ How to read grounded evidence certification:
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can also refresh the latest responsive-trial gate in the same pass
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass
 - `scripts\analyze_latest_grounded_session.ps1` writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md` for the latest pair or a specific `-PairRoot`
+- `scripts\build_latest_session_outcome_dossier.ps1` writes `session_outcome_dossier.json` and `session_outcome_dossier.md` for the latest pair or a specific `-PairRoot`
 - the registry summary now distinguishes total registered sessions from certified grounded sessions, non-certified excluded sessions, workflow-validation-only sessions, and excluded sessions by reason
 - conservative remains the default next live profile until the registry shows repeated certified grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
+
+## Outcome Dossier
+
+- run `powershell -NoProfile -File .\scripts\build_latest_session_outcome_dossier.ps1` after the normal post-run pipeline or target a specific pair with `-PairRoot`
+- the dossier is the operator-facing consolidation layer: it answers whether the latest session counted as grounded evidence, whether it reduced the promotion gap, what changed in the gate/planner state, and what the exact next live action is now
+- scorecard alone still answers how the pair behaved
+- certification alone still answers whether the pair counts toward promotion
+- the next-live planner still answers the full current gap and detailed next session target
+- the dossier stitches those answers together and adds the before-vs-after comparison for the latest session
+- `what changed because of this session?` is the evidence-accounting block. Read those deltas literally
+- non-grounded sessions may legitimately leave the dossier in a no-impact state. Rehearsal, synthetic, no-human, weak-signal, and otherwise excluded sessions should not pretend to move the real promotion gap
 
 ## Latest-Session Delta
 
@@ -332,6 +345,7 @@ Use the guided rehearsal instead when you need to validate the real operator wor
 - `-AutoStopWhenSufficient` should stop only after `sufficient-for-tuning-usable-review`
 - the final monitor verdict after pair finalization should be `sufficient-for-scorecard`
 - `guided_session\final_session_docket.md` should clearly say the evidence origin is rehearsal
+- `session_outcome_dossier.md` should clearly say the session is workflow-validation-only and that the real responsive gate did not move
 - `guided_session\registry\responsive_trial_gate.json` should still stay closed because rehearsal evidence must never unlock responsive
 
 ## Optional Session Notes
