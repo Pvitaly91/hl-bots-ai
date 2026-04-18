@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-24
+HLDM-JKBOTTI-AI-STAND-20260415-25
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -267,7 +267,16 @@ This pair runner is thin on purpose:
 - it runs the no-AI control lane first and the AI treatment lane second
 - it preserves both lane session packs inside one pair root under `lab\logs\eval\pairs\`
 - it prints and saves control and treatment join targets up front
+- it prints an exact threshold-aware `scripts\monitor_live_pair_session.ps1` command so the operator can watch live evidence sufficiency in a second terminal
 - it keeps the control lane sidecar-free while still honoring human-join-aware wait thresholds
+
+Start the live monitor like this while the pair is running:
+
+```powershell
+powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient
+```
+
+Or use the exact `-PairRoot` command printed by `scripts\run_control_treatment_pair.ps1` when you want the thresholds pinned to that pair pack explicitly.
 
 Before a real human pair session, run the dedicated preflight:
 
@@ -333,15 +342,18 @@ For the next real human-vs-bot session, use this sequence:
 
 1. Run `scripts\preflight_real_pair_session.ps1` and stop only if it reports `blocked`.
 2. Start `scripts\run_control_treatment_pair.ps1` with the default `conservative` treatment profile.
-3. Join the control lane on the printed `ControlPort` target first and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
-4. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
-5. Run `scripts\review_latest_pair_run.ps1`.
-6. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
-7. Run `scripts\score_latest_pair_session.ps1`.
-8. Run `scripts\register_pair_session_result.ps1`.
-9. Run `scripts\summarize_pair_session_registry.ps1`.
-10. Run `scripts\evaluate_responsive_trial_gate.ps1`.
-11. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before the next live action.
+3. In a second terminal, start `scripts\monitor_live_pair_session.ps1` and keep it running throughout the pair.
+4. Join the control lane on the printed `ControlPort` target first and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
+5. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
+6. Stop the live session only after the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
+7. Keep the pair running longer when the monitor still says `waiting-for-control-human-signal`, `waiting-for-treatment-human-signal`, `waiting-for-treatment-patch-while-humans-present`, or `waiting-for-post-patch-observation-window`.
+8. Run `scripts\review_latest_pair_run.ps1`.
+9. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
+10. Run `scripts\score_latest_pair_session.ps1`.
+11. Run `scripts\register_pair_session_result.ps1`.
+12. Run `scripts\summarize_pair_session_registry.ps1`.
+13. Run `scripts\evaluate_responsive_trial_gate.ps1`.
+14. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before the next live action.
 
 The saved join helpers make the roles explicit:
 
@@ -356,6 +368,19 @@ Why `conservative` is the default next live treatment profile:
 - it is the safest way to learn whether live treatment is too quiet before escalating to `responsive`
 
 Try `responsive` only after the responsive-trial gate opens on repeated real grounded conservative-too-quiet evidence. One noisy scorecard or synthetic fixture alone is not enough.
+
+Read the live monitor verdicts like this:
+
+- `waiting-for-control-human-signal`: the control lane still lacks enough grounded human presence to be a fair baseline.
+- `waiting-for-treatment-human-signal`: the control lane cleared the gate, but treatment still has too little human presence.
+- `waiting-for-treatment-patch-while-humans-present`: treatment humans are present, but the AI still has not emitted enough live human-present patch events.
+- `waiting-for-post-patch-observation-window`: treatment has already patched live, but the post-patch observation time is still too short to stop honestly.
+- `sufficient-for-tuning-usable-review`: the minimum honest stop bar is met. The operator can end the live pair and move to review.
+- `sufficient-for-scorecard`: the pair pack is already finalized and the same grounded stop bar is satisfied, so the scorecard helper can run immediately.
+- `insufficient-data-timeout`: the session ended before the grounded evidence gate cleared.
+- `blocked-no-active-pair-run`: the monitor cannot find an active pair root to observe.
+
+`sufficient-for-tuning-usable-review` means both lanes captured enough human presence, treatment patched while humans were present, and there is already a meaningful post-patch observation window. `sufficient-for-scorecard` means that same evidence gate is satisfied and the pair artifacts are already complete enough for `scripts\score_latest_pair_session.ps1`.
 
 Shadow review is the intermediate check before doing that with a real human session. It answers what `default` and `responsive` would have done against the same captured treatment-lane history without pretending that offline replay is stronger than real human evidence.
 

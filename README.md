@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-24
+HLDM-JKBOTTI-AI-STAND-20260415-25
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -17,6 +17,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `ai_director/tuning.py`, `ai_director/testdata/`, and replay sweep tooling for deterministic profile comparison.
 - `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
+- `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
 - `ai_director/testdata/pair_sessions/`, `scripts/generate_pair_session_fixtures.py`, and `scripts/run_fixture_decision_demo.ps1` for synthetic post-run decision validation.
 - `docs/test-stand.md` with local HLDS lab details.
@@ -186,6 +187,7 @@ The paired live-session runner is the recommended next human workflow:
 - `scripts\run_control_treatment_pair.ps1` runs the no-AI control lane first, then the AI treatment lane, and packages both under `lab\logs\eval\pairs\<timestamp>-...`.
 - the control lane now supports the same human-join-aware waiting thresholds as the treatment lane, while still staying sidecar-free with `jk_ai_balance_enabled 0`.
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
+- `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
@@ -232,15 +234,31 @@ For the first real human pair session, use this operator flow:
 
 1. `powershell -NoProfile -File .\scripts\preflight_real_pair_session.ps1`
 2. `powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload`
-3. join the printed control lane first
-4. join the printed treatment lane second
-5. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
-6. `powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`
-7. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
-8. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
-9. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
-10. run `powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1`
-11. use the scorecard, shadow recommendation, registry summary, and responsive-trial gate together before choosing the next live action
+3. in a second terminal, run the exact monitor command printed by the pair runner, or use `powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient`
+4. join the printed control lane first
+5. join the printed treatment lane second
+6. stop the live session only when the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`
+7. keep the live session running when the monitor says `waiting-for-control-human-signal`, `waiting-for-treatment-human-signal`, `waiting-for-treatment-patch-while-humans-present`, or `waiting-for-post-patch-observation-window`
+8. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
+9. `powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`
+10. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
+11. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
+12. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
+13. run `powershell -NoProfile -File .\scripts\evaluate_responsive_trial_gate.ps1`
+14. use the scorecard, shadow recommendation, registry summary, and responsive-trial gate together before choosing the next live action
+
+Interpret the live monitor conservatively:
+
+- `waiting-for-control-human-signal`: control still lacks enough human snapshots or human-presence time, so the pair is not comparable yet.
+- `waiting-for-treatment-human-signal`: control cleared the gate, but treatment still lacks enough grounded human presence.
+- `waiting-for-treatment-patch-while-humans-present`: treatment humans were present long enough, but the AI has not yet produced enough live human-present patch events.
+- `waiting-for-post-patch-observation-window`: treatment already patched while humans were present, but the post-patch observation time is still too short to stop honestly.
+- `sufficient-for-tuning-usable-review`: the minimum honest stop bar is met during the live run. Both lanes cleared the human gate, treatment patched while humans were present, and there is already a meaningful post-patch observation window.
+- `sufficient-for-scorecard`: the same grounded stop bar is met and the pair pack is already finalized, so the normal scorecard workflow can run immediately.
+- `insufficient-data-timeout`: the pair ended before the evidence gate cleared. Treat it as insufficient data, not as live tuning proof.
+- `blocked-no-active-pair-run`: the monitor could not find an active pair to observe.
+
+`sufficient-for-tuning-usable-review` means the operator can stop the live session now without pretending the lane still needs more time to become grounded. `sufficient-for-scorecard` means the same evidence bar is already satisfied and the saved pair pack is ready for the post-run scorecard helper.
 
 Preflight verdicts mean:
 

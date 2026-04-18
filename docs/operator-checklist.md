@@ -24,6 +24,14 @@ Then start the live pair:
 powershell -NoProfile -File .\scripts\run_control_treatment_pair.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
+Then start the live monitor in a second terminal:
+
+```powershell
+powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient
+```
+
+The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack.
+
 Default ports and lanes:
 
 - control lane: `127.0.0.1:27016`
@@ -41,17 +49,19 @@ Default ports and lanes:
 
 1. Run preflight and stop only if the verdict is `blocked`.
 2. Start the paired workflow.
-3. Join the control lane first.
-4. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
-5. Let the runner advance to the treatment lane, then join the treatment lane second.
-6. Stay in the treatment lane for about the same minimum useful window.
-7. Run `scripts\review_latest_pair_run.ps1`.
-8. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
-9. Run `scripts\score_latest_pair_session.ps1`.
-10. Run `scripts\register_pair_session_result.ps1`.
-11. Run `scripts\summarize_pair_session_registry.ps1`.
-12. Run `scripts\evaluate_responsive_trial_gate.ps1`.
-13. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before choosing the next live profile.
+3. Start the live monitor and keep it running while the pair is active.
+4. Join the control lane first.
+5. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
+6. Let the runner advance to the treatment lane, then join the treatment lane second.
+7. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
+8. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
+9. Run `scripts\review_latest_pair_run.ps1`.
+10. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
+11. Run `scripts\score_latest_pair_session.ps1`.
+12. Run `scripts\register_pair_session_result.ps1`.
+13. Run `scripts\summarize_pair_session_registry.ps1`.
+14. Run `scripts\evaluate_responsive_trial_gate.ps1`.
+15. Use the scorecard, shadow recommendation, registry recommendation, and responsive-trial gate together before choosing the next live profile.
 
 ## What Counts As Insufficient Data
 
@@ -70,6 +80,21 @@ These runs are at most `plumbing-valid only` or `partially usable`.
 - there is enough time after a human-present patch to observe whether the treatment changed the live lane
 
 This is the minimum bar for `tuning-usable`. Multiple grounded post-patch windows are what move a pair toward `strong-signal`.
+
+## How To Read The Live Monitor
+
+- `waiting-for-control-human-signal`: control still lacks enough human signal, so keep the control lane running.
+- `waiting-for-treatment-human-signal`: control cleared the gate, but treatment still needs more grounded human presence.
+- `waiting-for-treatment-patch-while-humans-present`: treatment humans stayed long enough, but the AI has not yet produced enough live human-present patch activity.
+- `waiting-for-post-patch-observation-window`: treatment already patched while humans were present, but the post-patch observation time is still too short to stop honestly.
+- `sufficient-for-tuning-usable-review`: the minimum honest stop bar is met during the live run. You can stop the pair and move to review.
+- `sufficient-for-scorecard`: the pair pack is already finalized and the same grounded stop bar is satisfied, so the scorecard helper can run immediately.
+- `insufficient-data-timeout`: the pair ended before the grounded evidence gate cleared. Treat it as insufficient data, not as tuning proof.
+- `blocked-no-active-pair-run`: the monitor cannot find an active pair root to observe.
+
+`sufficient-for-tuning-usable-review` means both lanes cleared the human gate, treatment patched while humans were present, and the post-patch observation window is already meaningful. `sufficient-for-scorecard` means the same evidence bar is satisfied and the pair artifacts are already complete enough for `scripts\score_latest_pair_session.ps1`.
+
+Stop the live session only on one of the `sufficient-*` verdicts. Keep it running on the `waiting-*` verdicts. If the monitor ends on `insufficient-data-timeout`, keep the artifacts as plumbing or weak-signal evidence only and schedule another conservative live pair before trying anything riskier.
 
 ## Files To Inspect After The Run
 

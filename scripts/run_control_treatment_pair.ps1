@@ -348,6 +348,7 @@ $reviewHelperCommand = "powershell -NoProfile -File .\scripts\review_latest_pair
 $scoreHelperCommand = "powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1 -PairRoot `"$pairRoot`""
 $registerHelperCommand = "powershell -NoProfile -File .\scripts\register_pair_session_result.ps1 -PairRoot `"$pairRoot`""
 $registrySummaryCommand = "powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1"
+$monitorHelperCommand = "powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -PairRoot `"$pairRoot`" -PollSeconds 5 -MinControlHumanSnapshots $MinHumanSnapshots -MinControlHumanPresenceSeconds $MinHumanPresenceSeconds -MinTreatmentHumanSnapshots $MinHumanSnapshots -MinTreatmentHumanPresenceSeconds $MinHumanPresenceSeconds -MinTreatmentPatchEventsWhileHumansPresent $MinPatchEventsForUsableLane -MinPostPatchObservationSeconds 20 -StopWhenSufficient"
 
 Write-Host "Paired control+treatment evaluation:"
 Write-Host "  Pair pack root: $pairRoot"
@@ -382,6 +383,8 @@ Write-Host "Success means:"
 Write-Host "  Keep at least one human in each lane for about $MinHumanPresenceSeconds seconds."
 Write-Host "  Treatment is strongest when it patches while humans are present and there is time to observe the aftermath."
 Write-Host "  No-human or sparse-human runs are plumbing validation only, not tuning evidence."
+Write-Host "During the run:"
+Write-Host "  Live monitor: $monitorHelperCommand"
 Write-Host "After the run:"
 Write-Host "  Review helper: $reviewHelperCommand"
 Write-Host "  Score helper: $scoreHelperCommand"
@@ -576,5 +579,6 @@ Write-Host "  Operator checklist: $operatorChecklistPath"
     ScoreCommand = $scoreHelperCommand
     RegisterCommand = $registerHelperCommand
     RegistrySummaryCommand = $registrySummaryCommand
+    MonitorCommand = $monitorHelperCommand
     OperatorChecklistPath = $operatorChecklistPath
 }
