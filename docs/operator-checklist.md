@@ -83,7 +83,8 @@ Default ports and lanes:
 11. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
 12. Read `guided_session\final_session_docket.md` first after the run.
 13. Run `scripts\plan_next_live_session.ps1` or read the `next_live_plan` artifact referenced by the final docket before scheduling the next real live session.
-14. If the docket or planner says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
+14. Run `scripts\analyze_latest_grounded_session.ps1` after the registry update when you need the explicit "what changed because of this latest pair?" answer.
+15. If the docket, planner, or latest-session analysis says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
 
 ## What Counts As Insufficient Data
 
@@ -247,9 +248,19 @@ How to read grounded evidence certification:
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can also refresh the latest responsive-trial gate in the same pass
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass
+- `scripts\analyze_latest_grounded_session.ps1` writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md` for the latest pair or a specific `-PairRoot`
 - the registry summary now distinguishes total registered sessions from certified grounded sessions, non-certified excluded sessions, workflow-validation-only sessions, and excluded sessions by reason
 - conservative remains the default next live profile until the registry shows repeated certified grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
+
+## Latest-Session Delta
+
+- run `powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1` after scoring, certification, registration, summary, gate, and planner refresh
+- use `-PairRoot` when the newest saved pair pack is not the real live pair you want to explain
+- `grounded_session_analysis.md` answers whether the latest pair became certified grounded evidence, whether it counted toward promotion, whether it created the first grounded conservative session, whether it added grounded conservative-too-quiet evidence, and whether the next objective changed
+- `promotion_gap_delta.md` is the compact before/after delta for grounded sessions, grounded too-quiet counts, strong-signal counts, responsive blockers, gate state, and next objective
+- non-grounded sessions can still be the correct latest-session answer. Rehearsal, synthetic, no-human, weak-signal, and otherwise excluded live runs should report `no-impact-non-grounded-session` instead of pretending the promotion gap moved
+- "the latest session changed something" means the helper shows a real delta in certified grounded evidence, next-step recommendation, or responsive blocker state. If those stay flat, the honest answer is that the project is still blocked in the same state
 
 ## Next-Live Planner
 

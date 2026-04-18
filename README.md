@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-29
+HLDM-JKBOTTI-AI-STAND-20260415-30
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -20,6 +20,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/monitor_live_pair_session.ps1` and `scripts/monitor_live_pair_session.bat` for live evidence-sufficiency monitoring during an active control+treatment pair session.
 - `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
 - `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
+- `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
 - `scripts/certify_latest_pair_session.ps1` and `scripts/certify_latest_pair_session.bat` for strict grounded-evidence certification of the latest pair pack or a specified pair root.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
@@ -406,6 +407,34 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 - `manual-review-needed` means the cross-session evidence conflicts or a grounded guardrail concern needs an operator read before another live choice.
 
 Conservative remains the default next live treatment profile until the ledger says otherwise. That keeps profile promotion bounded, reversible, and driven by accumulated evidence instead of one noisy session.
+
+## Latest-Session Delta Analysis
+
+Use `scripts\analyze_latest_grounded_session.ps1` after the normal post-run pipeline when the question is not only "what is the current gap?" but "what changed because of the latest pair?"
+
+- it writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md`
+- by default it analyzes the latest saved pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` when you want a specific live pair instead
+- it reuses grounded-evidence certification, the pair-session registry shape, the registry summary, the responsive-trial gate, and the next-live planner instead of inventing a second source of truth
+- it computes two scenario snapshots under `analysis_scenarios\without_latest\` and `analysis_scenarios\with_latest\`, then reports the exact delta between them
+- `counts_toward_promotion = false` means the latest pair stayed visible but did not shrink the real responsive-promotion gap
+- `reduced_promotion_gap = true` means at least one real responsive-opening deficit moved in the right direction, such as grounded conservative sessions, grounded conservative too-quiet sessions, or distinct grounded too-quiet pair IDs
+- `grounded-conservative-too-quiet-evidence-added` means the latest grounded conservative session specifically added too-quiet evidence instead of only adding another generic grounded session
+- `grounded-strong-signal-conservative-added` means the latest grounded conservative session improved the keep-conservative evidence record without necessarily moving the responsive-opening thresholds
+- `responsive-blocker-added` means the latest grounded responsive session added too-reactive blocker evidence and therefore moved the project away from another responsive promotion
+- `no-impact-non-grounded-session` is the honest answer for rehearsal, synthetic, no-human, weak-signal, plumbing-only, or otherwise excluded sessions. They remain auditable, but they must not fabricate a useful delta
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1
+powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Read the outputs like this:
+
+- `grounded_session_analysis.md` is the operator summary of the latest pair, grounded certification, before-vs-after counts, impact classification, and the exact next-step change or non-change
+- `promotion_gap_delta.md` is the compact evidence-accounting view with the before/after/delta numbers for grounded sessions, grounded too-quiet counts, strong-signal counts, responsive blocker counts, gate state, and next objective
+- if the latest session is rehearsal, synthetic, weak, or no-human, the correct result is often "still blocked in the same state"
 
 ## Next Live Session Planner
 

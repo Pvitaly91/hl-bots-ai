@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-29
+HLDM-JKBOTTI-AI-STAND-20260415-30
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -489,6 +489,7 @@ Use the registry helpers to move from single scorecards to accumulated live evid
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass.
+- `scripts\analyze_latest_grounded_session.ps1` writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md` for the latest pair or a specific `-PairRoot`.
 - a pair counts toward promotion only when it is certified as grounded evidence: live origin, not rehearsal, not synthetic, minimum human-signal thresholds met, treatment patched while humans were present, a meaningful post-patch observation window exists, and the pair clears `tuning-usable` or stronger.
 - rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, and weak-signal sessions stay in the ledger for auditability but are excluded from promotion counts by reason.
 - the summary answers how many total registered sessions exist, how many are certified grounded sessions, how many were excluded, why they were excluded, how often treatment patched while humans were present, whether the certified dataset is still dominated by insufficient-data or weak-signal runs, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and whether responsive is justified or should be rejected or reverted.
@@ -503,6 +504,24 @@ Interpret the aggregate recommendation like this:
 - `insufficient-data-repeat-session`: the registry is still dominated by plumbing-only or no-human evidence.
 - `weak-signal-repeat-session`: humans joined, but the accumulated post-patch evidence is still too weak for a profile change.
 - `manual-review-needed`: the ledger has conflicting grounded evidence or a guardrail concern that needs a manual read before the next live action.
+
+## Latest-Session Delta Analysis
+
+Use `scripts\analyze_latest_grounded_session.ps1` when you need the explicit post-session answer to "did the latest pair count, and exactly what changed because of it?"
+
+- it writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md`
+- it compares the registry stack with and without the latest pair counted, then reports which grounded deficits moved and which ones did not
+- `counts_toward_promotion = false` means the latest pair remained visible but did not reduce the real responsive-promotion gap
+- "the latest session changed something" means the helper shows a real delta in certified grounded evidence, next-step recommendation, or responsive blocker state
+- no-human, rehearsal, synthetic, weak-signal, and otherwise excluded sessions may legitimately end as `no-impact-non-grounded-session`
+- use `-PairRoot` when the newest saved pair pack is not the session you want to explain
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1
+powershell -NoProfile -File .\scripts\analyze_latest_grounded_session.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
 
 ## Next Live Session Planner
 
@@ -632,6 +651,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decisi
 ```
 
 The demo copies the synthetic pair packs into a scratch evaluation root, runs shadow review, scores every pair, certifies them, registers them into a synthetic registry, and emits a compact branch summary. Treat that output as workflow validation only, never as a substitute for real live human evidence.
+
+Run the latest-session delta validation helper when you need fixture-backed coverage for the new post-session analysis layer:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate_grounded_session_delta.ps1
+```
+
+That helper validates the non-grounded branch against the current live registry and validates grounded positive, grounded too-quiet, grounded strong-signal, and responsive-blocker delta paths with test-only copied fixture packs in an isolated scratch registry.
 
 When the specific goal is guided-workflow sufficiency rehearsal instead of broad fixture coverage, prefer `scripts\run_guided_live_pair_session.ps1 -RehearsalMode ...`. That path exercises the real guided monitor, auto-stop, docket, certification, and post-run orchestration on a labeled rehearsal pair root, keeps the resulting registry under `guided_session\registry\`, and must still leave the responsive gate closed.
 
