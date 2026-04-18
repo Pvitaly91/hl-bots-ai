@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-21
+HLDM-JKBOTTI-AI-STAND-20260415-22
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -309,6 +309,14 @@ powershell -NoProfile -File .\scripts\run_balance_parameter_sweep.ps1
 
 The sweep compares the named `conservative`, `default`, and `responsive` profiles offline and writes `summary.json`, `summary.md`, `comparison.json`, and `comparison.md` under `lab\logs\eval\replay_sweeps\<timestamp>\`.
 
+Run the shadow review helper after a captured pair when you want a counterfactual answer for the next live profile:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive
+```
+
+That helper replays the saved treatment lane through the selected profiles and writes `shadow_profiles.json`, `shadow_profiles.md`, `shadow_recommendation.json`, and `shadow_recommendation.md` under the pair pack's `shadow_review\` subfolder.
+
 Summarize a control-vs-treatment pair:
 
 ```powershell
@@ -328,10 +336,11 @@ For the next real human-vs-bot session, use this sequence:
 3. Join the control lane on the printed `ControlPort` target first and play long enough to keep a human present for roughly the configured `-MinHumanPresenceSeconds`.
 4. Let the pair runner switch to the treatment lane, then join the printed `TreatmentPort` target second and repeat.
 5. Run `scripts\review_latest_pair_run.ps1`.
-6. Run `scripts\score_latest_pair_session.ps1`.
-7. Run `scripts\register_pair_session_result.ps1`.
-8. Run `scripts\summarize_pair_session_registry.ps1`.
-9. Use the profile recommendation to choose the next live action.
+6. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
+7. Run `scripts\score_latest_pair_session.ps1`.
+8. Run `scripts\register_pair_session_result.ps1`.
+9. Run `scripts\summarize_pair_session_registry.ps1`.
+10. Use the scorecard, shadow recommendation, and registry recommendation together before the next live action.
 
 The saved join helpers make the roles explicit:
 
@@ -347,6 +356,16 @@ Why `conservative` is the default next live treatment profile:
 
 Try `responsive` only after a conservative pair says the treatment lane stayed too quiet relative to control or never produced a grounded human-present patch window.
 
+Shadow review is the intermediate check before doing that with a real human session. It answers what `default` and `responsive` would have done against the same captured treatment-lane history without pretending that offline replay is stronger than real human evidence.
+
+Read the shadow recommendation like this:
+
+- `keep-conservative`: the captured lane does not justify a live profile change yet.
+- `conservative-and-default-similar`: shadow `default` stayed materially similar to the captured conservative lane.
+- `insufficient-data-no-promotion`: the captured lane never cleared the human-signal gate strongly enough for promotion.
+- `conservative-looks-too-quiet-responsive-candidate`: conservative looks too quiet and responsive would have added more grounded treatment activity without tripping the guardrails.
+- `responsive-would-have-overreacted`: responsive looked too reactive in counterfactual replay, so conservative should stay live.
+
 ## Cross-Session Evidence Ledger
 
 Use the registry helpers to move from single scorecards to accumulated live evidence.
@@ -354,10 +373,10 @@ Use the registry helpers to move from single scorecards to accumulated live evid
 - `scripts\register_pair_session_result.ps1` appends one normalized registry entry into `lab\logs\eval\registry\pair_sessions.ndjson`.
 - registration defaults to the latest pair pack, but `-PairRoot` can target any existing pair pack.
 - duplicate pair packs are skipped by default with a clear message instead of being re-registered silently.
-- registry entries record the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, whether the session is tuning-usable, optional notes path, and embedded prompt/commit metadata when available.
+- registry entries record the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, optional shadow-review decision fields when present, whether the session is tuning-usable, optional notes path, and embedded prompt/commit metadata when available.
 - notes remain optional. Pass `-NotesPath` or drop a notes file into the pair root if an operator wants to keep lightweight context with the objective evidence.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
-- the summary answers how many usable sessions exist for each profile, how often treatment patched while humans were present, whether the dataset is still dominated by insufficient-data or weak-signal runs, and whether responsive is justified or should be rejected or reverted.
+- the summary answers how many usable sessions exist for each profile, how often treatment patched while humans were present, whether the dataset is still dominated by insufficient-data or weak-signal runs, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and whether responsive is justified or should be rejected or reverted.
 - profile promotion stays intentionally conservative: no-human and weak-signal sessions do not justify responsive, one noisy session does not justify a profile change, and conservative remains the default until repeated grounded evidence says otherwise.
 
 Interpret the aggregate recommendation like this:
@@ -528,6 +547,10 @@ The pair root preserves:
 - `control_join_instructions.txt`
 - `treatment_join_instructions.txt`
 - `pair_join_instructions.txt`
+- `shadow_review\shadow_profiles.json`
+- `shadow_review\shadow_profiles.md`
+- `shadow_review\shadow_recommendation.json`
+- `shadow_review\shadow_recommendation.md`
 
 The lane manifest and summaries now distinguish:
 

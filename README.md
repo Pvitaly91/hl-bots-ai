@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-21
+HLDM-JKBOTTI-AI-STAND-20260415-22
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -17,6 +17,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `ai_director/tuning.py`, `ai_director/testdata/`, and replay sweep tooling for deterministic profile comparison.
 - `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
+- `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
 - `docs/test-stand.md` with local HLDS lab details.
 - `docs/operator-checklist.md` with the first real human pair-session operator flow.
 - `docs/first-live-pair-notes-template.md` as an optional lightweight note sheet for the first real human pair session.
@@ -185,6 +186,7 @@ The paired live-session runner is the recommended next human workflow:
 - the control lane now supports the same human-join-aware waiting thresholds as the treatment lane, while still staying sidecar-free with `jk_ai_balance_enabled 0`.
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
+- `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
 
@@ -232,10 +234,11 @@ For the first real human pair session, use this operator flow:
 3. join the printed control lane first
 4. join the printed treatment lane second
 5. `powershell -NoProfile -File .\scripts\review_latest_pair_run.ps1`
-6. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
-7. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
-8. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
-9. use the profile recommendation to choose the next live action
+6. `powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`
+7. `powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1`
+8. `powershell -NoProfile -File .\scripts\register_pair_session_result.ps1`
+9. `powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1`
+10. use the scorecard, shadow recommendation, and registry summary together before choosing the next live action
 
 Preflight verdicts mean:
 
@@ -282,17 +285,47 @@ Use the scorecard recommendation conservatively:
 - `insufficient-data-repeat-session`: reject the session for tuning and collect another live pair first.
 - `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action.
 
+## Shadow Profile Review
+
+Run the shadow review helper after a captured pair when you want to know what `default` or `responsive` would have done against the same treatment-lane history:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive
+powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -RequireHumanSignal -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40
+```
+
+The helper writes `shadow_profiles.json`, `shadow_profiles.md`, `shadow_recommendation.json`, and `shadow_recommendation.md` under `<pair-pack>\shadow_review\`.
+
+Use it to answer:
+
+- what the actual live conservative lane did
+- what `default` would have done on the same captured telemetry
+- what `responsive` would have done on the same captured telemetry
+- whether responsive looks justified for the next live trial
+- whether conservative still looks safest
+- whether the captured evidence is still too weak to justify any profile change
+
+Read the shadow recommendation conservatively:
+
+- `keep-conservative`: the captured lane does not justify a live profile change yet.
+- `conservative-and-default-similar`: shadow `default` stayed materially similar to the captured conservative lane, so changing the next live profile would spend human time without a grounded reason.
+- `insufficient-data-no-promotion`: the captured lane never cleared the human-signal gate strongly enough for promotion; shadow replay is still plumbing or weak-signal support only.
+- `conservative-looks-too-quiet-responsive-candidate`: conservative looks too quiet and responsive would have created more grounded human-present treatment evidence without tripping the guardrails. This is still weaker than another real human session.
+- `responsive-would-have-overreacted`: responsive would have looked too reactive on the captured lane, so conservative should stay live.
+
+Shadow review is useful before spending a real live session on `responsive` because it lets the operator ask a bounded "what if" question against the same saved lane instead of blindly committing a second human session to a riskier profile.
+
 ## Cross-Session Evidence Ledger
 
 Use the registry layer to turn repeated live pair runs into one honest evidence history instead of treating each scorecard in isolation.
 
 - `scripts\register_pair_session_result.ps1` reads the latest pair pack by default, or a specific `-PairRoot`, and appends one normalized entry into `lab\logs\eval\registry\pair_sessions.ndjson`.
 - duplicate registration is blocked by default; the helper skips with a clear message instead of silently writing the same pair pack twice.
-- each registry entry records the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, whether the session is tuning-usable, optional notes path, and any embedded prompt ID or commit SHA metadata.
+- each registry entry records the pair ID/root, sortable run identity, map, bot count, bot skill, control/treatment lane labels, treatment profile, pair classification, lane verdicts, evidence quality, whether treatment patched while humans were present, whether a meaningful post-patch window existed, scorecard recommendation, treatment-behavior assessment, optional shadow-review recommendation fields when present, whether the session is tuning-usable, optional notes path, and any embedded prompt ID or commit SHA metadata.
 - notes are optional: either pass `-NotesPath` explicitly or place a notes file in the pair root. Missing notes never block registration.
 - subjective notes are carried as context only; the promotion logic still keys off lane evidence, pair classification, and scorecard fields first.
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
-- the registry summary reports total registered sessions, sessions by pair classification, sessions by treatment profile, counts for insufficient-data / weak-signal / tuning-usable / strong-signal sessions, human-present patch counts, meaningful post-patch window counts, and treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`.
+- the registry summary reports total registered sessions, sessions by pair classification, sessions by treatment profile, counts for insufficient-data / weak-signal / tuning-usable / strong-signal sessions, human-present patch counts, meaningful post-patch window counts, treatment-behavior assessment counts for `too quiet`, `appropriately conservative`, `inconclusive`, and `too reactive`, and how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive.
 - the profile recommendation stays intentionally conservative. It will not recommend `responsive` from no-human or weak-signal runs, and it requires repeated grounded conservative evidence before promotion.
 - `keep-conservative` means the current live default is still behaving safely.
 - `collect-more-conservative-evidence` means there is some usable signal, but not enough repeated grounded evidence yet to justify promotion.

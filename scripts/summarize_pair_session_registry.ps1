@@ -186,6 +186,20 @@ function Get-ProfileStats {
     }
 }
 
+function Get-ShadowRecommendationBucket {
+    param([string]$Decision)
+
+    switch ($Decision) {
+        "keep-conservative" { return "keep-conservative" }
+        "conservative-and-default-similar" { return "keep-conservative" }
+        "insufficient-data-no-promotion" { return "insufficient-data-no-promotion" }
+        "conservative-looks-too-quiet-responsive-candidate" { return "responsive-candidate" }
+        "responsive-would-have-overreacted" { return "responsive-too-reactive" }
+        "manual-review-needed" { return "manual-review-needed" }
+        default { return "(missing)" }
+    }
+}
+
 function Get-SupportingPairIds {
     param([object[]]$Entries)
 
@@ -454,6 +468,22 @@ function Get-RegistrySummaryMarkdown {
     $lines += Get-CountMarkdownLines -Counts $Summary.treatment_behavior_assessment_counts
     $lines += @(
         "",
+        "## Shadow Review",
+        "",
+        "- Sessions with shadow review present: $($Summary.shadow_review_present_count)",
+        "",
+        "### Shadow Recommendation Buckets",
+        ""
+    )
+    $lines += Get-CountMarkdownLines -Counts $Summary.shadow_recommendation_bucket_counts
+    $lines += @(
+        "",
+        "### Shadow Recommendation Decisions",
+        ""
+    )
+    $lines += Get-CountMarkdownLines -Counts $Summary.shadow_recommendation_decision_counts
+    $lines += @(
+        "",
         "## Per-Profile Snapshot",
         ""
     )
@@ -470,7 +500,7 @@ function Get-RegistrySummaryMarkdown {
 
     foreach ($entry in $Summary.recent_sessions) {
         $notesLabel = if ($entry.notes_path) { "notes-linked" } else { "no-notes" }
-        $lines += "- $($entry.pair_id): profile=$($entry.treatment_profile), bucket=$($entry.evidence_bucket), recommendation=$($entry.scorecard_recommendation), behavior=$($entry.treatment_behavior_assessment), $notesLabel"
+        $lines += "- $($entry.pair_id): profile=$($entry.treatment_profile), bucket=$($entry.evidence_bucket), recommendation=$($entry.scorecard_recommendation), shadow=$($entry.shadow_recommendation_bucket), behavior=$($entry.treatment_behavior_assessment), $notesLabel"
     }
 
     return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
@@ -564,6 +594,9 @@ foreach ($entry in $entries) {
         $behaviorAssessment = "unknown"
     }
 
+    $shadowDecision = [string](Get-ObjectPropertyValue -Object $entry -Name "shadow_recommendation_decision" -Default "")
+    $shadowBucket = Get-ShadowRecommendationBucket -Decision $shadowDecision
+
     $normalizedEntries += [pscustomobject]@{
         pair_id = [string](Get-ObjectPropertyValue -Object $entry -Name "pair_id" -Default "")
         pair_root = [string](Get-ObjectPropertyValue -Object $entry -Name "pair_root" -Default "")
@@ -581,6 +614,9 @@ foreach ($entry in $entries) {
         meaningful_post_patch_observation_window_exists = [bool](Get-ObjectPropertyValue -Object $entry -Name "meaningful_post_patch_observation_window_exists" -Default $false)
         treatment_behavior_assessment = $behaviorAssessment
         scorecard_recommendation = [string](Get-ObjectPropertyValue -Object $entry -Name "scorecard_recommendation" -Default "")
+        shadow_review_present = [bool](Get-ObjectPropertyValue -Object $entry -Name "shadow_review_present" -Default $false)
+        shadow_recommendation_decision = $shadowDecision
+        shadow_recommendation_bucket = $shadowBucket
         notes_path = [string](Get-ObjectPropertyValue -Object $entry -Name "notes_path" -Default "")
     }
 }
@@ -614,6 +650,29 @@ $scorecardRecommendationCounts = New-CountMap `
     -Items $normalizedEntries `
     -KeySelector { param($entry) $entry.scorecard_recommendation } `
     -PreferredKeys @()
+$shadowRecommendationDecisionCounts = New-CountMap `
+    -Items $normalizedEntries `
+    -KeySelector { param($entry) $entry.shadow_recommendation_decision } `
+    -PreferredKeys @(
+        "keep-conservative",
+        "conservative-and-default-similar",
+        "insufficient-data-no-promotion",
+        "conservative-looks-too-quiet-responsive-candidate",
+        "responsive-would-have-overreacted",
+        "manual-review-needed",
+        "(missing)"
+    )
+$shadowRecommendationBucketCounts = New-CountMap `
+    -Items $normalizedEntries `
+    -KeySelector { param($entry) $entry.shadow_recommendation_bucket } `
+    -PreferredKeys @(
+        "keep-conservative",
+        "insufficient-data-no-promotion",
+        "responsive-candidate",
+        "responsive-too-reactive",
+        "manual-review-needed",
+        "(missing)"
+    )
 
 $profileNames = @(
     $normalizedEntries |
@@ -646,6 +705,9 @@ $summary = [ordered]@{
     meaningful_post_patch_observation_window_count = Get-CountValue -Items $normalizedEntries -Predicate { param($entry) $entry.meaningful_post_patch_observation_window_exists }
     treatment_behavior_assessment_counts = $treatmentBehaviorAssessmentCounts
     scorecard_recommendation_counts = $scorecardRecommendationCounts
+    shadow_review_present_count = Get-CountValue -Items $normalizedEntries -Predicate { param($entry) $entry.shadow_review_present }
+    shadow_recommendation_decision_counts = $shadowRecommendationDecisionCounts
+    shadow_recommendation_bucket_counts = $shadowRecommendationBucketCounts
     sessions_with_notes_count = Get-CountValue -Items $normalizedEntries -Predicate { param($entry) -not [string]::IsNullOrWhiteSpace($entry.notes_path) }
     profiles = $profileStats
     recent_sessions = @($sortedEntries | Select-Object -First 10)

@@ -362,6 +362,11 @@ $treatmentSessionPack = Read-JsonFile -Path $treatmentSessionPackJsonPath
 $scorecardJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "scorecard.json")
 $scorecard = Read-JsonFile -Path $scorecardJsonPath
 $scorecardMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "scorecard.md")
+$shadowProfilesJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_profiles.json")
+$shadowProfilesMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_profiles.md")
+$shadowRecommendationJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.json")
+$shadowRecommendationMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.md")
+$shadowRecommendation = Read-JsonFile -Path $shadowRecommendationJsonPath
 
 $pairId = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "pair_id" -Default "")
 $pairRunIdentity = Get-PairRunIdentity -PairId $pairId -ResolvedPairRoot $resolvedPairRoot
@@ -489,6 +494,13 @@ $entry = [ordered]@{
     scorecard_recommendation = [string](Get-ObjectPropertyValue -Object $scorecard -Name "recommendation" -Default "")
     scorecard_recommendation_reason = [string](Get-ObjectPropertyValue -Object $scorecard -Name "recommendation_reason" -Default "")
     scorecard_treatment_behavior_assessment = $scorecardTreatmentBehaviorAssessment
+    shadow_review_present = $null -ne $shadowRecommendation
+    shadow_recommendation_decision = [string](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "decision" -Default "")
+    shadow_recommendation_explanation = [string](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "explanation" -Default "")
+    shadow_responsive_justified_as_next_trial = [bool](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "responsive_justified_as_next_trial" -Default $false)
+    shadow_conservative_should_remain_next_live_profile = [bool](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "conservative_should_remain_next_live_profile" -Default $false)
+    shadow_evidence_too_weak_for_profile_change = [bool](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "evidence_too_weak_for_profile_change" -Default $false)
+    shadow_manual_review_needed = [bool](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "manual_review_needed" -Default $false)
     session_is_tuning_usable = $sessionIsTuningUsable
     session_is_strong_signal = $sessionIsStrongSignal
     notes_path = $resolvedNotesPath
@@ -502,6 +514,10 @@ $entry = [ordered]@{
         comparison_json = $comparisonJsonPath
         scorecard_json = $scorecardJsonPath
         scorecard_markdown = $scorecardMarkdownPath
+        shadow_profiles_json = $shadowProfilesJsonPath
+        shadow_profiles_markdown = $shadowProfilesMarkdownPath
+        shadow_recommendation_json = $shadowRecommendationJsonPath
+        shadow_recommendation_markdown = $shadowRecommendationMarkdownPath
         control_session_pack_json = $controlSessionPackJsonPath
         treatment_session_pack_json = $treatmentSessionPackJsonPath
         notes_path = $resolvedNotesPath
@@ -519,6 +535,9 @@ Write-Host "  Registry path: $resolvedRegistryPath"
 Write-Host "  Evidence bucket: $evidenceBucket"
 Write-Host "  Treatment profile: $treatmentProfile"
 Write-Host "  Scorecard recommendation: $scorecardRecommendation"
+if ($null -ne $shadowRecommendation) {
+    Write-Host "  Shadow recommendation: $([string]$shadowRecommendation.decision)"
+}
 if ($resolvedNotesPath) {
     Write-Host "  Notes path: $resolvedNotesPath"
 }
@@ -531,5 +550,6 @@ if ($resolvedNotesPath) {
     EvidenceBucket = $evidenceBucket
     TreatmentProfile = $treatmentProfile
     ScorecardRecommendation = $scorecardRecommendation
+    ShadowRecommendation = [string](Get-ObjectPropertyValue -Object $shadowRecommendation -Name "decision" -Default "")
     NotesPath = $resolvedNotesPath
 }

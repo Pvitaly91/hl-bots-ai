@@ -271,6 +271,29 @@ function Get-ScorecardMarkdown {
         "- Reason: $($Scorecard.recommendation_reason)",
         "- Suggested operator next step: $($Scorecard.suggested_operator_next_step)",
         "",
+        "## Shadow Review",
+        ""
+    )
+
+    if ($Scorecard.shadow_review.present) {
+        $lines += @(
+            "- Decision: $($Scorecard.shadow_review.decision)",
+            "- Responsive justified as next trial: $($Scorecard.shadow_review.responsive_justified_as_next_trial)",
+            "- Conservative should remain next live profile: $($Scorecard.shadow_review.conservative_should_remain_next_live_profile)",
+            "- Evidence too weak for profile change: $($Scorecard.shadow_review.evidence_too_weak_for_profile_change)",
+            "- Explanation: $($Scorecard.shadow_review.explanation)",
+            ""
+        )
+    }
+    else {
+        $lines += @(
+            "- Present: False",
+            "- Note: Shadow profile review has not been generated for this pair yet.",
+            ""
+        )
+    }
+
+    $lines += @(
         "## Artifacts",
         "",
         "- Pair summary JSON: $($Scorecard.artifacts.pair_summary_json)",
@@ -278,7 +301,11 @@ function Get-ScorecardMarkdown {
         "- Comparison JSON: $($Scorecard.artifacts.comparison_json)",
         "- Comparison Markdown: $($Scorecard.artifacts.comparison_markdown)",
         "- Control summary Markdown: $($Scorecard.artifacts.control_summary_markdown)",
-        "- Treatment summary Markdown: $($Scorecard.artifacts.treatment_summary_markdown)"
+        "- Treatment summary Markdown: $($Scorecard.artifacts.treatment_summary_markdown)",
+        "- Shadow profiles JSON: $($Scorecard.artifacts.shadow_profiles_json)",
+        "- Shadow profiles Markdown: $($Scorecard.artifacts.shadow_profiles_markdown)",
+        "- Shadow recommendation JSON: $($Scorecard.artifacts.shadow_recommendation_json)",
+        "- Shadow recommendation Markdown: $($Scorecard.artifacts.shadow_recommendation_markdown)"
     )
 
     return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
@@ -330,6 +357,11 @@ $comparisonMarkdownCandidate = if ($artifacts -and $artifacts.comparison_markdow
 $comparisonJsonPath = Resolve-ExistingPath -Path $comparisonJsonCandidate
 $pairSummaryMarkdownPath = Resolve-ExistingPath -Path $pairSummaryMarkdownCandidate
 $comparisonMarkdownPath = Resolve-ExistingPath -Path $comparisonMarkdownCandidate
+$shadowProfilesJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_profiles.json")
+$shadowProfilesMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_profiles.md")
+$shadowRecommendationJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.json")
+$shadowRecommendationMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.md")
+$shadowRecommendation = Read-JsonFile -Path $shadowRecommendationJsonPath
 
 $comparisonPayload = Read-JsonFile -Path $comparisonJsonPath
 $comparison = if ($null -ne $comparisonPayload) { $comparisonPayload.comparison } else { $pairSummary.comparison }
@@ -474,6 +506,15 @@ $scorecard = [ordered]@{
         cooldown_constraints_respected = $cooldownConstraintsRespected
         boundedness_constraints_respected = $boundednessConstraintsRespected
     }
+    shadow_review = [ordered]@{
+        present = $null -ne $shadowRecommendation
+        decision = if ($null -ne $shadowRecommendation) { [string]$shadowRecommendation.decision } else { "" }
+        explanation = if ($null -ne $shadowRecommendation) { [string]$shadowRecommendation.explanation } else { "" }
+        responsive_justified_as_next_trial = if ($null -ne $shadowRecommendation) { [bool]$shadowRecommendation.responsive_justified_as_next_trial } else { $false }
+        conservative_should_remain_next_live_profile = if ($null -ne $shadowRecommendation) { [bool]$shadowRecommendation.conservative_should_remain_next_live_profile } else { $false }
+        evidence_too_weak_for_profile_change = if ($null -ne $shadowRecommendation) { [bool]$shadowRecommendation.evidence_too_weak_for_profile_change } else { $false }
+        manual_review_needed = if ($null -ne $shadowRecommendation) { [bool]$shadowRecommendation.manual_review_needed } else { $false }
+    }
     artifacts = [ordered]@{
         pair_summary_json = $pairSummaryJsonPath
         pair_summary_markdown = $pairSummaryMarkdownPath
@@ -481,6 +522,10 @@ $scorecard = [ordered]@{
         comparison_markdown = $comparisonMarkdownPath
         control_summary_markdown = Resolve-ExistingPath -Path ([string]$pairSummary.control_lane.summary_markdown)
         treatment_summary_markdown = Resolve-ExistingPath -Path ([string]$pairSummary.treatment_lane.summary_markdown)
+        shadow_profiles_json = $shadowProfilesJsonPath
+        shadow_profiles_markdown = $shadowProfilesMarkdownPath
+        shadow_recommendation_json = $shadowRecommendationJsonPath
+        shadow_recommendation_markdown = $shadowRecommendationMarkdownPath
         scorecard_json = $outputJsonPath
         scorecard_markdown = $outputMarkdownPath
     }

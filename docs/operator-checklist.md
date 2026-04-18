@@ -46,10 +46,11 @@ Default ports and lanes:
 5. Let the runner advance to the treatment lane, then join the treatment lane second.
 6. Stay in the treatment lane for about the same minimum useful window.
 7. Run `scripts\review_latest_pair_run.ps1`.
-8. Run `scripts\score_latest_pair_session.ps1`.
-9. Run `scripts\register_pair_session_result.ps1`.
-10. Run `scripts\summarize_pair_session_registry.ps1`.
-11. Use the profile recommendation before choosing the next live profile.
+8. Run `scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive`.
+9. Run `scripts\score_latest_pair_session.ps1`.
+10. Run `scripts\register_pair_session_result.ps1`.
+11. Run `scripts\summarize_pair_session_registry.ps1`.
+12. Use the scorecard, shadow recommendation, and registry recommendation together before choosing the next live profile.
 
 ## What Counts As Insufficient Data
 
@@ -89,6 +90,18 @@ Then score it with:
 
 ```powershell
 powershell -NoProfile -File .\scripts\score_latest_pair_session.ps1
+```
+
+Run the shadow review against the latest pair pack before you decide whether `responsive` is worth a real follow-up session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -UseLatest -Profiles conservative default responsive
+```
+
+Or target a specific saved pair pack:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_shadow_profile_review.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -RequireHumanSignal -MinHumanSnapshots 2 -MinHumanPresenceSeconds 40
 ```
 
 Then register it into the ledger:
@@ -131,13 +144,22 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 - `insufficient-data-repeat-session`: reject the session as tuning evidence and repeat the live pair first
 - `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
 
+## How To Read Shadow Review
+
+- `keep-conservative`: the captured lane does not justify a live profile change yet.
+- `conservative-and-default-similar`: shadow `default` behaved materially like the captured conservative lane, so switching profiles would spend human time without new grounded evidence.
+- `insufficient-data-no-promotion`: the captured lane never cleared the human-signal gate strongly enough for promotion. Shadow replay should not be used to justify `responsive`.
+- `conservative-looks-too-quiet-responsive-candidate`: conservative looks too quiet and responsive would have created more grounded human-present treatment evidence without tripping the guardrails. Treat this as a candidate only, not proof.
+- `responsive-would-have-overreacted`: responsive looked too reactive in counterfactual replay, so conservative should remain live.
+- shadow review is useful before spending a real live session on `responsive` because it gives the operator a bounded "what if" answer from the same captured telemetry instead of a blind promotion.
+
 ## Cross-Session Ledger
 
 - `scripts\register_pair_session_result.ps1` appends the reviewed and scored pair pack into `lab\logs\eval\registry\pair_sessions.ndjson`
 - registration defaults to the newest pair pack and skips duplicate pair packs by default
 - optional notes can be linked with `-NotesPath` or by placing a notes file in the pair root; missing notes never fail the registration step
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md`
-- the registry summary tells you how many sessions are still insufficient-data or weak-signal, how many are tuning-usable or strong-signal, how often treatment patched while humans were present, and how each treatment profile is behaving across runs
+- the registry summary tells you how many sessions are still insufficient-data or weak-signal, how many are tuning-usable or strong-signal, how often treatment patched while humans were present, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and how each treatment profile is behaving across runs
 - conservative remains the default next live profile until the registry shows repeated grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
 
