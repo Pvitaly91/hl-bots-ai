@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "sparse_humans_weak_signal",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "lane_label": "control-baseline",
+  "mode": "NoAI",
+  "summary_json": "summary.json",
+  "session_pack_json": "session_pack.json"
+}

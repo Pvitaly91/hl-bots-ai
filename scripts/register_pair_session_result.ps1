@@ -59,6 +59,26 @@ function Resolve-ExistingPath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Resolve-PairArtifactPath {
+    param(
+        [string]$Path,
+        [string]$PairRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($Path)) {
+        $Path
+    }
+    else {
+        Join-Path $PairRoot $Path
+    }
+
+    return Resolve-ExistingPath -Path $candidate
+}
+
 function Get-AbsolutePath {
     param(
         [string]$Path,
@@ -340,7 +360,7 @@ if ($null -eq $pairSummary) {
     throw "Pair summary JSON could not be parsed: $pairSummaryJsonPath"
 }
 
-$comparisonJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "artifacts" -Default $null) -Name "comparison_json" -Default (Join-Path $resolvedPairRoot "comparison.json")))
+$comparisonJsonPath = Resolve-PairArtifactPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "artifacts" -Default $null) -Name "comparison_json" -Default "comparison.json")) -PairRoot $resolvedPairRoot
 $comparisonPayload = Read-JsonFile -Path $comparisonJsonPath
 $comparison = if ($null -ne $comparisonPayload) {
     Get-ObjectPropertyValue -Object $comparisonPayload -Name "comparison" -Default $null
@@ -349,13 +369,13 @@ else {
     Get-ObjectPropertyValue -Object $pairSummary -Name "comparison" -Default $null
 }
 
-$controlSummaryPayload = Read-JsonFile -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "control_lane" -Default $null) -Name "summary_json" -Default ""))
-$treatmentSummaryPayload = Read-JsonFile -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "summary_json" -Default ""))
+$controlSummaryPayload = Read-JsonFile -Path (Resolve-PairArtifactPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "control_lane" -Default $null) -Name "summary_json" -Default "")) -PairRoot $resolvedPairRoot)
+$treatmentSummaryPayload = Read-JsonFile -Path (Resolve-PairArtifactPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "summary_json" -Default "")) -PairRoot $resolvedPairRoot)
 $controlLaneSummary = if ($null -ne $controlSummaryPayload) { Get-ObjectPropertyValue -Object $controlSummaryPayload -Name "primary_lane" -Default $null } else { $null }
 $treatmentLaneSummary = if ($null -ne $treatmentSummaryPayload) { Get-ObjectPropertyValue -Object $treatmentSummaryPayload -Name "primary_lane" -Default $null } else { $null }
 
-$controlSessionPackJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "control_lane" -Default $null) -Name "session_pack_json" -Default ""))
-$treatmentSessionPackJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "session_pack_json" -Default ""))
+$controlSessionPackJsonPath = Resolve-PairArtifactPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "control_lane" -Default $null) -Name "session_pack_json" -Default "")) -PairRoot $resolvedPairRoot
+$treatmentSessionPackJsonPath = Resolve-PairArtifactPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "session_pack_json" -Default "")) -PairRoot $resolvedPairRoot
 $controlSessionPack = Read-JsonFile -Path $controlSessionPackJsonPath
 $treatmentSessionPack = Read-JsonFile -Path $treatmentSessionPackJsonPath
 

@@ -81,6 +81,13 @@ def _as_str(payload: dict[str, Any] | None, key: str, default: str = "") -> str:
     return str(value) if value is not None else default
 
 
+def _resolve_relative_path(base: Path, raw_path: str | None) -> Path:
+    if not raw_path:
+        return base
+    candidate = Path(str(raw_path))
+    return candidate if candidate.is_absolute() else (base / candidate)
+
+
 def _active_balance(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("active_balance")
     return value if isinstance(value, dict) else {}
@@ -125,10 +132,17 @@ def load_lane_bundle(lane_root: Path) -> dict[str, Any]:
     summary = summary_payload.get("primary_lane", summary_payload)
 
     copied = session_pack.get("copied_artifacts", {})
-    telemetry_path = Path(_as_str(copied, "telemetry_history", str(resolved_lane_root / "telemetry_history.ndjson")))
-    patch_path = Path(_as_str(copied, "patch_history", str(resolved_lane_root / "patch_history.ndjson")))
-    patch_apply_path = Path(
-        _as_str(copied, "patch_apply_history", str(resolved_lane_root / "patch_apply_history.ndjson"))
+    telemetry_path = _resolve_relative_path(
+        resolved_lane_root,
+        _as_str(copied, "telemetry_history", "telemetry_history.ndjson"),
+    )
+    patch_path = _resolve_relative_path(
+        resolved_lane_root,
+        _as_str(copied, "patch_history", "patch_history.ndjson"),
+    )
+    patch_apply_path = _resolve_relative_path(
+        resolved_lane_root,
+        _as_str(copied, "patch_apply_history", "patch_apply_history.ndjson"),
     )
 
     return {
@@ -154,8 +168,14 @@ def load_pair_context(pair_root: Path) -> dict[str, Any]:
 
     pair_summary = read_json(pair_summary_path)
     comparison_payload = read_json(comparison_path) if comparison_path.exists() else {}
-    treatment_lane_root = Path(_as_str(pair_summary.get("treatment_lane", {}), "lane_root"))
-    control_lane_root = Path(_as_str(pair_summary.get("control_lane", {}), "lane_root"))
+    treatment_lane_root = _resolve_relative_path(
+        resolved_pair_root,
+        _as_str(pair_summary.get("treatment_lane", {}), "lane_root"),
+    )
+    control_lane_root = _resolve_relative_path(
+        resolved_pair_root,
+        _as_str(pair_summary.get("control_lane", {}), "lane_root"),
+    )
     treatment_lane = load_lane_bundle(treatment_lane_root)
     control_lane = load_lane_bundle(control_lane_root)
     comparison = comparison_payload.get("comparison", pair_summary.get("comparison"))

@@ -130,7 +130,7 @@ function Resolve-TreatmentLaneRootFromPairRoot {
         throw "Pair summary could not be read from $ResolvedPairRoot"
     }
 
-    $laneRoot = Resolve-ExistingPath -Path ([string]$pairSummary.treatment_lane.lane_root)
+    $laneRoot = Resolve-ExistingPath -Path (Get-AbsolutePath -Path ([string]$pairSummary.treatment_lane.lane_root) -BasePath $ResolvedPairRoot)
     if (-not $laneRoot) {
         throw "Treatment lane root was not recorded in $ResolvedPairRoot"
     }

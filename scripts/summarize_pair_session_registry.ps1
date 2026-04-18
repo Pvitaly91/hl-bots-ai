@@ -351,13 +351,12 @@ function Get-ProfileRecommendation {
 
     if (
         $conservativeTooQuiet.Count -ge 2 -and
-        $conservativeStrong.Count -ge 1 -and
         $conservativeAppropriate.Count -eq 0
     ) {
         return New-ProfileRecommendationResult `
             -Decision "conservative-validated-try-responsive" `
             -RecommendedLiveProfile "responsive" `
-            -Reason "Conservative has at least two grounded sessions, including at least one strong-signal session, and they consistently say the profile stayed too quiet under real human presence." `
+            -Reason "Repeated grounded conservative sessions say the profile stayed too quiet under real human presence, and there is still no grounded conservative session showing appropriately conservative live behavior." `
             -SupportingPairIds (Get-SupportingPairIds -Entries $conservativeTooQuiet) `
             -KeepConservative $false `
             -CollectMoreConservativeEvidenceFirst $false `

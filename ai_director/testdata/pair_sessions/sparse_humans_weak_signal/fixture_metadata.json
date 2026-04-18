@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "sparse_humans_weak_signal",
+  "description": "Only the control lane captures usable human signal. The pair is partially usable but still weak and should not promote responsive.",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "treatment_profile": "conservative",
+  "min_human_snapshots": 3,
+  "min_human_presence_seconds": 60.0,
+  "min_patch_events_for_usable_lane": 2,
+  "expected": {
+    "pair_classification": "partially usable",
+    "comparison_verdict": "comparison-weak-signal",
+    "scorecard_treatment_behavior_assessment": "inconclusive",
+    "scorecard_recommendation": "weak-signal-repeat-session",
+    "shadow_decision": "insufficient-data-no-promotion"
+  }
+}

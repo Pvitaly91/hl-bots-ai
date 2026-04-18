@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "synthetic_note": "Synthetic pair/session fixtures for decision-stack validation. These are deterministic test fixtures, not real live pair runs.",
+  "fixtures": [
+    {
+      "id": "no_humans_insufficient_data",
+      "description": "No humans ever join either lane. The pair should remain plumbing-valid only and must not justify responsive.",
+      "treatment_profile": "conservative",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 2,
+      "control_frames": [
+        { "server_time_seconds": 20, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 40, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 60, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 80, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 100, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 120, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 }
+      ],
+      "treatment_frames": [
+        { "server_time_seconds": 20, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 40, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 60, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 80, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 100, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 },
+        { "server_time_seconds": 120, "human_player_count": 0, "frag_gap_top_human_minus_top_bot": 0, "recent_human_kills_per_minute": 0, "recent_bot_kills_per_minute": 0 }
+      ],
+      "expected": {
+        "pair_classification": "plumbing-valid only",
+        "comparison_verdict": "comparison-insufficient-data",
+        "scorecard_treatment_behavior_assessment": "inconclusive",
+        "scorecard_recommendation": "insufficient-data-repeat-session",
+        "shadow_decision": "insufficient-data-no-promotion"
+      }
+    },
+    {
+      "id": "sparse_humans_weak_signal",
+      "description": "Only the control lane captures usable human signal. The pair is partially usable but still weak and should not promote responsive.",
+      "treatment_profile": "conservative",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 2,
+      "control_frames": "human_joins_after_ai_waiting_patch",
+      "treatment_frames": "humans_absent_after_initial_join",
+      "expected": {
+        "pair_classification": "partially usable",
+        "comparison_verdict": "comparison-weak-signal",
+        "scorecard_treatment_behavior_assessment": "inconclusive",
+        "scorecard_recommendation": "weak-signal-repeat-session",
+        "shadow_decision": "insufficient-data-no-promotion"
+      }
+    },
+    {
+      "id": "conservative_acceptable_usable_signal",
+      "description": "Conservative captures a usable grounded treatment response without looking too quiet or too reactive.",
+      "treatment_profile": "conservative",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 2,
+      "control_frames": "human_joins_after_ai_waiting_patch",
+      "treatment_frames": "human_joins_after_ai_waiting_patch",
+      "expected": {
+        "pair_classification": "tuning-usable",
+        "comparison_verdict": "comparison-usable",
+        "scorecard_treatment_behavior_assessment": "appropriately conservative",
+        "scorecard_recommendation": "treatment-evidence-promising-repeat-conservative",
+        "shadow_decision": "conservative-and-default-similar"
+      }
+    },
+    {
+      "id": "conservative_too_quiet_responsive_candidate",
+      "description": "Conservative stays underactive despite usable human signal. The scorecard should surface responsive as the next candidate, and shadow review should agree without overstating certainty.",
+      "treatment_profile": "conservative",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 3,
+      "control_frames": [
+        { "server_time_seconds": 20, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 6, "recent_human_kills_per_minute": 10, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 40, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 6, "recent_human_kills_per_minute": 10, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 60, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 5, "recent_human_kills_per_minute": 9, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 80, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 5, "recent_human_kills_per_minute": 9, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 100, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 4, "recent_human_kills_per_minute": 8, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 120, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 4, "recent_human_kills_per_minute": 8, "recent_bot_kills_per_minute": 5 }
+      ],
+      "treatment_frames": [
+        { "server_time_seconds": 20, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 6, "recent_human_kills_per_minute": 10, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 40, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 6, "recent_human_kills_per_minute": 10, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 60, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 5, "recent_human_kills_per_minute": 9, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 80, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 5, "recent_human_kills_per_minute": 9, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 100, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 4, "recent_human_kills_per_minute": 8, "recent_bot_kills_per_minute": 5 },
+        { "server_time_seconds": 120, "human_player_count": 1, "frag_gap_top_human_minus_top_bot": 4, "recent_human_kills_per_minute": 8, "recent_bot_kills_per_minute": 5 }
+      ],
+      "expected": {
+        "pair_classification": "tuning-usable",
+        "comparison_verdict": "comparison-usable",
+        "scorecard_treatment_behavior_assessment": "too quiet",
+        "scorecard_recommendation": "conservative-looks-too-quiet-try-responsive-next",
+        "shadow_decision": "conservative-looks-too-quiet-responsive-candidate"
+      }
+    },
+    {
+      "id": "responsive_too_reactive_revert_candidate",
+      "description": "Responsive reacts too aggressively under usable human signal. The scorecard and registry should both point back to conservative.",
+      "treatment_profile": "responsive",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 2,
+      "control_frames": "noisy_threshold_alternation",
+      "treatment_frames": "noisy_threshold_alternation",
+      "expected": {
+        "pair_classification": "strong-signal",
+        "comparison_verdict": "comparison-strong-signal",
+        "scorecard_treatment_behavior_assessment": "too reactive",
+        "scorecard_recommendation": "responsive-too-reactive-revert-to-conservative",
+        "shadow_decision": "responsive-would-have-overreacted"
+      }
+    },
+    {
+      "id": "strong_signal_keep_conservative",
+      "description": "Conservative produces strong grounded evidence while staying bounded. This is the clearest keep-conservative fixture.",
+      "treatment_profile": "conservative",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 2,
+      "control_frames": "spike_then_stabilization",
+      "treatment_frames": "spike_then_stabilization",
+      "expected": {
+        "pair_classification": "strong-signal",
+        "comparison_verdict": "comparison-strong-signal",
+        "scorecard_treatment_behavior_assessment": "appropriately conservative",
+        "scorecard_recommendation": "keep-conservative-and-collect-more",
+        "shadow_decision": "conservative-and-default-similar"
+      }
+    },
+    {
+      "id": "ambiguous_manual_review_needed",
+      "description": "Conservative itself goes oscillatory under grounded signal. The session must stay manual-review-needed instead of being promoted or silently ignored.",
+      "treatment_profile": "conservative",
+      "min_human_snapshots": 3,
+      "min_human_presence_seconds": 60.0,
+      "min_patch_events_for_usable_lane": 2,
+      "control_frames": "alternating_advantage",
+      "treatment_frames": "alternating_advantage",
+      "expected": {
+        "pair_classification": "tuning-usable",
+        "comparison_verdict": "comparison-usable",
+        "scorecard_treatment_behavior_assessment": "too reactive",
+        "scorecard_recommendation": "manual-review-needed",
+        "shadow_decision": "responsive-would-have-overreacted"
+      }
+    }
+  ]
+}

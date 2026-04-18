@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-22
+HLDM-JKBOTTI-AI-STAND-20260415-23
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -18,6 +18,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/` PowerShell automation for setup, build, launch, smoke testing, and evaluation capture on Windows.
 - `scripts/run_balance_eval.ps1`, `scripts/run_mixed_balance_eval.ps1`, `scripts/run_balance_parameter_sweep.ps1`, and `scripts/summarize_balance_eval.ps1` for control/treatment capture and replay-driven profile comparison.
 - `scripts/run_shadow_profile_review.ps1` plus `ai_director/tools/replay_captured_lane_with_profiles.py` for offline counterfactual review of a captured treatment lane.
+- `ai_director/testdata/pair_sessions/`, `scripts/generate_pair_session_fixtures.py`, and `scripts/run_fixture_decision_demo.ps1` for synthetic post-run decision validation.
 - `docs/test-stand.md` with local HLDS lab details.
 - `docs/operator-checklist.md` with the first real human pair-session operator flow.
 - `docs/first-live-pair-notes-template.md` as an optional lightweight note sheet for the first real human pair session.
@@ -271,7 +272,7 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 
 Interpret the scorecard treatment assessment like this:
 
-- `too quiet`: humans were present long enough to compare lanes, but conservative stayed quieter than control without grounded human-present patch evidence.
+- `too quiet`: humans were present long enough to compare lanes, and conservative still looked too quiet relative to control under grounded live evidence.
 - `appropriately conservative`: conservative produced grounded human-present patch evidence without looking oscillatory or overactive.
 - `inconclusive`: human presence, patch timing, or post-patch observation windows were still too weak to justify a profile decision.
 - `too reactive`: the treatment lane looked oscillatory or violated a guardrail, so artifacts need manual review before another live profile choice.
@@ -282,8 +283,9 @@ Use the scorecard recommendation conservatively:
 - `treatment-evidence-promising-repeat-conservative`: there is promising live signal, but repeat conservative before considering a profile change.
 - `weak-signal-repeat-session`: humans joined, but the post-patch evidence stayed weak; repeat conservative first.
 - `conservative-looks-too-quiet-try-responsive-next`: only justified when humans were present long enough to compare lanes and conservative still stayed too quiet.
+- `responsive-too-reactive-revert-to-conservative`: grounded responsive evidence already says the live treatment overreacted, so the next live profile should move back to conservative.
 - `insufficient-data-repeat-session`: reject the session for tuning and collect another live pair first.
-- `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action.
+- `manual-review-needed`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action.
 
 ## Shadow Profile Review
 
@@ -329,12 +331,41 @@ Use the registry layer to turn repeated live pair runs into one honest evidence 
 - the profile recommendation stays intentionally conservative. It will not recommend `responsive` from no-human or weak-signal runs, and it requires repeated grounded conservative evidence before promotion.
 - `keep-conservative` means the current live default is still behaving safely.
 - `collect-more-conservative-evidence` means there is some usable signal, but not enough repeated grounded evidence yet to justify promotion.
-- `conservative-validated-try-responsive` is only justified after multiple usable or strong conservative sessions show that conservative is consistently too quiet under real human presence.
+- `conservative-validated-try-responsive` is only justified after repeated grounded conservative sessions show that conservative is consistently too quiet under real human presence.
 - `responsive-too-reactive-revert-to-conservative` means grounded responsive evidence already shows overreaction and the live default should move back to conservative.
 - `insufficient-data-repeat-session` and `weak-signal-repeat-session` mean the evidence is still too thin to justify any profile change.
 - `manual-review-needed` means the cross-session evidence conflicts or a grounded guardrail concern needs an operator read before another live choice.
 
 Conservative remains the default next live treatment profile until the ledger says otherwise. That keeps profile promotion bounded, reversible, and driven by accumulated evidence instead of one noisy session.
+
+## Synthetic Fixture Validation
+
+The repository also carries deterministic synthetic pair packs under `ai_director/testdata/pair_sessions/`. They exist to validate the post-run decision stack before another real human-rich session is spent on the wrong branch.
+
+- the fixtures are clearly marked synthetic and should never be treated as real live evidence
+- each fixture reuses the same pair-pack shape as the live workflow: `pair_summary.json`, `comparison.json`, nested lane summaries/session packs, and replayable telemetry history
+- the fixture families cover plumbing-only insufficient-data, sparse-human weak-signal, usable conservative keep/repeat cases, conservative-too-quiet responsive-candidate cases, responsive-too-reactive revert cases, and an ambiguous manual-review case
+- the fixtures help prove that insufficient-data does not justify responsive, that one noisy run does not auto-promote responsive, and that too-quiet / too-reactive branches stay grounded and honest
+
+Regenerate the synthetic pair packs if the deterministic fixture source changes:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe .\scripts\generate_pair_session_fixtures.py"
+```
+
+Run the dedicated fixture-backed decision tests:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_pair_session_fixtures"
+```
+
+Run the compact end-to-end demo against the full fixture suite:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decision_demo.ps1
+```
+
+That demo copies the synthetic pair packs into a temporary evaluation root, runs shadow review, scores every pair, registers them into a synthetic registry, and emits a compact summary. The demo is for workflow validation only. It does not replace real human evidence when choosing the next live profile.
 
 Summarize one lane or compare control vs treatment with:
 

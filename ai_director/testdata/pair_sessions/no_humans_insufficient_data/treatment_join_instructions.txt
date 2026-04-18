@@ -1,0 +1,6 @@
+Synthetic HLDM paired lane instructions
+Role: Treatment
+Mode: AI
+Lane label: treatment-conservative
+Loopback join target: 127.0.0.1:27017
+Synthetic fixture only. Do not treat this as a real operator runbook.

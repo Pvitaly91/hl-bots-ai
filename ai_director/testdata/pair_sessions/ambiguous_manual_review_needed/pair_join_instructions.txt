@@ -1,0 +1,4 @@
+Synthetic HLDM paired instructions
+Control lane comes first, treatment lane second.
+Treatment profile: conservative
+Synthetic fixture only. This pair pack exists to validate the post-run decision stack.

@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-22
+HLDM-JKBOTTI-AI-STAND-20260415-23
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -383,7 +383,7 @@ Interpret the aggregate recommendation like this:
 
 - `keep-conservative`: the current live default is still behaving safely.
 - `collect-more-conservative-evidence`: there is some usable signal, but not enough repeated grounded evidence yet to promote or reject conservative.
-- `conservative-validated-try-responsive`: only justified after multiple usable or strong conservative sessions show that conservative is consistently too quiet under real human presence.
+- `conservative-validated-try-responsive`: only justified after repeated grounded conservative sessions show that conservative is consistently too quiet under real human presence.
 - `responsive-too-reactive-revert-to-conservative`: grounded responsive evidence already shows overreaction and the next live profile should move back to conservative.
 - `insufficient-data-repeat-session`: the registry is still dominated by plumbing-only or no-human evidence.
 - `weak-signal-repeat-session`: humans joined, but the accumulated post-patch evidence is still too weak for a profile change.
@@ -413,6 +413,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; 
 ```
 
 Use the replay scenarios first when tuning thresholds or hysteresis. They are deterministic, do not require a live server, and now cover one-human dominance, one-human struggles, sparse joins, late joins, threshold-sensitive lanes, oscillation-prone alternation, spike-and-stabilize patterns, overcorrection risk, and close games where AI should remain conservative.
+
+## Synthetic Pair-Session Fixtures
+
+Synthetic pair/session fixtures now live under `ai_director\testdata\pair_sessions\`. They are deterministic, clearly marked as synthetic, and shaped like real pair packs so the post-run tooling can consume them without a separate compatibility layer.
+
+Use them to validate the post-run decision workflow before spending another human-rich session:
+
+- `no_humans_insufficient_data`: both lanes stay plumbing-valid only
+- `sparse_humans_weak_signal`: at least one lane stays too sparse for an honest comparison
+- `conservative_acceptable_usable_signal`: conservative earns usable grounded evidence and should be repeated, not promoted
+- `strong_signal_keep_conservative`: conservative produces the clearest keep-conservative evidence
+- `conservative_too_quiet_responsive_candidate`: conservative stays too quiet under grounded signal and responsive becomes the next candidate
+- `responsive_too_reactive_revert_candidate`: responsive overreacts and should be reverted to conservative
+- `ambiguous_manual_review_needed`: the evidence stays grounded but still needs an operator read instead of blind promotion
+
+These fixtures do not replace real human evidence. They exist to prove that the workflow stays honest about insufficient-data, weak-signal, keep-conservative, conservative-too-quiet responsive-candidate, responsive-too-reactive revert-to-conservative, and manual-review branches before the next live session.
+
+Regenerate the synthetic pair packs if the deterministic source definitions change:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe .\scripts\generate_pair_session_fixtures.py"
+```
+
+Run the fixture-backed decision tests:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_pair_session_fixtures"
+```
+
+Run the optional compact fixture demo:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decision_demo.ps1
+```
+
+The demo copies the synthetic pair packs into a scratch evaluation root, runs shadow review, scores every pair, registers them into a synthetic registry, and emits a compact branch summary. Treat that output as workflow validation only, never as a substitute for real live human evidence.
 
 If a local Half-Life client is installed, you can resolve or dry-run the join command with:
 
@@ -639,7 +675,7 @@ Pair comparison verdicts are also preserved in `comparison.json` / `comparison.m
 
 The first-human-session scorecard adds one more operator-focused treatment label:
 
-- `too quiet`: humans were present long enough to compare lanes, but conservative stayed quieter than control without grounded human-present patch evidence
+- `too quiet`: humans were present long enough to compare lanes, and conservative still looked too quiet relative to control under grounded live evidence
 - `appropriately conservative`: conservative produced grounded human-present patch evidence without looking overactive
 - `inconclusive`: human presence, patch timing, or post-patch windows were still too weak to justify a profile decision
 - `too reactive`: the treatment lane looked oscillatory or violated a guardrail and needs manual artifact review
@@ -650,8 +686,9 @@ Use the scorecard recommendations like this:
 - `treatment-evidence-promising-repeat-conservative`: repeat conservative before changing profile
 - `weak-signal-repeat-session`: collect another conservative session because live evidence stayed weak
 - `conservative-looks-too-quiet-try-responsive-next`: responsive is justified as the next candidate only because conservative stayed too quiet under usable human presence
+- `responsive-too-reactive-revert-to-conservative`: grounded responsive evidence already says the live treatment overreacted, so the next live profile should move back to conservative
 - `insufficient-data-repeat-session`: reject the session as tuning evidence
-- `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
+- `manual-review-needed`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
 
 ## Attach Troubleshooting
 

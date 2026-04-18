@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "ambiguous_manual_review_needed",
+  "description": "Conservative itself goes oscillatory under grounded signal. The session must stay manual-review-needed instead of being promoted or silently ignored.",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "treatment_profile": "conservative",
+  "min_human_snapshots": 3,
+  "min_human_presence_seconds": 60.0,
+  "min_patch_events_for_usable_lane": 2,
+  "expected": {
+    "pair_classification": "tuning-usable",
+    "comparison_verdict": "comparison-usable",
+    "scorecard_treatment_behavior_assessment": "too reactive",
+    "scorecard_recommendation": "manual-review-needed",
+    "shadow_decision": "responsive-would-have-overreacted"
+  }
+}

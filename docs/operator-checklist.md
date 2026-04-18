@@ -130,7 +130,7 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 
 ## How To Interpret The Scorecard
 
-- `too quiet`: humans were present long enough to compare lanes, but conservative still stayed quieter than control without grounded human-present patch evidence
+- `too quiet`: humans were present long enough to compare lanes, and conservative still looked too quiet relative to control under grounded live evidence
 - `appropriately conservative`: conservative produced grounded human-present patch evidence and did not look oscillatory or overactive
 - `inconclusive`: human presence, patch timing, or post-patch windows were still too weak to justify a profile decision
 - `too reactive`: the treatment lane looked oscillatory or violated a guardrail and needs manual review before another live profile choice
@@ -141,8 +141,9 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 - `treatment-evidence-promising-repeat-conservative`: repeat conservative before changing profile
 - `weak-signal-repeat-session`: collect another conservative session because the live evidence stayed weak
 - `conservative-looks-too-quiet-try-responsive-next`: responsive is justified as the next candidate only because conservative stayed too quiet under usable human presence
+- `responsive-too-reactive-revert-to-conservative`: grounded responsive evidence already says the live treatment overreacted, so the next live profile should move back to conservative
 - `insufficient-data-repeat-session`: reject the session as tuning evidence and repeat the live pair first
-- `review-artifacts-manually`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
+- `manual-review-needed`: inspect `comparison.md`, `scorecard.md`, and the treatment lane summary before choosing the next action
 
 ## How To Read Shadow Review
 
@@ -162,6 +163,32 @@ powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1
 - the registry summary tells you how many sessions are still insufficient-data or weak-signal, how many are tuning-usable or strong-signal, how often treatment patched while humans were present, how often shadow review suggested keep conservative, insufficient-data-no-promotion, responsive-candidate, or responsive-too-reactive, and how each treatment profile is behaving across runs
 - conservative remains the default next live profile until the registry shows repeated grounded evidence that responsive is justified
 - responsive should be rejected or reverted when grounded responsive evidence looks too reactive
+
+## Synthetic Fixture Validation
+
+- synthetic pair/session fixtures live under `ai_director\testdata\pair_sessions\`
+- they are deterministic, clearly marked synthetic, and shaped like real pair packs so the same post-run tools can consume them
+- the fixture families cover insufficient-data, weak-signal, keep-conservative, conservative-too-quiet responsive-candidate, responsive-too-reactive revert, and ambiguous manual-review branches
+- use them to validate the decision stack before another live session, not to replace real human evidence
+- a fixture that stays insufficient-data or weak-signal must never justify promoting `responsive`
+
+Regenerate the fixtures if their deterministic source definitions change:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe .\scripts\generate_pair_session_fixtures.py"
+```
+
+Run the dedicated fixture-backed decision validation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ". .\scripts\common.ps1; `$pythonExe = Get-PythonPath -PreferredPath ''; & `$pythonExe -m unittest ai_director.tests.test_pair_session_fixtures"
+```
+
+Run the optional compact fixture demo when you want a one-shot branch summary:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_fixture_decision_demo.ps1
+```
 
 ## Optional Session Notes
 

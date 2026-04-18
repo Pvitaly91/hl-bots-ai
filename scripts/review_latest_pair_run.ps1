@@ -26,6 +26,26 @@ function Resolve-ExistingPath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Resolve-PairArtifactPath {
+    param(
+        [string]$Path,
+        [string]$PairRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($Path)) {
+        $Path
+    }
+    else {
+        Join-Path $PairRoot $Path
+    }
+
+    return Resolve-ExistingPath -Path $candidate
+}
+
 function Find-LatestPairRoot {
     param([string]$Root)
 
@@ -133,14 +153,14 @@ $pairSummaryMarkdownCandidate = if ($artifacts -and $artifacts.pair_summary_mark
 $comparisonJsonCandidate = if ($artifacts -and $artifacts.comparison_json) { [string]$artifacts.comparison_json } else { Join-Path $resolvedPairRoot "comparison.json" }
 $comparisonMarkdownCandidate = if ($artifacts -and $artifacts.comparison_markdown) { [string]$artifacts.comparison_markdown } else { Join-Path $resolvedPairRoot "comparison.md" }
 
-$pairSummaryMarkdownPath = Resolve-ExistingPath -Path $pairSummaryMarkdownCandidate
-$comparisonJsonPath = Resolve-ExistingPath -Path $comparisonJsonCandidate
-$comparisonMarkdownPath = Resolve-ExistingPath -Path $comparisonMarkdownCandidate
+$pairSummaryMarkdownPath = Resolve-PairArtifactPath -Path $pairSummaryMarkdownCandidate -PairRoot $resolvedPairRoot
+$comparisonJsonPath = Resolve-PairArtifactPath -Path $comparisonJsonCandidate -PairRoot $resolvedPairRoot
+$comparisonMarkdownPath = Resolve-PairArtifactPath -Path $comparisonMarkdownCandidate -PairRoot $resolvedPairRoot
 
-$controlSummaryMarkdownPath = Resolve-ExistingPath -Path ([string]$pairSummary.control_lane.summary_markdown)
-$controlSessionPackMarkdownPath = Resolve-ExistingPath -Path ([string]$pairSummary.control_lane.session_pack_markdown)
-$treatmentSummaryMarkdownPath = Resolve-ExistingPath -Path ([string]$pairSummary.treatment_lane.summary_markdown)
-$treatmentSessionPackMarkdownPath = Resolve-ExistingPath -Path ([string]$pairSummary.treatment_lane.session_pack_markdown)
+$controlSummaryMarkdownPath = Resolve-PairArtifactPath -Path ([string]$pairSummary.control_lane.summary_markdown) -PairRoot $resolvedPairRoot
+$controlSessionPackMarkdownPath = Resolve-PairArtifactPath -Path ([string]$pairSummary.control_lane.session_pack_markdown) -PairRoot $resolvedPairRoot
+$treatmentSummaryMarkdownPath = Resolve-PairArtifactPath -Path ([string]$pairSummary.treatment_lane.summary_markdown) -PairRoot $resolvedPairRoot
+$treatmentSessionPackMarkdownPath = Resolve-PairArtifactPath -Path ([string]$pairSummary.treatment_lane.session_pack_markdown) -PairRoot $resolvedPairRoot
 
 $comparisonPayload = Read-JsonFile -Path $comparisonJsonPath
 $comparison = if ($null -ne $comparisonPayload) { $comparisonPayload.comparison } else { $pairSummary.comparison }

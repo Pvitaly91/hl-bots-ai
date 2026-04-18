@@ -49,6 +49,26 @@ function Resolve-ExistingPath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Resolve-PairArtifactPath {
+    param(
+        [string]$Path,
+        [string]$PairRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $candidate = if ([System.IO.Path]::IsPathRooted($Path)) {
+        $Path
+    }
+    else {
+        Join-Path $PairRoot $Path
+    }
+
+    return Resolve-ExistingPath -Path $candidate
+}
+
 function Find-LatestPairRoot {
     param([string]$Root)
 
@@ -124,6 +144,17 @@ function Get-TreatmentBehaviorAssessment {
 
     if (
         $TreatmentProfile -eq "conservative" -and
+        $TreatmentBehaviorVerdict -eq "underactive" -and
+        $ControlUsableHumanSignal -and
+        $TreatmentUsableHumanSignal -and
+        $RelativeBehaviorDiscussionReady -and
+        $TreatmentEvidenceQuality -in @("usable-signal", "strong-signal")
+    ) {
+        return "too quiet"
+    }
+
+    if (
+        $TreatmentProfile -eq "conservative" -and
         $RelativeBehaviorDiscussionReady -and
         $TreatmentEvidenceQuality -in @("usable-signal", "strong-signal") -and
         $TreatmentPatchedWhileHumansPresent -and
@@ -161,17 +192,32 @@ function Get-Recommendation {
     }
 
     if ($TreatmentBehaviorAssessment -eq "too reactive") {
+        if ($TreatmentProfile -eq "responsive") {
+            return [pscustomobject]@{
+                Key = "responsive-too-reactive-revert-to-conservative"
+                Reason = "The responsive treatment lane looked oscillatory or violated a guardrail, so the next live profile should revert to conservative."
+                SuggestedNextStep = "Keep conservative as the next live profile and inspect comparison.md plus the treatment lane artifacts before any later responsive retry."
+            }
+        }
+
         return [pscustomobject]@{
-            Key = "review-artifacts-manually"
+            Key = "manual-review-needed"
             Reason = "The treatment lane looked oscillatory or violated a guardrail, so the lane artifacts need manual inspection before choosing another profile."
             SuggestedNextStep = "Open comparison.md and the treatment summary/session pack before scheduling another live profile change."
         }
     }
 
-    if ($TreatmentBehaviorAssessment -eq "too quiet" -and $TreatmentProfile -eq "conservative") {
+    if (
+        $TreatmentBehaviorAssessment -eq "too quiet" -and
+        $TreatmentProfile -eq "conservative" -and
+        (
+            $ComparisonVerdict -in @("comparison-usable", "comparison-strong-signal") -or
+            $TreatmentEvidenceQuality -in @("usable-signal", "strong-signal")
+        )
+    ) {
         return [pscustomobject]@{
             Key = "conservative-looks-too-quiet-try-responsive-next"
-            Reason = "Humans were present long enough to compare lanes, but conservative stayed quieter than control without grounded human-present patch evidence."
+            Reason = "Humans were present long enough to compare lanes, but conservative still looked too quiet relative to control under grounded live evidence."
             SuggestedNextStep = "Preserve this pair pack, then plan the next live pair with the responsive profile."
         }
     }
@@ -198,7 +244,10 @@ function Get-Recommendation {
         $ControlEvidenceQuality -eq "weak-signal" -or
         $TreatmentEvidenceQuality -eq "weak-signal"
     ) {
-        if ($TreatmentPatchedWhileHumansPresent -or $MeaningfulPostPatchObservationWindowExists) {
+        if (
+            ($TreatmentPatchedWhileHumansPresent -or $MeaningfulPostPatchObservationWindowExists) -and
+            $TreatmentEvidenceQuality -in @("usable-signal", "strong-signal")
+        ) {
             return [pscustomobject]@{
                 Key = "treatment-evidence-promising-repeat-conservative"
                 Reason = "There is some grounded live treatment signal, but it is still too weak for a profile change."
@@ -214,7 +263,7 @@ function Get-Recommendation {
     }
 
     return [pscustomobject]@{
-        Key = "review-artifacts-manually"
+        Key = "manual-review-needed"
         Reason = "The current evidence does not cleanly support a profile-change recommendation."
         SuggestedNextStep = "Inspect comparison.md, scorecard.md, and the treatment summary manually before choosing the next live action."
     }
@@ -354,13 +403,13 @@ $comparisonJsonCandidate = if ($artifacts -and $artifacts.comparison_json) { [st
 $pairSummaryMarkdownCandidate = if ($artifacts -and $artifacts.pair_summary_markdown) { [string]$artifacts.pair_summary_markdown } else { Join-Path $resolvedPairRoot "pair_summary.md" }
 $comparisonMarkdownCandidate = if ($artifacts -and $artifacts.comparison_markdown) { [string]$artifacts.comparison_markdown } else { Join-Path $resolvedPairRoot "comparison.md" }
 
-$comparisonJsonPath = Resolve-ExistingPath -Path $comparisonJsonCandidate
-$pairSummaryMarkdownPath = Resolve-ExistingPath -Path $pairSummaryMarkdownCandidate
-$comparisonMarkdownPath = Resolve-ExistingPath -Path $comparisonMarkdownCandidate
-$shadowProfilesJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_profiles.json")
-$shadowProfilesMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_profiles.md")
-$shadowRecommendationJsonPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.json")
-$shadowRecommendationMarkdownPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "shadow_review\shadow_recommendation.md")
+$comparisonJsonPath = Resolve-PairArtifactPath -Path $comparisonJsonCandidate -PairRoot $resolvedPairRoot
+$pairSummaryMarkdownPath = Resolve-PairArtifactPath -Path $pairSummaryMarkdownCandidate -PairRoot $resolvedPairRoot
+$comparisonMarkdownPath = Resolve-PairArtifactPath -Path $comparisonMarkdownCandidate -PairRoot $resolvedPairRoot
+$shadowProfilesJsonPath = Resolve-PairArtifactPath -Path "shadow_review\shadow_profiles.json" -PairRoot $resolvedPairRoot
+$shadowProfilesMarkdownPath = Resolve-PairArtifactPath -Path "shadow_review\shadow_profiles.md" -PairRoot $resolvedPairRoot
+$shadowRecommendationJsonPath = Resolve-PairArtifactPath -Path "shadow_review\shadow_recommendation.json" -PairRoot $resolvedPairRoot
+$shadowRecommendationMarkdownPath = Resolve-PairArtifactPath -Path "shadow_review\shadow_recommendation.md" -PairRoot $resolvedPairRoot
 $shadowRecommendation = Read-JsonFile -Path $shadowRecommendationJsonPath
 
 $comparisonPayload = Read-JsonFile -Path $comparisonJsonPath
@@ -373,14 +422,14 @@ if ($null -eq $comparison) {
 }
 
 if ($null -eq $controlLaneSummary) {
-    $controlLaneSummary = Read-JsonFile -Path ([string]$pairSummary.control_lane.summary_json)
+    $controlLaneSummary = Read-JsonFile -Path (Resolve-PairArtifactPath -Path ([string]$pairSummary.control_lane.summary_json) -PairRoot $resolvedPairRoot)
     if ($null -ne $controlLaneSummary) {
         $controlLaneSummary = $controlLaneSummary.primary_lane
     }
 }
 
 if ($null -eq $treatmentLaneSummary) {
-    $treatmentLaneSummary = Read-JsonFile -Path ([string]$pairSummary.treatment_lane.summary_json)
+    $treatmentLaneSummary = Read-JsonFile -Path (Resolve-PairArtifactPath -Path ([string]$pairSummary.treatment_lane.summary_json) -PairRoot $resolvedPairRoot)
     if ($null -ne $treatmentLaneSummary) {
         $treatmentLaneSummary = $treatmentLaneSummary.primary_lane
     }
@@ -472,7 +521,8 @@ $scorecard = [ordered]@{
         keep_conservative = $recommendation.Key -in @(
             "keep-conservative-and-collect-more",
             "treatment-evidence-promising-repeat-conservative",
-            "weak-signal-repeat-session"
+            "weak-signal-repeat-session",
+            "responsive-too-reactive-revert-to-conservative"
         )
         try_responsive_next = $recommendation.Key -eq "conservative-looks-too-quiet-try-responsive-next"
         collect_another_conservative_session_first = $recommendation.Key -in @(
@@ -520,8 +570,8 @@ $scorecard = [ordered]@{
         pair_summary_markdown = $pairSummaryMarkdownPath
         comparison_json = $comparisonJsonPath
         comparison_markdown = $comparisonMarkdownPath
-        control_summary_markdown = Resolve-ExistingPath -Path ([string]$pairSummary.control_lane.summary_markdown)
-        treatment_summary_markdown = Resolve-ExistingPath -Path ([string]$pairSummary.treatment_lane.summary_markdown)
+        control_summary_markdown = Resolve-PairArtifactPath -Path ([string]$pairSummary.control_lane.summary_markdown) -PairRoot $resolvedPairRoot
+        treatment_summary_markdown = Resolve-PairArtifactPath -Path ([string]$pairSummary.treatment_lane.summary_markdown) -PairRoot $resolvedPairRoot
         shadow_profiles_json = $shadowProfilesJsonPath
         shadow_profiles_markdown = $shadowProfilesMarkdownPath
         shadow_recommendation_json = $shadowRecommendationJsonPath
