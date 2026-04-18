@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-31
+HLDM-JKBOTTI-AI-STAND-20260415-32
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -21,6 +21,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_guided_live_pair_session.ps1` and `scripts/run_guided_live_pair_session.bat` for the single conservative-first live operator workflow that runs preflight, the paired capture, optional monitor-driven auto-stop, the full post-session pipeline, and a final session docket.
 - `scripts/build_latest_session_outcome_dossier.ps1` and `scripts/build_latest_session_outcome_dossier.bat` for the one-shot post-session outcome dossier that consolidates scorecard, shadow review, grounded certification, latest-session delta, responsive gate, and next-live planning into one operator-facing artifact.
 - `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
+- `scripts/prepare_next_live_session_mission.ps1` and `scripts/prepare_next_live_session_mission.bat` for the pre-run operator mission brief that turns the current planner, gate, and latest outcome context into one exact next-session target artifact before launch.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
 - `scripts/certify_latest_pair_session.ps1` and `scripts/certify_latest_pair_session.bat` for strict grounded-evidence certification of the latest pair pack or a specified pair root.
@@ -194,10 +195,11 @@ The paired live-session runner is the recommended next human workflow:
 - the control lane now supports the same human-join-aware waiting thresholds as the treatment lane, while still staying sidecar-free with `jk_ai_balance_enabled 0`.
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
 - `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
-- `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, the next-live planner, the outcome dossier, and the final session docket.
+- `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pre-run mission brief, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, the next-live planner, the outcome dossier, and the final session docket.
 - `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
+- `scripts\prepare_next_live_session_mission.ps1` is the pre-run operator brief. It reuses the current responsive gate, the next-live planner, and the latest outcome dossier context to produce `next_live_session_mission.json` and `next_live_session_mission.md` with the exact thresholds, stop condition, failure conditions, and mission statement for the very next live run.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
-- each guided paired run also writes `session_outcome_dossier.json` and `session_outcome_dossier.md` under the pair root, and the final guided docket points at that dossier so the operator gets one immediate "did this count, what changed, and what now?" answer.
+- each guided paired run also writes `session_outcome_dossier.json` and `session_outcome_dossier.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, and points the final guided docket back at both the mission and the dossier so the operator can compare "what was the target before launch?" against "what counted after the run?".
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -245,6 +247,12 @@ For the next real conservative human pair session, use the guided workflow first
 powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
+If you want to inspect the exact target before launch, generate the mission brief directly first:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_next_live_session_mission.ps1
+```
+
 Rehearse the same guided workflow end to end without a real human participant like this:
 
 ```powershell
@@ -280,12 +288,14 @@ The guided workflow still stays thin:
 - registration remains `scripts\register_pair_session_result.ps1`
 - registry summary remains `scripts\summarize_pair_session_registry.ps1`
 - next-live promotion-gap planning remains `scripts\plan_next_live_session.ps1`
+- pre-run mission briefing remains `scripts\prepare_next_live_session_mission.ps1`
 - responsive promotion gating remains `scripts\evaluate_responsive_trial_gate.ps1`
 
 Read the final guided docket like this:
 
 - `final_session_docket.json`: machine-readable final state for the pair, monitor, post-run outputs, and operator recommendation flags
 - `final_session_docket.md`: concise human-facing end-of-run pointer that says whether the session was sufficient and where to open the consolidated outcome dossier next
+- `next_live_session_mission.json` / `next_live_session_mission.md`: the pre-run target artifact that says exactly what the next session must accomplish before it starts
 - `session_outcome_dossier.json` / `session_outcome_dossier.md`: the consolidated post-session answer that merges scorecard, certification, latest-session delta, responsive gate, and next-live planning into one artifact
 
 Interpret the live monitor conservatively:
@@ -500,6 +510,30 @@ Read the planner outputs like this:
 - next-live planner answers what evidence gap still remains and what the next real conservative session should try to prove
 
 In the planner, "evidence gap" means the configured promotion thresholds minus the currently certified grounded evidence counts. If the next plan still says responsive is blocked, use `next_live_plan.md` before scheduling the next conservative session so the operator knows whether the goal is first grounded certification, another grounded conservative run, repeated grounded too-quiet evidence, or manual review.
+
+## Next Live Session Mission Brief
+
+Use `scripts\prepare_next_live_session_mission.ps1` immediately before the next real live session when the operator needs one concrete pre-run target instead of piecing it together from the planner, gate, and latest dossier manually.
+
+- it writes `next_live_session_mission.json` and `next_live_session_mission.md` under `lab\logs\eval\registry\`
+- it reuses the current registry summary, responsive gate, and next-live planner outputs instead of creating a second decision engine
+- it also reads the latest available live outcome dossier when one exists, so the mission can state whether the project is still in the same blocked state or is coming off a recent non-grounded run
+- it is narrower than the planner: the planner explains the whole promotion gap, while the mission brief narrows that into the exact next-session target, exact thresholds, exact stop condition, and exact ways the session can still fail to count
+- it is earlier than the outcome dossier: the dossier explains what the last session changed after the run, while the mission brief explains what the next session must accomplish before the run
+- it stays conservative until certified grounded evidence exists; a blocked gate or non-grounded latest dossier does not get softened into speculative responsive language
+- it aligns directly with the live monitor: the mission's stop condition is the existing `sufficient-for-tuning-usable-review` / `sufficient-for-scorecard` bar, not a new mission-only rule
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_next_live_session_mission.ps1
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\prepare_next_live_session_mission.bat
+```
 
 ## Responsive Trial Gate
 
@@ -742,7 +776,7 @@ After setting `OPENAI_API_KEY`, rerun `scripts\run_test_stand_with_bots.bat` or 
 - Pair summaries: `lab/logs/eval/pairs/<timestamp>-.../pair_summary.json` and `pair_summary.md`
 - Pair comparisons: `lab/logs/eval/pairs/<timestamp>-.../comparison.json` and `comparison.md`
 - Pair-session registry ledger: `lab/logs/eval/registry/pair_sessions.ndjson`
-- Pair-session registry summaries and planning artifacts: `lab/logs/eval/registry/registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, `profile_recommendation.md`, `responsive_trial_gate.json`, `responsive_trial_plan.json`, `next_live_plan.json`, and `next_live_plan.md`
+- Pair-session registry summaries and planning artifacts: `lab/logs/eval/registry/registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, `profile_recommendation.md`, `responsive_trial_gate.json`, `responsive_trial_plan.json`, `next_live_plan.json`, `next_live_plan.md`, `next_live_session_mission.json`, and `next_live_session_mission.md`
 - Server install root by default: `lab/hlds`
 
 The generated map-specific config pins `botskill`, `min_bots`, `max_bots`, and a matching set of `addbot` lines so the requested bot pool comes up predictably and can be regenerated safely on each launcher run.
@@ -771,6 +805,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/build_latest_session_outcome_dossier.bat`: `cmd.exe` wrapper for the outcome-dossier helper.
 - `scripts/plan_next_live_session.ps1`: computes the certified-grounded promotion gap, emits `next_live_plan.json` plus `next_live_plan.md`, and recommends the next live profile and session objective.
 - `scripts/plan_next_live_session.bat`: `cmd.exe` wrapper for the next-live session planner.
+- `scripts/prepare_next_live_session_mission.ps1`: turns the current gate, planner, and latest outcome context into `next_live_session_mission.json` plus `next_live_session_mission.md` for the very next live run.
+- `scripts/prepare_next_live_session_mission.bat`: `cmd.exe` wrapper for the mission-brief helper.
 - `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.

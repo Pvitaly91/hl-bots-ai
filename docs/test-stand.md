@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-31
+HLDM-JKBOTTI-AI-STAND-20260415-32
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -316,6 +316,7 @@ powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 `
 The guided runner remains a thin orchestrator over the existing helpers:
 
 - it still runs `scripts\preflight_real_pair_session.ps1` first
+- it now runs `scripts\prepare_next_live_session_mission.ps1` before launch so the operator sees the current mission brief path, recommended profile, and current next objective up front
 - it still uses `scripts\run_control_treatment_pair.ps1` for the actual control and treatment capture
 - in rehearsal mode it swaps only the pair runner for `scripts\run_guided_pair_rehearsal.ps1`, which stages monitor-compatible pair artifacts and then hands the finalized pair pack back to the same post-run helpers
 - it can auto-start `scripts\monitor_live_pair_session.ps1` against the active pair root
@@ -323,7 +324,8 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it still runs `scripts\review_latest_pair_run.ps1`, `scripts\run_shadow_profile_review.ps1`, `scripts\score_latest_pair_session.ps1`, `scripts\register_pair_session_result.ps1`, `scripts\summarize_pair_session_registry.ps1`, and `scripts\evaluate_responsive_trial_gate.ps1`
 - it also runs `scripts\plan_next_live_session.ps1` in the normal post-run pipeline so the final docket can carry the current next-live objective and recommended profile
 - it also runs `scripts\build_latest_session_outcome_dossier.ps1` so the pair root gets `session_outcome_dossier.json` and `session_outcome_dossier.md`
-- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the outcome dossier
+- it snapshots the mission brief under `guided_session\mission\` once the pair root exists
+- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to both the pre-run mission brief and the post-run outcome dossier
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
 Start the live monitor like this while the pair is running:
@@ -380,6 +382,12 @@ powershell -NoProfile -File .\scripts\plan_next_live_session.ps1
 powershell -NoProfile -File .\scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan
 ```
 
+Emit the exact pre-run mission brief for the next live session:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_next_live_session_mission.ps1
+```
+
 Run the replay/profile sweep before scheduling a longer live mixed-session:
 
 ```powershell
@@ -410,15 +418,17 @@ powershell -NoProfile -File .\scripts\summarize_balance_eval.ps1 `
 
 For the next real human-vs-bot session, prefer this sequence:
 
-1. Start `scripts\run_guided_live_pair_session.ps1` with the default `conservative` treatment profile.
-2. Read the printed control join target, treatment join target, monitor status or exact monitor command, pair output root, and final-docket target.
-3. Join the control lane first and keep a human present long enough to clear the printed human-signal thresholds.
-4. Let the paired workflow advance to treatment, then join the treatment lane second.
-5. If the guided runner auto-started the monitor, leave it alone. If it did not, run the printed exact `scripts\monitor_live_pair_session.ps1 -PairRoot ...` command in a second terminal.
-6. Use `-AutoStopWhenSufficient` only when you want the guided runner to request an early stop after the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
-7. Keep the session running when the monitor still says any `waiting-*` verdict, and never treat `insufficient-data-timeout` as tuning proof.
-8. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
-9. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
+1. Generate `next_live_session_mission.md` or let the guided runner generate it automatically at startup.
+2. Start `scripts\run_guided_live_pair_session.ps1` with the default `conservative` treatment profile.
+3. Read the printed mission brief path, control join target, treatment join target, monitor status or exact monitor command, pair output root, and final-docket target.
+4. Confirm the mission still says the session is targeting certified grounded conservative evidence before spending the real run.
+5. Join the control lane first and keep a human present long enough to clear the printed human-signal thresholds.
+6. Let the paired workflow advance to treatment, then join the treatment lane second.
+7. If the guided runner auto-started the monitor, leave it alone. If it did not, run the printed exact `scripts\monitor_live_pair_session.ps1 -PairRoot ...` command in a second terminal.
+8. Use `-AutoStopWhenSufficient` only when you want the guided runner to request an early stop after the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
+9. Keep the session running when the monitor still says any `waiting-*` verdict, and never treat `insufficient-data-timeout` as tuning proof.
+10. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
+11. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
 
 Use rehearsal mode for workflow validation only:
 
@@ -490,6 +500,7 @@ Use the registry helpers to move from single scorecards to accumulated live evid
 - `scripts\summarize_pair_session_registry.ps1` writes `registry_summary.json`, `registry_summary.md`, `profile_recommendation.json`, and `profile_recommendation.md` under `lab\logs\eval\registry\`.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateResponsiveTrialGate` can refresh the latest responsive-trial gate in the same pass.
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass.
+- `scripts\prepare_next_live_session_mission.ps1` writes `next_live_session_mission.json` and `next_live_session_mission.md` for the very next live run.
 - `scripts\analyze_latest_grounded_session.ps1` writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md` for the latest pair or a specific `-PairRoot`.
 - a pair counts toward promotion only when it is certified as grounded evidence: live origin, not rehearsal, not synthetic, minimum human-signal thresholds met, treatment patched while humans were present, a meaningful post-patch observation window exists, and the pair clears `tuning-usable` or stronger.
 - rehearsal, synthetic, no-human, plumbing-valid-only, comparison-insufficient-data, insufficient-data, and weak-signal sessions stay in the ledger for auditability but are excluded from promotion counts by reason.
@@ -584,6 +595,30 @@ Read the stack like this:
 - next-live planner decides what evidence is still missing and what the next real session should try to prove
 
 Here, "evidence gap" means the configured threshold minus the current certified grounded count for that evidence type. Before the next conservative live session, read `next_live_plan.md` so the operator knows whether the goal is first grounded certification, another grounded conservative session, repeated grounded too-quiet evidence, or manual review.
+
+## Next Live Session Mission Brief
+
+Use `scripts\prepare_next_live_session_mission.ps1` after the planner and before the next real live run when you need the single operator-facing answer to "what exact target must the next session hit?"
+
+- it writes `next_live_session_mission.json` and `next_live_session_mission.md` under `lab\logs\eval\registry\`
+- it reads the current responsive gate, the current next-live planner output, and the latest available live outcome dossier when one exists
+- it stays thin: the planner still owns the gap math, the gate still owns responsive go/no-go, and the mission helper only turns that current state into a concrete next-session brief
+- it is narrower than the planner: the planner explains the full gap, while the mission brief spells out the exact thresholds, exact stop condition, exact failure conditions, and exact grounded-session success requirements for the next run
+- it is different from the outcome dossier: the dossier is post-run and explains what changed after the latest session, while the mission brief is pre-run and explains what the next session must accomplish before it starts
+- it remains conservative until grounded evidence exists, even if the latest non-grounded live run or rehearsal looked promising
+- it ties directly to the live monitor: the mission stop condition is still the existing `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard` verdict, not a new mission-only threshold
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_next_live_session_mission.ps1
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\prepare_next_live_session_mission.bat
+```
 
 ## Responsive Trial Gate
 

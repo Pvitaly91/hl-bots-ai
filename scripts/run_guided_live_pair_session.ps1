@@ -465,6 +465,10 @@ function Get-FinalSessionDocketMarkdown {
         "- Profile recommendation JSON: $($Docket.artifacts.profile_recommendation_json)",
         "- Responsive trial gate JSON: $($Docket.artifacts.responsive_trial_gate_json)",
         "- Next-live plan JSON: $($Docket.artifacts.next_live_plan_json)",
+        "- Mission brief JSON: $($Docket.artifacts.mission_brief_json)",
+        "- Mission brief Markdown: $($Docket.artifacts.mission_brief_markdown)",
+        "- Mission snapshot JSON: $($Docket.artifacts.mission_snapshot_json)",
+        "- Mission snapshot Markdown: $($Docket.artifacts.mission_snapshot_markdown)",
         "- Registry path: $($Docket.artifacts.registry_path)",
         "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
         "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
@@ -569,6 +573,7 @@ $scoreScriptPath = Join-Path $PSScriptRoot "score_latest_pair_session.ps1"
 $registerScriptPath = Join-Path $PSScriptRoot "register_pair_session_result.ps1"
 $summaryScriptPath = Join-Path $PSScriptRoot "summarize_pair_session_registry.ps1"
 $gateScriptPath = Join-Path $PSScriptRoot "evaluate_responsive_trial_gate.ps1"
+$missionScriptPath = Join-Path $PSScriptRoot "prepare_next_live_session_mission.ps1"
 
 $controlJoinInfo = Get-HldsJoinInfo -Port $ControlPort
 $treatmentJoinInfo = Get-HldsJoinInfo -Port $TreatmentPort
@@ -624,6 +629,23 @@ if (-not [string]::IsNullOrWhiteSpace($PythonPath)) {
 $preflightResult = & $preflightScriptPath @preflightArgs
 if ([string]$preflightResult.Verdict -eq "blocked") {
     throw "Preflight reported 'blocked'. Resolve the listed blockers before running the guided pair session."
+}
+
+$missionArgs = @{
+    LabRoot = $LabRoot
+}
+$missionResult = & $missionScriptPath @missionArgs
+$missionJsonPath = [string](Get-ObjectPropertyValue -Object $missionResult -Name "MissionJsonPath" -Default "")
+$missionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionResult -Name "MissionMarkdownPath" -Default "")
+$missionRecommendedProfile = [string](Get-ObjectPropertyValue -Object $missionResult -Name "RecommendedLiveProfile" -Default "")
+$missionCurrentObjective = [string](Get-ObjectPropertyValue -Object $missionResult -Name "CurrentNextLiveObjective" -Default "")
+
+Write-Host "  Mission brief JSON: $missionJsonPath"
+Write-Host "  Mission brief Markdown: $missionMarkdownPath"
+Write-Host "  Mission recommended live profile: $missionRecommendedProfile"
+Write-Host "  Mission current objective: $missionCurrentObjective"
+if (-not [string]::IsNullOrWhiteSpace($missionRecommendedProfile) -and $resolvedProfile.name -ne $missionRecommendedProfile) {
+    Write-Warning "The requested treatment profile '$($resolvedProfile.name)' does not match the current mission recommendation '$missionRecommendedProfile'."
 }
 
 $knownPairDirectories = @{}
@@ -738,6 +760,9 @@ $guidedSessionRoot = Ensure-Directory -Path (Join-Path $pairRoot "guided_session
 $finalDocketJsonPath = Join-Path $guidedSessionRoot "final_session_docket.json"
 $finalDocketMarkdownPath = Join-Path $guidedSessionRoot "final_session_docket.md"
 $monitorHistoryPath = Join-Path $guidedSessionRoot "monitor_verdict_history.ndjson"
+$missionSnapshotRoot = Ensure-Directory -Path (Join-Path $guidedSessionRoot "mission")
+$missionSnapshotJsonPath = ""
+$missionSnapshotMarkdownPath = ""
 $rehearsalRegistryRoot = if ($RehearsalMode) {
     Ensure-Directory -Path (Join-Path $guidedSessionRoot "registry")
 }
@@ -759,9 +784,27 @@ $monitorCommandText = Get-MonitorCommandText `
     -ResolvedMinPostPatchObservationSeconds $MinPostPatchObservationSeconds `
     -StopWhenSufficient:$AutoStopWhenSufficient
 
+if ($missionJsonPath -and (Test-Path -LiteralPath $missionJsonPath)) {
+    $missionSnapshotJsonPath = Join-Path $missionSnapshotRoot "next_live_session_mission.json"
+    Copy-Item -LiteralPath $missionJsonPath -Destination $missionSnapshotJsonPath -Force
+}
+else {
+    Write-Warning "Mission JSON was not available to snapshot into the pair root."
+}
+
+if ($missionMarkdownPath -and (Test-Path -LiteralPath $missionMarkdownPath)) {
+    $missionSnapshotMarkdownPath = Join-Path $missionSnapshotRoot "next_live_session_mission.md"
+    Copy-Item -LiteralPath $missionMarkdownPath -Destination $missionSnapshotMarkdownPath -Force
+}
+else {
+    Write-Warning "Mission Markdown was not available to snapshot into the pair root."
+}
+
 Write-Host "  Active pair root: $pairRoot"
 Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
+Write-Host "  Mission snapshot JSON: $missionSnapshotJsonPath"
+Write-Host "  Mission snapshot Markdown: $missionSnapshotMarkdownPath"
 Write-Host "  Monitor history NDJSON: $monitorHistoryPath"
 if ($RehearsalMode) {
     Write-Host "  Rehearsal registry path: $postPipelineRegistryPath"
@@ -1018,7 +1061,7 @@ $sessionSufficientForTuningUsableReview = $monitorVerdict -in @(
 )
 
 $docket = [ordered]@{
-    schema_version = 3
+    schema_version = 4
     prompt_id = Get-RepoPromptId
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     source_commit_sha = Get-RepoHeadCommitSha
@@ -1089,6 +1132,10 @@ $docket = [ordered]@{
         responsive_trial_gate_json = $responsiveTrialGatePath
         next_live_plan_json = $nextLivePlanPath
         next_live_plan_markdown = $nextLivePlanMarkdownPath
+        mission_brief_json = $missionJsonPath
+        mission_brief_markdown = $missionMarkdownPath
+        mission_snapshot_json = $missionSnapshotJsonPath
+        mission_snapshot_markdown = $missionSnapshotMarkdownPath
         registry_path = if ($registerResult -and $registerResult.RegistryPath) { [string]$registerResult.RegistryPath } elseif ($postPipelineRegistryPath) { $postPipelineRegistryPath } else { Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "pair_sessions.ndjson" }
         monitor_history_ndjson = $monitorHistoryPath
         rehearsal_metadata_json = Join-Path $pairRoot "rehearsal_metadata.json"
@@ -1123,6 +1170,8 @@ Write-Host "  Primary operator action: $($operatorAction.Primary)"
     PairRoot = $pairRoot
     FinalSessionDocketJsonPath = $finalDocketJsonPath
     FinalSessionDocketMarkdownPath = $finalDocketMarkdownPath
+    MissionBriefJsonPath = $missionJsonPath
+    MissionBriefMarkdownPath = $missionMarkdownPath
     OutcomeDossierJsonPath = $outcomeDossierJsonPath
     OutcomeDossierMarkdownPath = $outcomeDossierMarkdownPath
     MonitorVerdict = $monitorVerdict
