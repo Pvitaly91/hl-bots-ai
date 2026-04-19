@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-34
+HLDM-JKBOTTI-AI-STAND-20260415-35
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -307,7 +307,7 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it also runs `scripts\evaluate_latest_session_mission.ps1` after the dossier step so the pair root gets `mission_attainment.json` and `mission_attainment.md`
 - it snapshots the mission brief under `guided_session\mission\` once the pair root exists
 - the mission-driven wrapper writes `guided_session\mission_execution.json` and `guided_session\mission_execution.md` so later closeout can compare the mission against the actual launch
-- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the mission execution record, the post-run outcome dossier, and the mission-attainment closeout
+- it writes `guided_session\session_state.json`, `guided_session\final_session_docket.json`, and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the mission execution record, the post-run outcome dossier, and the mission-attainment closeout
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
 Start the live monitor like this while the pair is running:
@@ -653,6 +653,31 @@ Or with the thin wrapper:
 ```bat
 scripts\evaluate_latest_session_mission.bat
 scripts\evaluate_latest_session_mission.bat .\lab\logs\eval\pairs\<pair-pack>
+```
+
+## Session Recovery Assessment
+
+Use `scripts\assess_latest_session_recovery.ps1` when the question is not "did the mission succeed?" but "is the latest pair complete, interrupted, salvageable, or rerun-only?"
+
+- it writes `session_recovery_report.json` and `session_recovery_report.md` into the assessed pair root
+- by default it inspects the latest pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` for an explicit saved session
+- it checks the mission snapshot, mission execution, monitor status, pair summary, comparison, scorecard, shadow review, grounded certificate, latest-session delta, next-live planner output, outcome dossier, mission attainment, final docket, and guided `session_state.json` when present
+- it keeps interrupted-run interpretation conservative: missing or partial closeout artifacts do not silently count as completed evidence, and sessions that never reached sufficiency are told to rerun instead of being over-salvaged
+- it is different from mission attainment: mission attainment asks whether the run achieved its saved mission, while recovery assessment asks whether the run finished cleanly enough to trust, salvage, or discard
+- it is different from the outcome dossier: the dossier is the completed-session consolidation layer, while recovery assessment is the interruption/recovery layer used before trusting that closeout
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\assess_latest_session_recovery.ps1
+powershell -NoProfile -File .\scripts\assess_latest_session_recovery.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\assess_latest_session_recovery.bat
+scripts\assess_latest_session_recovery.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
 ## Responsive Trial Gate

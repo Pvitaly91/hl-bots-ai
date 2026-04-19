@@ -69,6 +69,92 @@ function Append-NdjsonRecord {
     [System.IO.File]::AppendAllText($Path, $json + [Environment]::NewLine, $encoding)
 }
 
+function Get-SessionStatePostPipelineSnapshot {
+    param(
+        [object]$ReviewResult = $null,
+        [object]$ShadowResult = $null,
+        [object]$ScoreResult = $null,
+        [object]$RegisterResult = $null,
+        [object]$RegistrySummaryResult = $null,
+        [object]$GateResult = $null,
+        [object]$OutcomeDossierResult = $null,
+        [object]$MissionAttainmentResult = $null,
+        [bool]$RunPostPipelineEnabled = $false,
+        [bool]$RegistryIsolatedForRehearsal = $false
+    )
+
+    return [ordered]@{
+        enabled = $RunPostPipelineEnabled
+        review_completed = $null -ne $ReviewResult
+        shadow_review_completed = $null -ne $ShadowResult
+        scorecard_completed = $null -ne $ScoreResult
+        register_completed = $null -ne $RegisterResult
+        registry_summary_completed = $null -ne $RegistrySummaryResult
+        responsive_gate_completed = $null -ne $GateResult
+        outcome_dossier_completed = $null -ne $OutcomeDossierResult
+        mission_attainment_completed = $null -ne $MissionAttainmentResult
+        registry_isolated_for_rehearsal = $RegistryIsolatedForRehearsal
+    }
+}
+
+function Write-SessionStateFile {
+    param(
+        [string]$Path,
+        [string]$PairRoot,
+        [string]$GuidedSessionRoot,
+        [string]$Stage,
+        [string]$Status,
+        [string]$Explanation,
+        [string]$TreatmentProfile,
+        [bool]$RunPostPipelineEnabled,
+        [object]$MonitorStatus = $null,
+        [hashtable]$Artifacts = @{},
+        [hashtable]$PostPipeline = $null
+    )
+
+    $artifacts = [ordered]@{}
+    foreach ($entry in $Artifacts.GetEnumerator()) {
+        $artifacts[$entry.Key] = $entry.Value
+    }
+
+    $postPipelineSnapshot = if ($null -eq $PostPipeline) {
+        Get-SessionStatePostPipelineSnapshot -RunPostPipelineEnabled:$RunPostPipelineEnabled
+    }
+    else {
+        $clonedPostPipeline = [ordered]@{}
+        foreach ($entry in $PostPipeline.GetEnumerator()) {
+            $clonedPostPipeline[$entry.Key] = $entry.Value
+        }
+
+        $clonedPostPipeline
+    }
+
+    $payload = [ordered]@{
+        schema_version = 1
+        prompt_id = Get-RepoPromptId
+        generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+        source_commit_sha = Get-RepoHeadCommitSha
+        pair_root = $PairRoot
+        guided_session_root = $GuidedSessionRoot
+        treatment_profile = $TreatmentProfile
+        stage = $Stage
+        status = $Status
+        explanation = $Explanation
+        run_post_pipeline_enabled = $RunPostPipelineEnabled
+        monitor = [ordered]@{
+            current_verdict = [string](Get-ObjectPropertyValue -Object $MonitorStatus -Name "current_verdict" -Default "")
+            explanation = [string](Get-ObjectPropertyValue -Object $MonitorStatus -Name "explanation" -Default "")
+            operator_can_stop_now = [bool](Get-ObjectPropertyValue -Object $MonitorStatus -Name "operator_can_stop_now" -Default $false)
+            likely_remains_insufficient_if_stopped_immediately = [bool](Get-ObjectPropertyValue -Object $MonitorStatus -Name "likely_remains_insufficient_if_stopped_immediately" -Default $true)
+        }
+        post_pipeline = $postPipelineSnapshot
+        artifacts = $artifacts
+    }
+
+    Write-JsonFile -Path $Path -Value $payload
+    return $payload
+}
+
 function Get-LogTailText {
     param(
         [string]$Path,
@@ -628,6 +714,13 @@ function Get-FinalSessionDocketMarkdown {
         "- Drift detected: $($Docket.mission_execution.drift_detected)",
         "- Mission execution explanation: $($Docket.mission_execution.explanation)",
         "",
+        "## Session State",
+        "",
+        "- Session state path: $($Docket.session_state.path)",
+        "- Session state stage: $($Docket.session_state.stage)",
+        "- Session state status: $($Docket.session_state.status)",
+        "- Full closeout completed: $($Docket.session_state.full_closeout_completed)",
+        "",
         "## Artifacts",
         "",
         "- Pair summary JSON: $($Docket.artifacts.pair_summary_json)",
@@ -642,6 +735,7 @@ function Get-FinalSessionDocketMarkdown {
         "- Mission snapshot Markdown: $($Docket.artifacts.mission_snapshot_markdown)",
         "- Mission execution JSON: $($Docket.artifacts.mission_execution_json)",
         "- Mission execution Markdown: $($Docket.artifacts.mission_execution_markdown)",
+        "- Session state JSON: $($Docket.artifacts.session_state_json)",
         "- Registry path: $($Docket.artifacts.registry_path)",
         "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
         "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
@@ -960,6 +1054,7 @@ if (-not $pairRoot) {
 $guidedSessionRoot = Ensure-Directory -Path (Join-Path $pairRoot "guided_session")
 $finalDocketJsonPath = Join-Path $guidedSessionRoot "final_session_docket.json"
 $finalDocketMarkdownPath = Join-Path $guidedSessionRoot "final_session_docket.md"
+$sessionStateJsonPath = Join-Path $guidedSessionRoot "session_state.json"
 $monitorHistoryPath = Join-Path $guidedSessionRoot "monitor_verdict_history.ndjson"
 $missionSnapshotRoot = Ensure-Directory -Path (Join-Path $guidedSessionRoot "mission")
 $missionSnapshotJsonPath = ""
@@ -1012,9 +1107,32 @@ $missionExecutionJsonPath = [string](Get-ObjectPropertyValue -Object $missionExe
 $missionExecutionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionExecutionArtifact -Name "MarkdownPath" -Default "")
 $missionExecutionPayload = Get-ObjectPropertyValue -Object $missionExecutionArtifact -Name "Payload" -Default $null
 
+$sessionStateArtifacts = [ordered]@{
+    session_state_json = $sessionStateJsonPath
+    pair_runner_stdout_log = $pairRunnerStdoutPath
+    pair_runner_stderr_log = $pairRunnerStderrPath
+    monitor_history_ndjson = $monitorHistoryPath
+    mission_snapshot_json = $missionSnapshotJsonPath
+    mission_snapshot_markdown = $missionSnapshotMarkdownPath
+    mission_execution_json = $missionExecutionJsonPath
+    mission_execution_markdown = $missionExecutionMarkdownPath
+}
+
+$null = Write-SessionStateFile `
+    -Path $sessionStateJsonPath `
+    -PairRoot $pairRoot `
+    -GuidedSessionRoot $guidedSessionRoot `
+    -Stage "pair-running" `
+    -Status "active" `
+    -Explanation "Guided pair capture is active. Recovery assessment should treat missing closeout artifacts as provisional until the pair runner exits." `
+    -TreatmentProfile $resolvedProfile.name `
+    -RunPostPipelineEnabled:$runPostPipelineEnabled `
+    -Artifacts $sessionStateArtifacts
+
 Write-Host "  Active pair root: $pairRoot"
 Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
+Write-Host "  Session state JSON: $sessionStateJsonPath"
 Write-Host "  Mission snapshot JSON: $missionSnapshotJsonPath"
 Write-Host "  Mission snapshot Markdown: $missionSnapshotMarkdownPath"
 Write-Host "  Mission execution JSON: $missionExecutionJsonPath"
@@ -1107,6 +1225,20 @@ if (-not (Test-Path -LiteralPath $pairSummaryJsonPath)) {
     throw "The pair runner completed without producing pair_summary.json under $pairRoot. ExitCode=$pairExitCode STDERR: $(Get-LogTailText -Path $pairRunnerStderrPath)"
 }
 
+$sessionStateArtifacts.pair_summary_json = $pairSummaryJsonPath
+$sessionStateArtifacts.live_monitor_status_json = Join-Path $pairRoot "live_monitor_status.json"
+$null = Write-SessionStateFile `
+    -Path $sessionStateJsonPath `
+    -PairRoot $pairRoot `
+    -GuidedSessionRoot $guidedSessionRoot `
+    -Stage "pair-run-complete" `
+    -Status $(if ($runPostPipelineEnabled) { "awaiting-closeout" } else { "pair-finished" }) `
+    -Explanation $(if ($runPostPipelineEnabled) { "The pair runner exited and produced pair_summary.json. Recovery may still be possible from this pair root even if post-pipeline closeout does not finish." } else { "The pair runner exited cleanly and post-pipeline closeout was disabled for this run." }) `
+    -TreatmentProfile $resolvedProfile.name `
+    -RunPostPipelineEnabled:$runPostPipelineEnabled `
+    -MonitorStatus $lastMonitorStatus `
+    -Artifacts $sessionStateArtifacts
+
 $reviewResult = $null
 $shadowResult = $null
 $scoreResult = $null
@@ -1116,8 +1248,21 @@ $gateResult = $null
 $nextLivePlanResult = $null
 $outcomeDossierResult = $null
 $missionAttainmentResult = $null
+$registryIsolatedForRehearsal = -not [string]::IsNullOrWhiteSpace($postPipelineRegistryPath)
 
 if ($runPostPipelineEnabled) {
+    $null = Write-SessionStateFile `
+        -Path $sessionStateJsonPath `
+        -PairRoot $pairRoot `
+        -GuidedSessionRoot $guidedSessionRoot `
+        -Stage "post-pipeline-running" `
+        -Status "active" `
+        -Explanation "The pair run finished and the guided post-pipeline closeout is now running." `
+        -TreatmentProfile $resolvedProfile.name `
+        -RunPostPipelineEnabled:$runPostPipelineEnabled `
+        -MonitorStatus $lastMonitorStatus `
+        -Artifacts $sessionStateArtifacts
+
     $reviewResult = & $reviewScriptPath -PairRoot $pairRoot
     $shadowResult = & $shadowScriptPath -PairRoot $pairRoot -Profiles conservative, default, responsive
     $scoreResult = & $scoreScriptPath -PairRoot $pairRoot
@@ -1199,6 +1344,18 @@ if ($runPostPipelineEnabled) {
     }
     $missionAttainmentResult = & $missionAttainmentScriptPath @missionAttainmentArgs
 }
+
+$postPipelineSnapshot = Get-SessionStatePostPipelineSnapshot `
+    -ReviewResult $reviewResult `
+    -ShadowResult $shadowResult `
+    -ScoreResult $scoreResult `
+    -RegisterResult $registerResult `
+    -RegistrySummaryResult $registrySummaryResult `
+    -GateResult $gateResult `
+    -OutcomeDossierResult $outcomeDossierResult `
+    -MissionAttainmentResult $missionAttainmentResult `
+    -RunPostPipelineEnabled:$runPostPipelineEnabled `
+    -RegistryIsolatedForRehearsal:$registryIsolatedForRehearsal
 
 $pairSummary = Read-JsonFile -Path $pairSummaryJsonPath
 $scorecard = Read-JsonFile -Path (Join-Path $pairRoot "scorecard.json")
@@ -1302,6 +1459,25 @@ $sessionSufficientForTuningUsableReview = $monitorVerdict -in @(
     "comparison-usable",
     "comparison-strong-signal"
 )
+$fullCloseoutCompleted = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "outcome_dossier_completed" -Default $false) -and [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "mission_attainment_completed" -Default $false)
+$sessionStateFinalStatus = if (-not $runPostPipelineEnabled) {
+    "pair-finished"
+}
+elseif ($fullCloseoutCompleted) {
+    "complete"
+}
+else {
+    "partial"
+}
+$sessionStateFinalExplanation = if ($fullCloseoutCompleted) {
+    "The guided session completed the available closeout stack and wrote the final docket."
+}
+elseif ($runPostPipelineEnabled) {
+    "The guided session wrote a final docket, but one or more closeout artifacts remain incomplete."
+}
+else {
+    "The guided session finished the pair run and wrote a final docket without running the post-pipeline closeout stack."
+}
 
 $docket = [ordered]@{
     schema_version = 5
@@ -1357,16 +1533,24 @@ $docket = [ordered]@{
         }
     }
     post_pipeline = [ordered]@{
-        ran = $runPostPipelineEnabled
-        review_completed = $null -ne $reviewResult
-        shadow_review_completed = $null -ne $shadowResult
-        scorecard_completed = $null -ne $scoreResult
-        register_completed = $null -ne $registerResult
-        registry_summary_completed = $null -ne $registrySummaryResult
-        responsive_gate_completed = $null -ne $gateResult
-        outcome_dossier_completed = $null -ne $outcomeDossierResult
-        mission_attainment_completed = $null -ne $missionAttainmentResult
-        registry_isolated_for_rehearsal = [bool]($postPipelineRegistryPath)
+        ran = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "enabled" -Default $false)
+        review_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "review_completed" -Default $false)
+        shadow_review_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "shadow_review_completed" -Default $false)
+        scorecard_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "scorecard_completed" -Default $false)
+        register_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "register_completed" -Default $false)
+        registry_summary_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "registry_summary_completed" -Default $false)
+        responsive_gate_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "responsive_gate_completed" -Default $false)
+        outcome_dossier_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "outcome_dossier_completed" -Default $false)
+        mission_attainment_completed = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "mission_attainment_completed" -Default $false)
+        registry_isolated_for_rehearsal = [bool](Get-ObjectPropertyValue -Object $postPipelineSnapshot -Name "registry_isolated_for_rehearsal" -Default $false)
+    }
+    session_state = [ordered]@{
+        path = $sessionStateJsonPath
+        stage = "finalized"
+        status = $sessionStateFinalStatus
+        pair_run_completed = $true
+        full_closeout_completed = $fullCloseoutCompleted
+        explanation = $sessionStateFinalExplanation
     }
     mission_attainment = [ordered]@{
         verdict = [string](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_verdict" -Default "")
@@ -1398,6 +1582,7 @@ $docket = [ordered]@{
         mission_snapshot_markdown = $missionSnapshotMarkdownPath
         mission_execution_json = $missionExecutionJsonPath
         mission_execution_markdown = $missionExecutionMarkdownPath
+        session_state_json = $sessionStateJsonPath
         registry_path = if ($registerResult -and $registerResult.RegistryPath) { [string]$registerResult.RegistryPath } elseif ($postPipelineRegistryPath) { $postPipelineRegistryPath } else { Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "pair_sessions.ndjson" }
         monitor_history_ndjson = $monitorHistoryPath
         rehearsal_metadata_json = Join-Path $pairRoot "rehearsal_metadata.json"
@@ -1415,10 +1600,32 @@ $docket = [ordered]@{
 Write-JsonFile -Path $finalDocketJsonPath -Value $docket
 Write-TextFile -Path $finalDocketMarkdownPath -Value (Get-FinalSessionDocketMarkdown -Docket $docket)
 
+$sessionStateArtifacts.final_session_docket_json = $finalDocketJsonPath
+$sessionStateArtifacts.final_session_docket_markdown = $finalDocketMarkdownPath
+$sessionStateArtifacts.scorecard_json = Join-Path $pairRoot "scorecard.json"
+$sessionStateArtifacts.shadow_recommendation_json = Join-Path $pairRoot "shadow_review\shadow_recommendation.json"
+$sessionStateArtifacts.session_outcome_dossier_json = $outcomeDossierJsonPath
+$sessionStateArtifacts.session_outcome_dossier_markdown = $outcomeDossierMarkdownPath
+$sessionStateArtifacts.mission_attainment_json = $missionAttainmentJsonPath
+$sessionStateArtifacts.mission_attainment_markdown = $missionAttainmentMarkdownPath
+$null = Write-SessionStateFile `
+    -Path $sessionStateJsonPath `
+    -PairRoot $pairRoot `
+    -GuidedSessionRoot $guidedSessionRoot `
+    -Stage "finalized" `
+    -Status $sessionStateFinalStatus `
+    -Explanation $sessionStateFinalExplanation `
+    -TreatmentProfile $resolvedProfile.name `
+    -RunPostPipelineEnabled:$runPostPipelineEnabled `
+    -MonitorStatus $lastMonitorStatus `
+    -Artifacts $sessionStateArtifacts `
+    -PostPipeline $postPipelineSnapshot
+
 $missionVerdict = [string](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_verdict" -Default "")
 
 Write-Host "Guided live pair session finished."
 Write-Host "  Pair root: $pairRoot"
+Write-Host "  Session state JSON: $sessionStateJsonPath"
 Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
 Write-Host "  Outcome dossier JSON: $outcomeDossierJsonPath"
@@ -1437,6 +1644,7 @@ Write-Host "  Primary operator action: $($operatorAction.Primary)"
 
 [pscustomobject]@{
     PairRoot = $pairRoot
+    SessionStateJsonPath = $sessionStateJsonPath
     FinalSessionDocketJsonPath = $finalDocketJsonPath
     FinalSessionDocketMarkdownPath = $finalDocketMarkdownPath
     MissionBriefJsonPath = $missionJsonPath

@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-34
+HLDM-JKBOTTI-AI-STAND-20260415-35
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -23,6 +23,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
 - `scripts/prepare_next_live_session_mission.ps1` and `scripts/prepare_next_live_session_mission.bat` for the pre-run operator mission brief that turns the current planner, gate, and latest outcome context into one exact next-session target artifact before launch.
 - `scripts/run_current_live_mission.ps1` and `scripts/run_current_live_mission.bat` for mission-driven launch, drift detection, dry-run inspection, and explicit mission-execution recording before the guided workflow starts.
+- `scripts/assess_latest_session_recovery.ps1` and `scripts/assess_latest_session_recovery.bat` for interruption classification, artifact-completeness checks, and conservative recovery recommendations after an incomplete or suspicious session.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -199,10 +200,11 @@ The paired live-session runner is the recommended next human workflow:
 - `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
 - `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pre-run mission brief, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, the next-live planner, the outcome dossier, and the final session docket.
 - `scripts\run_current_live_mission.ps1` is the mission-driven launcher. It reads the latest mission brief by default, enforces conservative drift policy before launch, and records `guided_session\mission_execution.json` / `.md` so later closeout can tell whether the operator actually launched the current mission.
+- `scripts\assess_latest_session_recovery.ps1` is the interruption and recovery classifier. It inspects the latest pair pack or an explicit pair root, writes `session_recovery_report.json` / `.md`, and says whether the session is complete, interrupted, salvageable, or rerun-only.
 - `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
 - `scripts\prepare_next_live_session_mission.ps1` is the pre-run operator brief. It reuses the current responsive gate, the next-live planner, and the latest outcome dossier context to produce `next_live_session_mission.json` and `next_live_session_mission.md` with the exact thresholds, stop condition, failure conditions, and mission statement for the very next live run.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
-- each guided paired run also writes `session_outcome_dossier.json` / `.md` and `mission_attainment.json` / `.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, writes `guided_session\mission_execution.json` / `.md`, and points the final guided docket back at all four layers so the operator can compare "what was the target before launch?" against "what was actually launched?" against "what counted after the run?" and "did that actually achieve the mission?".
+- each guided paired run also writes `session_outcome_dossier.json` / `.md` and `mission_attainment.json` / `.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, writes `guided_session\mission_execution.json` / `.md`, records a thin `guided_session\session_state.json` marker for interruption assessment, and points the final guided docket back at all four layers so the operator can compare "what was the target before launch?" against "what was actually launched?" against "what counted after the run?" and "did that actually achieve the mission?".
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -602,6 +604,32 @@ scripts\evaluate_latest_session_mission.bat
 scripts\evaluate_latest_session_mission.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
+## Session Recovery Assessment
+
+Use `scripts\assess_latest_session_recovery.ps1` when the question is not only "did the mission succeed?" but "is the latest pair complete, interrupted, recoverable, or rerun-only?"
+
+- it writes `session_recovery_report.json` and `session_recovery_report.md` into the assessed pair root
+- by default it inspects the latest pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` when you want a specific saved pair
+- it checks the mission snapshot, mission execution, monitor status, pair summary, comparison, scorecard, shadow review, grounded certificate, latest-session delta, next-live planner output, outcome dossier, mission attainment, final docket, and guided `session_state.json` when present
+- it distinguishes conservative recovery verdicts such as `session-complete`, `session-interrupted-before-sufficiency`, `session-interrupted-after-sufficiency-before-closeout`, `session-interrupted-during-post-pipeline`, `session-partial-artifacts-recoverable`, and `session-nonrecoverable-rerun-required`
+- it keeps registry and promotion handling honest: incomplete sessions stay excluded from promotion logic, rehearsal or workflow-validation sessions stay non-promoting even when structurally complete, and missing mission-critical artifacts force manual review instead of silent overclaiming
+- it is different from mission attainment: mission attainment asks whether the run met its saved mission, while recovery assessment asks whether the run finished cleanly enough to trust, salvage, or rerun
+- it is different from the outcome dossier: the dossier explains what changed because of a completed session, while recovery assessment decides whether the session is complete enough to trust that closeout at all
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\assess_latest_session_recovery.ps1
+powershell -NoProfile -File .\scripts\assess_latest_session_recovery.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\assess_latest_session_recovery.bat
+scripts\assess_latest_session_recovery.bat .\lab\logs\eval\pairs\<pair-pack>
+```
+
 ## Responsive Trial Gate
 
 Use `scripts\evaluate_responsive_trial_gate.ps1` when you need a disciplined operator-facing answer to "is the first real live responsive trial justified yet?"
@@ -870,6 +898,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_guided_live_pair_session.bat`: `cmd.exe` wrapper for the guided live pair-session workflow.
 - `scripts/run_current_live_mission.ps1`: mission-driven wrapper that launches the current mission, records drift, and writes `mission_execution.json` / `.md` before the post-run closeout reuses that launch record.
 - `scripts/run_current_live_mission.bat`: `cmd.exe` wrapper for the mission-driven runner.
+- `scripts/assess_latest_session_recovery.ps1`: interruption/recovery classifier that inspects the latest pair pack or an explicit pair root and writes `session_recovery_report.json` plus `session_recovery_report.md`.
+- `scripts/assess_latest_session_recovery.bat`: `cmd.exe` wrapper for the recovery-assessment helper.
 - `scripts/build_latest_session_outcome_dossier.ps1`: consolidates the latest pair's scorecard, shadow review, grounded certification, before-vs-after delta, current gate, and current next-live plan into `session_outcome_dossier.json` plus `session_outcome_dossier.md`.
 - `scripts/build_latest_session_outcome_dossier.bat`: `cmd.exe` wrapper for the outcome-dossier helper.
 - `scripts/plan_next_live_session.ps1`: computes the certified-grounded promotion gap, emits `next_live_plan.json` plus `next_live_plan.md`, and recommends the next live profile and session objective.
