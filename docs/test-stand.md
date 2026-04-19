@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-36
+HLDM-JKBOTTI-AI-STAND-20260415-37
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -701,6 +701,33 @@ Or with the thin wrapper:
 
 ```bat
 scripts\finalize_interrupted_session.bat .\lab\logs\eval\pairs\<pair-pack>
+```
+
+## Mission Continuation Controller
+
+Use `scripts\continue_current_live_mission.ps1` when you want one operator-safe answer to "should I leave this session alone, salvage it, rerun it, or stop for manual review?"
+
+- it writes `mission_continuation_decision.json` and `mission_continuation_decision.md` into the assessed pair root
+- by default it previews the decision only; use `-Execute` only when you want the helper to run the chosen salvage or rerun path
+- it reuses `scripts\assess_latest_session_recovery.ps1`, `scripts\finalize_interrupted_session.ps1`, and `scripts\run_current_live_mission.ps1` instead of introducing a second recovery or rerun engine
+- it maps complete sessions to no-action or review-only, recoverable interrupted sessions to salvage, pre-sufficiency or nonrecoverable sessions to rerun, and missing or inconsistent mission context to manual review or blocked-no-mission-context
+- reruns reuse the saved mission snapshot when available so the new launch stays mission-compliant; if the controller must fall back to the current mission brief, it marks the rerun as mission-recovered instead of pretending the interrupted launch was reproduced exactly
+- salvaged and completed rehearsal, synthetic, weak-signal, or otherwise non-grounded sessions still remain excluded from promotion; the controller does not upgrade their evidence bucket
+- it is different from recovery assessment alone: recovery tells you what state the saved pair is in, while the continuation controller tells you which supported path to take next and can execute it explicitly
+- it is different from salvage alone: salvage can only finalize recoverable sessions, while the continuation controller can also say no-action, rerun, or manual review
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -DryRun
+powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -DryRun
+powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -Execute
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\continue_current_live_mission.bat .\lab\logs\eval\pairs\<pair-pack> -DryRun
 ```
 
 ## Responsive Trial Gate

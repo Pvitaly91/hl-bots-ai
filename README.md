@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-36
+HLDM-JKBOTTI-AI-STAND-20260415-37
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -25,6 +25,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_current_live_mission.ps1` and `scripts/run_current_live_mission.bat` for mission-driven launch, drift detection, dry-run inspection, and explicit mission-execution recording before the guided workflow starts.
 - `scripts/assess_latest_session_recovery.ps1` and `scripts/assess_latest_session_recovery.bat` for interruption classification, artifact-completeness checks, and conservative recovery recommendations after an incomplete or suspicious session.
 - `scripts/finalize_interrupted_session.ps1` and `scripts/finalize_interrupted_session.bat` for conservative salvage of recoverable interrupted sessions when the saved pair already contains enough evidence and only the closeout stack needs to be finished honestly.
+- `scripts/continue_current_live_mission.ps1` and `scripts/continue_current_live_mission.bat` for the top-level continuation decision that chooses no-action, review-only, salvage, rerun, or manual review from the latest session state plus the current mission context.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -656,6 +657,34 @@ Or with the thin wrapper:
 scripts\finalize_interrupted_session.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
+## Mission Continuation Controller
+
+Use `scripts\continue_current_live_mission.ps1` when the question after a failure is not only "what does recovery assessment say?" but "should I salvage, rerun, leave the completed session alone, or stop for manual review?"
+
+- it writes `mission_continuation_decision.json` and `mission_continuation_decision.md` into the assessed pair root
+- by default it previews the decision only; add `-Execute` only when you want the controller to actually run salvage or start a rerun
+- it reuses `scripts\assess_latest_session_recovery.ps1` for the verdict, `scripts\finalize_interrupted_session.ps1` for recoverable salvage branches, and `scripts\run_current_live_mission.ps1` for reruns instead of introducing a second recovery engine
+- it maps complete sessions to `session-already-complete-no-action` or `session-already-complete-review-only`, recoverable interrupted sessions to `salvage-interrupted-session`, pre-sufficiency or nonrecoverable sessions to `rerun-current-mission` or `rerun-current-mission-with-new-pair-root`, and inconsistent mission-critical states to `manual-review-required` or `blocked-no-mission-context`
+- it reuses the saved mission snapshot when available so reruns stay mission-compliant; when that snapshot is unavailable but the current mission brief is still usable, it marks the rerun as mission-recovered instead of pretending it is the exact interrupted launch
+- it points directly to the saved mission snapshot, mission execution artifact, recovery report, salvage report, final docket, mission attainment, and any rerun pair root so later audit stays easy
+- it stays conservative about promotion: structurally complete rehearsal, synthetic, weak-signal, or otherwise non-grounded sessions stay excluded from promotion even when the controller says no rerun is needed
+- it is different from recovery assessment alone: recovery classifies the session, while the continuation controller decides and optionally executes the supported next step
+- it is different from salvage alone: salvage only finishes recoverable closeout, while the continuation controller decides whether salvage is appropriate at all or whether the right answer is no action, rerun, or manual review
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -DryRun
+powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -DryRun
+powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack> -Execute
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\continue_current_live_mission.bat .\lab\logs\eval\pairs\<pair-pack> -DryRun
+```
+
 ## Responsive Trial Gate
 
 Use `scripts\evaluate_responsive_trial_gate.ps1` when you need a disciplined operator-facing answer to "is the first real live responsive trial justified yet?"
@@ -928,6 +957,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/assess_latest_session_recovery.bat`: `cmd.exe` wrapper for the recovery-assessment helper.
 - `scripts/finalize_interrupted_session.ps1`: conservative salvage helper that reads the recovery report, reruns only the honest closeout steps for recoverable sessions, and writes `session_salvage_report.json` plus `session_salvage_report.md`.
 - `scripts/finalize_interrupted_session.bat`: `cmd.exe` wrapper for the interrupted-session salvage helper.
+- `scripts/continue_current_live_mission.ps1`: top-level continuation controller that inspects the latest or explicit pair root, chooses no-action, review-only, salvage, rerun, or manual review, and writes `mission_continuation_decision.json` plus `mission_continuation_decision.md`.
+- `scripts/continue_current_live_mission.bat`: `cmd.exe` wrapper for the continuation controller.
 - `scripts/build_latest_session_outcome_dossier.ps1`: consolidates the latest pair's scorecard, shadow review, grounded certification, before-vs-after delta, current gate, and current next-live plan into `session_outcome_dossier.json` plus `session_outcome_dossier.md`.
 - `scripts/build_latest_session_outcome_dossier.bat`: `cmd.exe` wrapper for the outcome-dossier helper.
 - `scripts/plan_next_live_session.ps1`: computes the certified-grounded promotion gap, emits `next_live_plan.json` plus `next_live_plan.md`, and recommends the next live profile and session objective.
