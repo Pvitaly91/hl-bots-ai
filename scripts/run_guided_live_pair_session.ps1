@@ -457,6 +457,14 @@ function Get-FinalSessionDocketMarkdown {
         "- Review manually: $($Docket.recommendations.operator_action.review_manually)",
         "- Wait before considering responsive: $($Docket.recommendations.operator_action.wait_before_considering_responsive)",
         "",
+        "## Mission Attainment",
+        "",
+        "- Mission verdict: $($Docket.mission_attainment.verdict)",
+        "- Mission operational success: $($Docket.mission_attainment.mission_operational_success)",
+        "- Mission grounded success: $($Docket.mission_attainment.mission_grounded_success)",
+        "- Mission promotion impact: $($Docket.mission_attainment.mission_promotion_impact)",
+        "- Mission explanation: $($Docket.mission_attainment.explanation)",
+        "",
         "## Artifacts",
         "",
         "- Pair summary JSON: $($Docket.artifacts.pair_summary_json)",
@@ -473,7 +481,9 @@ function Get-FinalSessionDocketMarkdown {
         "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
         "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
         "- Final docket JSON: $($Docket.artifacts.final_session_docket_json)",
-        "- Outcome dossier JSON: $($Docket.artifacts.session_outcome_dossier_json)"
+        "- Outcome dossier JSON: $($Docket.artifacts.session_outcome_dossier_json)",
+        "- Mission attainment JSON: $($Docket.artifacts.mission_attainment_json)",
+        "- Mission attainment Markdown: $($Docket.artifacts.mission_attainment_markdown)"
     )
 
     return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
@@ -901,6 +911,7 @@ $registrySummaryResult = $null
 $gateResult = $null
 $nextLivePlanResult = $null
 $outcomeDossierResult = $null
+$missionAttainmentResult = $null
 
 if ($runPostPipelineEnabled) {
     $reviewResult = & $reviewScriptPath -PairRoot $pairRoot
@@ -968,6 +979,21 @@ if ($runPostPipelineEnabled) {
         $dossierArgs.LabRoot = $LabRoot
     }
     $outcomeDossierResult = & $outcomeDossierScriptPath @dossierArgs
+
+    $missionAttainmentScriptPath = Join-Path $PSScriptRoot "evaluate_latest_session_mission.ps1"
+    $missionAttainmentArgs = @{
+        PairRoot = $pairRoot
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LabRoot)) {
+        $missionAttainmentArgs.LabRoot = $LabRoot
+    }
+    if ($registerResult -and $registerResult.RegistryPath) {
+        $missionAttainmentArgs.RegistryPath = [string]$registerResult.RegistryPath
+    }
+    elseif ($postPipelineRegistryPath) {
+        $missionAttainmentArgs.RegistryPath = $postPipelineRegistryPath
+    }
+    $missionAttainmentResult = & $missionAttainmentScriptPath @missionAttainmentArgs
 }
 
 $pairSummary = Read-JsonFile -Path $pairSummaryJsonPath
@@ -1024,6 +1050,19 @@ $outcomeDossierMarkdownPath = if ($outcomeDossierResult -and $outcomeDossierResu
 else {
     Join-Path $pairRoot "session_outcome_dossier.md"
 }
+$missionAttainmentJsonPath = if ($missionAttainmentResult -and $missionAttainmentResult.MissionAttainmentJsonPath) {
+    [string]$missionAttainmentResult.MissionAttainmentJsonPath
+}
+else {
+    Join-Path $pairRoot "mission_attainment.json"
+}
+$missionAttainmentMarkdownPath = if ($missionAttainmentResult -and $missionAttainmentResult.MissionAttainmentMarkdownPath) {
+    [string]$missionAttainmentResult.MissionAttainmentMarkdownPath
+}
+else {
+    Join-Path $pairRoot "mission_attainment.md"
+}
+$missionAttainment = Read-JsonFile -Path $missionAttainmentJsonPath
 
 $pairClassification = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "operator_note_classification" -Default "")
 $comparison = Get-ObjectPropertyValue -Object $pairSummary -Name "comparison" -Default $null
@@ -1061,7 +1100,7 @@ $sessionSufficientForTuningUsableReview = $monitorVerdict -in @(
 )
 
 $docket = [ordered]@{
-    schema_version = 4
+    schema_version = 5
     prompt_id = Get-RepoPromptId
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     source_commit_sha = Get-RepoHeadCommitSha
@@ -1122,7 +1161,15 @@ $docket = [ordered]@{
         registry_summary_completed = $null -ne $registrySummaryResult
         responsive_gate_completed = $null -ne $gateResult
         outcome_dossier_completed = $null -ne $outcomeDossierResult
+        mission_attainment_completed = $null -ne $missionAttainmentResult
         registry_isolated_for_rehearsal = [bool]($postPipelineRegistryPath)
+    }
+    mission_attainment = [ordered]@{
+        verdict = [string](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_verdict" -Default "")
+        mission_operational_success = [bool](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_operational_success" -Default $false)
+        mission_grounded_success = [bool](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_grounded_success" -Default $false)
+        mission_promotion_impact = [bool](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_promotion_impact" -Default $false)
+        explanation = [string](Get-ObjectPropertyValue -Object $missionAttainment -Name "explanation" -Default "")
     }
     artifacts = [ordered]@{
         pair_summary_json = $pairSummaryJsonPath
@@ -1145,11 +1192,15 @@ $docket = [ordered]@{
         final_session_docket_markdown = $finalDocketMarkdownPath
         session_outcome_dossier_json = $outcomeDossierJsonPath
         session_outcome_dossier_markdown = $outcomeDossierMarkdownPath
+        mission_attainment_json = $missionAttainmentJsonPath
+        mission_attainment_markdown = $missionAttainmentMarkdownPath
     }
 }
 
 Write-JsonFile -Path $finalDocketJsonPath -Value $docket
 Write-TextFile -Path $finalDocketMarkdownPath -Value (Get-FinalSessionDocketMarkdown -Docket $docket)
+
+$missionVerdict = [string](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_verdict" -Default "")
 
 Write-Host "Guided live pair session finished."
 Write-Host "  Pair root: $pairRoot"
@@ -1157,12 +1208,15 @@ Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
 Write-Host "  Outcome dossier JSON: $outcomeDossierJsonPath"
 Write-Host "  Outcome dossier Markdown: $outcomeDossierMarkdownPath"
+Write-Host "  Mission attainment JSON: $missionAttainmentJsonPath"
+Write-Host "  Mission attainment Markdown: $missionAttainmentMarkdownPath"
 Write-Host "  Last live monitor verdict: $monitorVerdict"
 Write-Host "  Scorecard recommendation: $scorecardRecommendation"
 Write-Host "  Shadow recommendation: $shadowDecision"
 Write-Host "  Registry recommendation: $registryDecision"
 Write-Host "  Responsive gate verdict: $responsiveGateVerdict"
 Write-Host "  Next-live planner objective: $nextLiveSessionObjective"
+Write-Host "  Mission verdict: $missionVerdict"
 Write-Host "  Evidence origin: $evidenceOrigin"
 Write-Host "  Primary operator action: $($operatorAction.Primary)"
 
@@ -1174,11 +1228,14 @@ Write-Host "  Primary operator action: $($operatorAction.Primary)"
     MissionBriefMarkdownPath = $missionMarkdownPath
     OutcomeDossierJsonPath = $outcomeDossierJsonPath
     OutcomeDossierMarkdownPath = $outcomeDossierMarkdownPath
+    MissionAttainmentJsonPath = $missionAttainmentJsonPath
+    MissionAttainmentMarkdownPath = $missionAttainmentMarkdownPath
     MonitorVerdict = $monitorVerdict
     EvidenceOrigin = $evidenceOrigin
     ScorecardRecommendation = $scorecardRecommendation
     ShadowRecommendation = $shadowDecision
     RegistryRecommendation = $registryDecision
     ResponsiveGateVerdict = $responsiveGateVerdict
+    MissionVerdict = $missionVerdict
     PrimaryOperatorAction = $operatorAction.Primary
 }

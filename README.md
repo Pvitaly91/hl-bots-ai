@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-32
+HLDM-JKBOTTI-AI-STAND-20260415-33
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -22,6 +22,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/build_latest_session_outcome_dossier.ps1` and `scripts/build_latest_session_outcome_dossier.bat` for the one-shot post-session outcome dossier that consolidates scorecard, shadow review, grounded certification, latest-session delta, responsive gate, and next-live planning into one operator-facing artifact.
 - `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
 - `scripts/prepare_next_live_session_mission.ps1` and `scripts/prepare_next_live_session_mission.bat` for the pre-run operator mission brief that turns the current planner, gate, and latest outcome context into one exact next-session target artifact before launch.
+- `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
 - `scripts/certify_latest_pair_session.ps1` and `scripts/certify_latest_pair_session.bat` for strict grounded-evidence certification of the latest pair pack or a specified pair root.
@@ -199,7 +200,7 @@ The paired live-session runner is the recommended next human workflow:
 - `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
 - `scripts\prepare_next_live_session_mission.ps1` is the pre-run operator brief. It reuses the current responsive gate, the next-live planner, and the latest outcome dossier context to produce `next_live_session_mission.json` and `next_live_session_mission.md` with the exact thresholds, stop condition, failure conditions, and mission statement for the very next live run.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
-- each guided paired run also writes `session_outcome_dossier.json` and `session_outcome_dossier.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, and points the final guided docket back at both the mission and the dossier so the operator can compare "what was the target before launch?" against "what counted after the run?".
+- each guided paired run also writes `session_outcome_dossier.json` / `.md` and `mission_attainment.json` / `.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, and points the final guided docket back at all three layers so the operator can compare "what was the target before launch?" against "what counted after the run?" and "did that actually achieve the mission?".
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -297,6 +298,7 @@ Read the final guided docket like this:
 - `final_session_docket.md`: concise human-facing end-of-run pointer that says whether the session was sufficient and where to open the consolidated outcome dossier next
 - `next_live_session_mission.json` / `next_live_session_mission.md`: the pre-run target artifact that says exactly what the next session must accomplish before it starts
 - `session_outcome_dossier.json` / `session_outcome_dossier.md`: the consolidated post-session answer that merges scorecard, certification, latest-session delta, responsive gate, and next-live planning into one artifact
+- `mission_attainment.json` / `mission_attainment.md`: the mission closeout that compares the saved mission brief against target-by-target actuals and says whether the session met its mission in the operational, grounded, and promotion-impact senses
 
 Interpret the live monitor conservatively:
 
@@ -533,6 +535,37 @@ Or with the thin wrapper:
 
 ```bat
 scripts\prepare_next_live_session_mission.bat
+```
+
+## Mission Attainment
+
+Use `scripts\evaluate_latest_session_mission.ps1` immediately after a completed session when the question is not only "what happened?" but "did this run achieve the exact mission it was started for?"
+
+- it writes `mission_attainment.json` and `mission_attainment.md` into the pair root
+- by default it evaluates the latest pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` when you want a specific saved pair
+- it requires the mission snapshot that was used before launch; if the pair predates mission snapshots, it fails honestly instead of fabricating a result
+- it reuses the saved mission brief, live monitor status, scorecard, grounded certification, outcome dossier, and latest-session delta instead of inventing another scoring engine
+- it is different from the mission brief: the mission brief is pre-run and says what must happen, while mission attainment is post-run and says whether that exact target was met
+- it is different from the live monitor: the live monitor answers whether the operator can stop safely during the run, while mission attainment compares all mission targets against the final captured evidence after the run
+- it is different from the outcome dossier: the dossier is the broad post-run consolidation layer, while mission attainment is the narrow mission-closeout layer anchored to one saved mission snapshot
+- the `target_results` block is the exact target-vs-actual view; for each mission target read `target_value`, `actual_value`, `met`, and `explanation` literally
+- `mission-met-but-no-promotion-impact` means the run satisfied the monitor-facing mission thresholds, but the evidence still did not count toward or move the real promotion ledger
+- `mission-met-and-gap-reduced` means the run counted as grounded evidence and shrank at least one real promotion-gap component without changing the next objective or responsive gate
+- `mission-met-and-next-objective-advanced` means the run counted as grounded evidence and changed the next objective, responsive gate, or both
+- rehearsal, synthetic, no-human, weak-signal, insufficient-data, and other non-grounded sessions can still look operationally successful while failing mission attainment in the promotion sense; the helper must say that explicitly and keep the next live mission conservative
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\evaluate_latest_session_mission.ps1
+powershell -NoProfile -File .\scripts\evaluate_latest_session_mission.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\evaluate_latest_session_mission.bat
+scripts\evaluate_latest_session_mission.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
 ## Responsive Trial Gate

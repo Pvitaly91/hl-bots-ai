@@ -8,6 +8,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\preflight_real_pair_session.ps1` reports either `ready-for-human-pair-session` or `ready-with-warnings`
 - HLDS lab paths resolve under `lab\`
 - `scripts\prepare_next_live_session_mission.ps1` is available so the next-session target can be generated before launch
+- `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
 
@@ -62,7 +63,7 @@ Then start the live monitor in a second terminal:
 powershell -NoProfile -File .\scripts\monitor_live_pair_session.ps1 -UseLatest -PollSeconds 5 -StopWhenSufficient
 ```
 
-The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack. The guided runner can auto-start that same monitor logic and, after the run, writes `session_outcome_dossier.json`, `session_outcome_dossier.md`, `guided_session\mission\next_live_session_mission.json`, `guided_session\mission\next_live_session_mission.md`, `guided_session\final_session_docket.json`, and `guided_session\final_session_docket.md` under the pair root.
+The pair runner also prints an exact threshold-aware `-PairRoot` monitor command for that live pair pack. The guided runner can auto-start that same monitor logic and, after the run, writes `session_outcome_dossier.json`, `session_outcome_dossier.md`, `mission_attainment.json`, `mission_attainment.md`, `guided_session\mission\next_live_session_mission.json`, `guided_session\mission\next_live_session_mission.md`, `guided_session\final_session_docket.json`, and `guided_session\final_session_docket.md` under the pair root.
 
 Default ports and lanes:
 
@@ -92,9 +93,11 @@ Default ports and lanes:
 11. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
 12. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
 13. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
-14. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later if you need to rebuild the dossier after rerunning scorecard, certification, or planner helpers.
-15. Read `next_live_plan` when you need the full promotion-gap math, and read `next_live_session_mission` when you need the exact pre-run target and stop condition.
-16. If the dossier says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
+14. Read `mission_attainment.md` immediately after the dossier when you need the exact mission-closeout answer for that run.
+15. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later if you need to rebuild the dossier after rerunning scorecard, certification, or planner helpers.
+16. Run `scripts\evaluate_latest_session_mission.ps1 -PairRoot <pair-root>` later if you need to rebuild the mission-closeout artifact after rerunning dossier or certification helpers.
+17. Read `next_live_plan` when you need the full promotion-gap math, and read `next_live_session_mission` when you need the exact pre-run target and stop condition.
+18. If the dossier or mission-attainment closeout says manual review is needed, continue into the detailed helper artifacts (`review_latest_pair_run`, shadow review, scorecard, registry summary, responsive gate).
 
 ## What Counts As Insufficient Data
 
@@ -138,12 +141,13 @@ In rehearsal mode, also inspect `guided_session\monitor_verdict_history.ndjson`.
 Open these in order:
 
 1. `session_outcome_dossier.md`
-2. `guided_session\final_session_docket.md`
-3. `scorecard.md`
-4. `pair_summary.md`
-5. `comparison.md`
-6. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
-7. control `summary.md` if the control lane looks weak or sparse
+2. `mission_attainment.md`
+3. `guided_session\final_session_docket.md`
+4. `scorecard.md`
+5. `pair_summary.md`
+6. `comparison.md`
+7. treatment `summary.md` or `session_pack.md` if the treatment lane looks too quiet
+8. control `summary.md` if the control lane looks weak or sparse
 
 The fastest way to review the newest pair is:
 
@@ -261,6 +265,7 @@ How to read grounded evidence certification:
 - `scripts\summarize_pair_session_registry.ps1 -EvaluateNextLiveSessionPlan` can also refresh `next_live_plan.json` and `next_live_plan.md` in the same pass
 - `scripts\analyze_latest_grounded_session.ps1` writes `grounded_session_analysis.json`, `grounded_session_analysis.md`, `promotion_gap_delta.json`, and `promotion_gap_delta.md` for the latest pair or a specific `-PairRoot`
 - `scripts\build_latest_session_outcome_dossier.ps1` writes `session_outcome_dossier.json` and `session_outcome_dossier.md` for the latest pair or a specific `-PairRoot`
+- `scripts\evaluate_latest_session_mission.ps1` writes `mission_attainment.json` and `mission_attainment.md` for the latest pair or a specific `-PairRoot`
 - `scripts\prepare_next_live_session_mission.ps1` writes `next_live_session_mission.json` and `next_live_session_mission.md` for the very next live run
 - the registry summary now distinguishes total registered sessions from certified grounded sessions, non-certified excluded sessions, workflow-validation-only sessions, and excluded sessions by reason
 - conservative remains the default next live profile until the registry shows repeated certified grounded evidence that responsive is justified
@@ -276,6 +281,19 @@ How to read grounded evidence certification:
 - the dossier stitches those answers together and adds the before-vs-after comparison for the latest session
 - `what changed because of this session?` is the evidence-accounting block. Read those deltas literally
 - non-grounded sessions may legitimately leave the dossier in a no-impact state. Rehearsal, synthetic, no-human, weak-signal, and otherwise excluded sessions should not pretend to move the real promotion gap
+
+## Mission Attainment
+
+- run `powershell -NoProfile -File .\scripts\evaluate_latest_session_mission.ps1` after the session or target a specific pair with `-PairRoot`
+- the helper writes `mission_attainment.json` and `mission_attainment.md` into the pair root
+- it is different from the mission brief: the mission brief is pre-run and says what the session must prove, while mission attainment is post-run and says whether that exact saved target was achieved
+- it is different from the live monitor: the live monitor is the in-run stop/keep-running signal, while mission attainment is the post-run target-vs-actual closeout against the final evidence stack
+- it is different from the outcome dossier: the dossier is the broader post-run consolidation artifact, while mission attainment is the narrower mission-closeout artifact tied to the saved mission snapshot
+- read the `target_results` block literally: `target_value`, `actual_value`, `met`, and `explanation`
+- `mission-met-but-no-promotion-impact` means the session can be operationally complete while still failing to change the real promotion ledger
+- `mission-met-and-gap-reduced` means the session counted as grounded evidence and shrank a real promotion-gap component without changing the next objective
+- `mission-met-and-next-objective-advanced` means the session counted as grounded evidence and changed the next objective, responsive gate, or both
+- rehearsal, synthetic, no-human, weak-signal, insufficient-data, and otherwise non-grounded sessions must still fail mission attainment in the promotion sense; the next live mission remains conservative when that happens
 
 ## Latest-Session Delta
 

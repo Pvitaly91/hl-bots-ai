@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-32
+HLDM-JKBOTTI-AI-STAND-20260415-33
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -324,8 +324,9 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it still runs `scripts\review_latest_pair_run.ps1`, `scripts\run_shadow_profile_review.ps1`, `scripts\score_latest_pair_session.ps1`, `scripts\register_pair_session_result.ps1`, `scripts\summarize_pair_session_registry.ps1`, and `scripts\evaluate_responsive_trial_gate.ps1`
 - it also runs `scripts\plan_next_live_session.ps1` in the normal post-run pipeline so the final docket can carry the current next-live objective and recommended profile
 - it also runs `scripts\build_latest_session_outcome_dossier.ps1` so the pair root gets `session_outcome_dossier.json` and `session_outcome_dossier.md`
+- it also runs `scripts\evaluate_latest_session_mission.ps1` after the dossier step so the pair root gets `mission_attainment.json` and `mission_attainment.md`
 - it snapshots the mission brief under `guided_session\mission\` once the pair root exists
-- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to both the pre-run mission brief and the post-run outcome dossier
+- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the post-run outcome dossier, and the mission-attainment closeout
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
 Start the live monitor like this while the pair is running:
@@ -618,6 +619,36 @@ Or with the thin wrapper:
 
 ```bat
 scripts\prepare_next_live_session_mission.bat
+```
+
+## Mission Attainment
+
+Use `scripts\evaluate_latest_session_mission.ps1` after the run when the operator needs the direct closeout answer to "did this session actually accomplish the mission we launched it for?"
+
+- it writes `mission_attainment.json` and `mission_attainment.md` into the pair root
+- it reads the saved mission snapshot from `guided_session\mission\` when present, or fails clearly if the pair predates mission snapshots
+- it stays thin: the mission helper reuses the mission brief, live monitor, scorecard, grounded certification, outcome dossier, and latest-session delta outputs instead of duplicating their logic
+- it is different from the mission brief: the mission brief is the pre-run target, while mission attainment is the post-run answer against that exact saved target
+- it is different from the live monitor: the live monitor answers when to stop safely during capture, while mission attainment compares the mission targets against final captured actuals after capture is complete
+- it is different from the outcome dossier: the dossier is the broader post-run consolidation view, while mission attainment is the narrower target-by-target mission closeout
+- read each `target_results` entry literally: `target_value`, `actual_value`, `met`, and `explanation`
+- `mission-met-but-no-promotion-impact` means the run cleared the monitor-facing thresholds but did not move the real promotion ledger
+- `mission-met-and-gap-reduced` means the run counted as grounded evidence and reduced a real promotion-gap component while the next objective stayed the same
+- `mission-met-and-next-objective-advanced` means the run counted as grounded evidence and changed the next objective, responsive gate, or both
+- rehearsal, synthetic, no-human, insufficient-data, weak-signal, and otherwise non-grounded sessions must still fail mission attainment in the promotion sense even if the workflow itself completed cleanly
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\evaluate_latest_session_mission.ps1
+powershell -NoProfile -File .\scripts\evaluate_latest_session_mission.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\evaluate_latest_session_mission.bat
+scripts\evaluate_latest_session_mission.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
 ## Responsive Trial Gate
