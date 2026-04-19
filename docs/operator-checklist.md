@@ -10,6 +10,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\prepare_next_live_session_mission.ps1` is available so the next-session target can be generated before launch
 - `scripts\run_current_live_mission.ps1` is available so the next-session target can be launched directly with drift checks instead of being re-entered manually
 - `scripts\assess_latest_session_recovery.ps1` is available so an interrupted or suspicious pair can be classified before anyone guesses whether to salvage or rerun it
+- `scripts\finalize_interrupted_session.ps1` is available so recoverable interrupted sessions can be finalized without replaying the whole live run
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -104,10 +105,12 @@ Default ports and lanes:
 13. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
 14. Read `mission_attainment.md` immediately after the dossier when you need the exact mission-closeout answer for that run.
 15. If the session was interrupted, the operator terminal died, or the artifact stack looks partial, run `powershell -NoProfile -File .\scripts\assess_latest_session_recovery.ps1 -PairRoot <pair-root>` before deciding whether to salvage or rerun.
-16. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later if you need to rebuild the dossier after rerunning scorecard, certification, or planner helpers.
-17. Run `scripts\evaluate_latest_session_mission.ps1 -PairRoot <pair-root>` later if you need to rebuild the mission-closeout artifact after rerunning dossier or certification helpers.
-18. Read `next_live_plan` when you need the full promotion-gap math, and read `next_live_session_mission` when you need the exact pre-run target and stop condition.
-19. If the dossier, mission-attainment closeout, or recovery assessment says manual review is needed, continue into the detailed helper artifacts (shadow review, scorecard, registry summary, responsive gate, and raw pair artifacts).
+16. If recovery says `run-post-pipeline-only` or `rebuild-dossier-and-closeout`, run `powershell -NoProfile -File .\scripts\finalize_interrupted_session.ps1 -PairRoot <pair-root>` instead of rerunning the live session immediately.
+17. If recovery says `rerun-current-mission`, `rerun-current-mission-with-new-pair-root`, `discard-and-rerun`, or `manual-review-required`, do not use salvage as a workaround.
+18. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later only when you intentionally need a narrower rebuild outside the supported salvage path.
+19. Run `scripts\evaluate_latest_session_mission.ps1 -PairRoot <pair-root>` later only when you intentionally need to rebuild mission-closeout after a narrower artifact refresh.
+20. Read `next_live_plan` when you need the full promotion-gap math, and read `next_live_session_mission` when you need the exact pre-run target and stop condition.
+21. If the dossier, mission-attainment closeout, or recovery assessment says manual review is needed, continue into the detailed helper artifacts (shadow review, scorecard, registry summary, responsive gate, and raw pair artifacts).
 
 ## What Counts As Insufficient Data
 
@@ -313,11 +316,20 @@ How to read grounded evidence certification:
 - run `powershell -NoProfile -File .\scripts\assess_latest_session_recovery.ps1` after any interrupted, partial, or suspicious session, or target a specific pair with `-PairRoot`
 - the helper writes `session_recovery_report.json` and `session_recovery_report.md` into the assessed pair root
 - it decides whether the session is complete, interrupted before sufficiency, interrupted after sufficiency, partially recoverable, nonrecoverable, or manual-review-only
+- when the session is recoverable, it also gives the exact `finalize_interrupted_session.ps1` command that matches the supported salvage path
 - it is different from mission attainment: mission attainment answers whether the run met the mission, while recovery assessment answers whether the run finished cleanly enough to trust, salvage, or rerun
 - it is different from the outcome dossier: the dossier is the completed-session consolidation layer, while recovery assessment is the interruption/recovery layer used before trusting that closeout
 - if the helper says `run-post-pipeline-only` or `rebuild-dossier-and-closeout`, the session may still be usable without replaying the live human time
 - if it says `rerun-current-mission` or `rerun-current-mission-with-new-pair-root`, keep the interrupted pair excluded from promotion logic and spend the next session on a clean rerun instead
 - rehearsal, synthetic, workflow-validation-only, and other non-grounded sessions can still be structurally complete; the helper must say so without pretending they belong in responsive-promotion evidence
+
+## Session Salvage
+
+- run `powershell -NoProfile -File .\scripts\finalize_interrupted_session.ps1 -PairRoot <pair-root>` only after recovery assessment says the pair is recoverable
+- the helper writes `session_salvage_report.json` and `session_salvage_report.md` into the pair root
+- it can salvage recoverable post-pipeline failures without replaying the live session, but it refuses pre-sufficiency, nonrecoverable, and manual-review-only branches
+- it is different from rerunning the mission: salvage preserves the saved pair and finishes the closeout stack around that exact evidence, while rerun creates a new pair root from a new live attempt
+- a salvaged rehearsal, synthetic, weak-signal, or otherwise non-grounded session may still stay workflow-validation-only or excluded from promotion; that is expected and honest
 
 ## Latest-Session Delta
 

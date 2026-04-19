@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-35
+HLDM-JKBOTTI-AI-STAND-20260415-36
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -662,6 +662,7 @@ Use `scripts\assess_latest_session_recovery.ps1` when the question is not "did t
 - it writes `session_recovery_report.json` and `session_recovery_report.md` into the assessed pair root
 - by default it inspects the latest pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` for an explicit saved session
 - it checks the mission snapshot, mission execution, monitor status, pair summary, comparison, scorecard, shadow review, grounded certificate, latest-session delta, next-live planner output, outcome dossier, mission attainment, final docket, and guided `session_state.json` when present
+- when the session is recoverable, it also prints the exact `finalize_interrupted_session.ps1` command instead of leaving the operator to choose post-run helpers manually
 - it keeps interrupted-run interpretation conservative: missing or partial closeout artifacts do not silently count as completed evidence, and sessions that never reached sufficiency are told to rerun instead of being over-salvaged
 - it is different from mission attainment: mission attainment asks whether the run achieved its saved mission, while recovery assessment asks whether the run finished cleanly enough to trust, salvage, or discard
 - it is different from the outcome dossier: the dossier is the completed-session consolidation layer, while recovery assessment is the interruption/recovery layer used before trusting that closeout
@@ -678,6 +679,28 @@ Or with the thin wrapper:
 ```bat
 scripts\assess_latest_session_recovery.bat
 scripts\assess_latest_session_recovery.bat .\lab\logs\eval\pairs\<pair-pack>
+```
+
+## Session Salvage
+
+Use `scripts\finalize_interrupted_session.ps1` only when recovery assessment says the saved pair is recoverable without replaying the live run.
+
+- it writes `session_salvage_report.json` and `session_salvage_report.md` into the pair root
+- it can salvage recoverable branches such as `session-interrupted-after-sufficiency-before-closeout`, `session-interrupted-during-post-pipeline`, and `session-partial-artifacts-recoverable`
+- it refuses `session-interrupted-before-sufficiency`, `session-nonrecoverable-rerun-required`, `session-manual-review-needed`, and other blocked states instead of pretending those runs can be finalized honestly
+- it preserves evidence instead of replaying the session: the helper rebuilds the closeout layer around the saved pair and then re-runs recovery assessment to confirm whether the session is now structurally complete
+- a salvaged rehearsal, synthetic, or otherwise non-grounded session may still remain workflow-validation-only and excluded from promotion; salvage completes structure, not promotion eligibility
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\finalize_interrupted_session.ps1 -PairRoot .\lab\logs\eval\pairs\<pair-pack>
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\finalize_interrupted_session.bat .\lab\logs\eval\pairs\<pair-pack>
 ```
 
 ## Responsive Trial Gate

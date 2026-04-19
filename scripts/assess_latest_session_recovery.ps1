@@ -350,6 +350,30 @@ function Get-RecoveryCommandList {
     }
 }
 
+function Get-RecommendedSalvageCommand {
+    param(
+        [string]$RecoveryVerdict,
+        [string]$NextAction,
+        [string]$ResolvedPairRoot
+    )
+
+    if (
+        $RecoveryVerdict -in @(
+            "session-interrupted-after-sufficiency-before-closeout",
+            "session-interrupted-during-post-pipeline",
+            "session-partial-artifacts-recoverable"
+        ) -and
+        $NextAction -in @(
+            "run-post-pipeline-only",
+            "rebuild-dossier-and-closeout"
+        )
+    ) {
+        return "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\finalize_interrupted_session.ps1 -PairRoot `"$ResolvedPairRoot`""
+    }
+
+    return ""
+}
+
 function Get-RecoveryMarkdown {
     param([object]$Report)
 
@@ -361,6 +385,7 @@ function Get-RecoveryMarkdown {
         "- Prompt ID: $($Report.prompt_id)",
         "- Recovery verdict: $($Report.recovery_verdict)",
         "- Recommended next action: $($Report.recommended_next_action)",
+        "- Recommended salvage command: $($Report.recommended_salvage_command)",
         "- Session complete: $($Report.recovery_state.session_complete)",
         "- Session interrupted: $($Report.recovery_state.session_interrupted)",
         "- Salvageable without replay: $($Report.recovery_state.salvageable_without_replay)",
@@ -773,6 +798,7 @@ $report = [ordered]@{
     registry_path = $resolvedRegistryPath
     recovery_verdict = $recoveryVerdict
     recommended_next_action = $recommendedNextAction
+    recommended_salvage_command = (Get-RecommendedSalvageCommand -RecoveryVerdict $recoveryVerdict -NextAction $recommendedNextAction -ResolvedPairRoot $resolvedPairRoot)
     explanation = $explanation
     recovery_state = [ordered]@{
         session_complete = $sessionComplete
