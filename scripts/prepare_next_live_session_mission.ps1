@@ -298,6 +298,18 @@ function Get-NextLiveSessionMissionMarkdown {
         "- Control lane: port $($Mission.control_lane_configuration.port), label $($Mission.control_lane_configuration.lane_label), no-AI baseline, `jk_ai_balance_enabled 0`, no sidecar",
         "- Treatment lane: port $($Mission.treatment_lane_configuration.port), label $($Mission.treatment_lane_configuration.lane_label), profile $($Mission.treatment_lane_configuration.treatment_profile), sidecar enabled",
         "",
+        "## Launcher Defaults",
+        "",
+        "- Guided mission runner: scripts\run_current_live_mission.ps1",
+        "- Pair output root: $($Mission.launcher_defaults.pair_output_root)",
+        "- Eval root: $($Mission.launcher_defaults.eval_root)",
+        "- Configuration: $($Mission.launcher_defaults.configuration)",
+        "- Platform: $($Mission.launcher_defaults.platform)",
+        "- Duration seconds: $($Mission.launcher_defaults.duration_seconds)",
+        "- Skip SteamCMD update by default: $($Mission.launcher_defaults.skip_steamcmd_update)",
+        "- Skip Metamod download by default: $($Mission.launcher_defaults.skip_metamod_download)",
+        "- Mission runner keeps the no-AI control lane fixed and records any drift from this mission before launch.",
+        "",
         "## Exact Evidence Deficits Still Missing",
         ""
     )
@@ -558,6 +570,15 @@ $mission = [ordered]@{
         bot_skill = [int](Get-ObjectPropertyValue -Object $sessionTarget -Name "bot_skill" -Default 3)
         wait_for_human_join = [bool](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $gateConfig -Name "trial_defaults" -Default $null) -Name "wait_for_human_join" -Default $true)
         human_join_grace_seconds = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $gateConfig -Name "trial_defaults" -Default $null) -Name "human_join_grace_seconds" -Default 120)
+    }
+    launcher_defaults = [ordered]@{
+        pair_output_root = Get-PairsRootDefault -LabRoot $resolvedLabRoot
+        eval_root = Get-EvalRootDefault -LabRoot $resolvedLabRoot
+        configuration = "Release"
+        platform = "Win32"
+        duration_seconds = 80
+        skip_steamcmd_update = $false
+        skip_metamod_download = $false
     }
     control_lane_configuration = $controlLane
     treatment_lane_configuration = $treatmentLane

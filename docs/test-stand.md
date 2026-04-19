@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-33
+HLDM-JKBOTTI-AI-STAND-20260415-34
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -270,47 +270,27 @@ This pair runner is thin on purpose:
 - it prints an exact threshold-aware `scripts\monitor_live_pair_session.ps1` command so the operator can watch live evidence sufficiency in a second terminal
 - it keeps the control lane sidecar-free while still honoring human-join-aware wait thresholds
 
-Run the guided conservative-first workflow when the goal is to execute the whole next live pair correctly with the least operator error:
+Run the mission-driven conservative-first workflow when the goal is to execute the whole next live pair correctly with the least operator error:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 `
-  -Map crossfire `
-  -BotCount 4 `
-  -BotSkill 3 `
-  -ControlPort 27016 `
-  -TreatmentPort 27017 `
-  -DurationSeconds 80 `
-  -WaitForHumanJoin `
-  -HumanJoinGraceSeconds 120 `
-  -TreatmentProfile conservative `
-  -SkipSteamCmdUpdate `
-  -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1
 ```
 
-Run the same guided workflow in deterministic rehearsal mode when you need to validate the sufficient auto-stop branch without a real human-rich session:
+Inspect the current mission-derived launch without starting it like this:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 `
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun
+```
+
+Run the same mission-driven workflow in deterministic rehearsal mode when you need to validate the sufficient auto-stop branch without a real human-rich session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 `
   -RehearsalMode `
   -RehearsalFixtureId strong_signal_keep_conservative `
   -RehearsalStepSeconds 2 `
-  -Map crossfire `
-  -BotCount 4 `
-  -BotSkill 3 `
-  -ControlPort 27016 `
-  -TreatmentPort 27017 `
-  -DurationSeconds 18 `
-  -WaitForHumanJoin `
-  -HumanJoinGraceSeconds 20 `
-  -MinHumanSnapshots 3 `
-  -MinHumanPresenceSeconds 60 `
-  -MinPatchEventsForUsableLane 2 `
-  -MinPostPatchObservationSeconds 20 `
-  -TreatmentProfile conservative `
-  -AutoStartMonitor `
   -AutoStopWhenSufficient `
-  -MonitorPollSeconds 1 `
-  -RunPostPipeline
+  -MonitorPollSeconds 1
 ```
 
 The guided runner remains a thin orchestrator over the existing helpers:
@@ -326,7 +306,8 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it also runs `scripts\build_latest_session_outcome_dossier.ps1` so the pair root gets `session_outcome_dossier.json` and `session_outcome_dossier.md`
 - it also runs `scripts\evaluate_latest_session_mission.ps1` after the dossier step so the pair root gets `mission_attainment.json` and `mission_attainment.md`
 - it snapshots the mission brief under `guided_session\mission\` once the pair root exists
-- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the post-run outcome dossier, and the mission-attainment closeout
+- the mission-driven wrapper writes `guided_session\mission_execution.json` and `guided_session\mission_execution.md` so later closeout can compare the mission against the actual launch
+- it writes `guided_session\final_session_docket.json` and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the mission execution record, the post-run outcome dossier, and the mission-attainment closeout
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 
 Start the live monitor like this while the pair is running:
@@ -602,6 +583,7 @@ Here, "evidence gap" means the configured threshold minus the current certified 
 Use `scripts\prepare_next_live_session_mission.ps1` after the planner and before the next real live run when you need the single operator-facing answer to "what exact target must the next session hit?"
 
 - it writes `next_live_session_mission.json` and `next_live_session_mission.md` under `lab\logs\eval\registry\`
+- it now also carries launcher defaults that `scripts\run_current_live_mission.ps1` uses for drift comparison
 - it reads the current responsive gate, the current next-live planner output, and the latest available live outcome dossier when one exists
 - it stays thin: the planner still owns the gap math, the gate still owns responsive go/no-go, and the mission helper only turns that current state into a concrete next-session brief
 - it is narrower than the planner: the planner explains the full gap, while the mission brief spells out the exact thresholds, exact stop condition, exact failure conditions, and exact grounded-session success requirements for the next run
@@ -621,16 +603,38 @@ Or with the thin wrapper:
 scripts\prepare_next_live_session_mission.bat
 ```
 
+## Mission-Driven Launch
+
+Use `scripts\run_current_live_mission.ps1` when you want the next live session to launch from the saved mission by default instead of manually re-entering the launch shape.
+
+- it reads `lab\logs\eval\registry\next_live_session_mission.json` by default, or accepts `-MissionPath` for a specific saved brief
+- it launches the existing `scripts\run_guided_live_pair_session.ps1` workflow instead of introducing a second pair-runner stack
+- it writes preview `mission_execution.json` / `.md` artifacts in dry-run mode and writes final `guided_session\mission_execution.json` / `.md` artifacts when a real or rehearsal-backed session starts
+- it records drift for map, bot count, bot skill, control port, treatment port, treatment profile, human-signal thresholds, patch-while-human-present target, post-patch observation target, skip flags, and output roots
+- output-root drift is allowed by default because it does not change the experiment meaning; safe port drift requires `-AllowSafePortOverride`
+- mission-changing drift such as changing map, bot count, bot skill, treatment profile, or weakening the thresholds is blocked unless `-AllowMissionOverride` is supplied
+- if the mission still says `conservative` and the responsive gate is closed, switching to `responsive` is blocked by default; even when explicitly allowed, the run stays mission-divergent and later closeout will say so
+- `-DryRun` and `-PrintCommandOnly` do not start a session; they print the mission path, exact launch parameters, exact guided-runner command, and whether drift would be blocked, warned, or allowed
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun -ControlPort 27018 -TreatmentPort 27019 -AllowSafePortOverride
+```
+
 ## Mission Attainment
 
 Use `scripts\evaluate_latest_session_mission.ps1` after the run when the operator needs the direct closeout answer to "did this session actually accomplish the mission we launched it for?"
 
 - it writes `mission_attainment.json` and `mission_attainment.md` into the pair root
 - it reads the saved mission snapshot from `guided_session\mission\` when present, or fails clearly if the pair predates mission snapshots
-- it stays thin: the mission helper reuses the mission brief, live monitor, scorecard, grounded certification, outcome dossier, and latest-session delta outputs instead of duplicating their logic
+- it stays thin: the mission helper reuses the mission brief, mission execution record, live monitor, scorecard, grounded certification, outcome dossier, and latest-session delta outputs instead of duplicating their logic
 - it is different from the mission brief: the mission brief is the pre-run target, while mission attainment is the post-run answer against that exact saved target
 - it is different from the live monitor: the live monitor answers when to stop safely during capture, while mission attainment compares the mission targets against final captured actuals after capture is complete
 - it is different from the outcome dossier: the dossier is the broader post-run consolidation view, while mission attainment is the narrower target-by-target mission closeout
+- `mission-divergent-run` means the operator explicitly launched something other than the saved mission, so the session must not be treated as a mission-perfect run
 - read each `target_results` entry literally: `target_value`, `actual_value`, `met`, and `explanation`
 - `mission-met-but-no-promotion-impact` means the run cleared the monitor-facing thresholds but did not move the real promotion ledger
 - `mission-met-and-gap-reduced` means the run counted as grounded evidence and reduced a real promotion-gap component while the next objective stayed the same

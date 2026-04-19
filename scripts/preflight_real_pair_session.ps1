@@ -259,7 +259,12 @@ else {
 }
 
 if ($resolvedProfile) {
-    Add-Message -List $notes -Message "Treatment profile '$($resolvedProfile.name)' remains the default first live treatment because it is the safest bounded profile for the first human pair."
+    if ($resolvedProfile.name -eq 'conservative') {
+        Add-Message -List $notes -Message "Treatment profile '$($resolvedProfile.name)' remains the default first live treatment because it is the safest bounded profile for the first human pair."
+    }
+    else {
+        Add-Message -List $notes -Message "Treatment profile '$($resolvedProfile.name)' is an explicit non-default launch choice for this run."
+    }
 }
 if ($deploymentState) {
     Add-Message -List $notes -Message "Current deployed DLL matches the staged build."

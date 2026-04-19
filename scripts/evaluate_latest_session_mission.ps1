@@ -296,6 +296,47 @@ function Resolve-MissionBriefPaths {
     }
 }
 
+function Resolve-MissionExecutionPaths {
+    param(
+        [string]$ResolvedPairRoot,
+        [object]$GuidedDocket
+    )
+
+    $jsonCandidates = @(
+        (Join-Path $ResolvedPairRoot "guided_session\mission_execution.json"),
+        [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $GuidedDocket -Name "artifacts" -Default $null) -Name "mission_execution_json" -Default ""),
+        (Join-Path $ResolvedPairRoot "mission_execution.json")
+    )
+    $markdownCandidates = @(
+        (Join-Path $ResolvedPairRoot "guided_session\mission_execution.md"),
+        [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $GuidedDocket -Name "artifacts" -Default $null) -Name "mission_execution_markdown" -Default ""),
+        (Join-Path $ResolvedPairRoot "mission_execution.md")
+    )
+
+    $resolvedJsonPath = ""
+    foreach ($candidate in Get-UniqueStringList -Items $jsonCandidates) {
+        $resolvedCandidate = Resolve-ExistingPath -Path $candidate
+        if ($resolvedCandidate) {
+            $resolvedJsonPath = $resolvedCandidate
+            break
+        }
+    }
+
+    $resolvedMarkdownPath = ""
+    foreach ($candidate in Get-UniqueStringList -Items $markdownCandidates) {
+        $resolvedCandidate = Resolve-ExistingPath -Path $candidate
+        if ($resolvedCandidate) {
+            $resolvedMarkdownPath = $resolvedCandidate
+            break
+        }
+    }
+
+    return [ordered]@{
+        json_path = $resolvedJsonPath
+        markdown_path = $resolvedMarkdownPath
+    }
+}
+
 function Ensure-LiveMonitorStatus {
     param(
         [string]$ResolvedPairRoot,
@@ -435,7 +476,8 @@ function Get-MissionVerdict {
         [object]$Certificate,
         [object]$Scorecard,
         [object]$Dossier,
-        [object]$MonitorStatus
+        [object]$MonitorStatus,
+        [object]$MissionExecution
     )
 
     $missionOperationalSuccess = [bool](Get-ObjectPropertyValue -Object $TargetResults.live_monitor_sufficient_verdict -Name "met" -Default $false) -and
@@ -455,6 +497,10 @@ function Get-MissionVerdict {
     $responsiveGateChanged = [bool](Get-ObjectPropertyValue -Object $whatChanged -Name "changed_responsive_gate" -Default $false)
     $reducedPromotionGap = [bool](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $Dossier -Name "promotion_gap_delta_summary" -Default $null) -Name "reduced_promotion_gap" -Default $false)
     $missionPromotionImpact = $missionGroundedSuccess -and ($reducedPromotionGap -or $nextObjectiveChanged -or $responsiveGateChanged)
+    $missionLaunchCompliant = [bool](Get-ObjectPropertyValue -Object $MissionExecution -Name "mission_compliant" -Default $true)
+    $missionLaunchDivergent = [bool](Get-ObjectPropertyValue -Object $MissionExecution -Name "mission_divergent" -Default $false)
+    $missionLaunchValidForAttainment = [bool](Get-ObjectPropertyValue -Object $MissionExecution -Name "valid_for_mission_attainment_analysis" -Default $true)
+    $missionLaunchAligned = $missionLaunchCompliant -and $missionLaunchValidForAttainment
 
     $manualReviewNeeded = [bool](Get-ObjectPropertyValue -Object $Certificate -Name "manual_review_needed" -Default $false) -or
         [string](Get-ObjectPropertyValue -Object $Scorecard -Name "recommendation" -Default "") -eq "manual-review-needed" -or
@@ -482,7 +528,10 @@ function Get-MissionVerdict {
     $blockedOnlyByOrigin = @($exclusionReasons | Where-Object { $_ -notin $originOnlyExclusions }).Count -eq 0 -and @($exclusionReasons).Count -gt 0
 
     $verdict = ""
-    if ($manualReviewNeeded) {
+    if (-not $missionLaunchAligned) {
+        $verdict = "mission-divergent-run"
+    }
+    elseif ($manualReviewNeeded) {
         $verdict = "manual-review-needed"
     }
     elseif ([string](Get-ObjectPropertyValue -Object $MonitorStatus -Name "phase" -Default "") -eq "waiting") {
@@ -512,6 +561,15 @@ function Get-MissionVerdict {
     }
 
     $explanation = switch ($verdict) {
+        "mission-divergent-run" {
+            $launchExplanation = [string](Get-ObjectPropertyValue -Object $MissionExecution -Name "explanation" -Default "")
+            if (-not [string]::IsNullOrWhiteSpace($launchExplanation)) {
+                "Mission attainment stays non-compliant because the session did not launch the mission as written. $launchExplanation"
+            }
+            else {
+                "Mission attainment stays non-compliant because the session did not launch the mission as written."
+            }
+        }
         "manual-review-needed" {
             "Mission closeout stays manual-review-needed because the post-session review stack still requires human judgment before promotion conclusions can be trusted."
         }
@@ -569,12 +627,15 @@ function Get-MissionVerdict {
     return [ordered]@{
         verdict = $verdict
         explanation = $explanation
-        mission_operational_success = $missionOperationalSuccess
-        mission_grounded_success = $missionGroundedSuccess
-        mission_promotion_impact = $missionPromotionImpact
+        mission_operational_success = if ($missionLaunchAligned) { $missionOperationalSuccess } else { $false }
+        mission_grounded_success = if ($missionLaunchAligned) { $missionGroundedSuccess } else { $false }
+        mission_promotion_impact = if ($missionLaunchAligned) { $missionPromotionImpact } else { $false }
         next_objective_changed = $nextObjectiveChanged
         responsive_gate_changed = $responsiveGateChanged
         reduced_promotion_gap = $reducedPromotionGap
+        mission_launch_compliant = $missionLaunchCompliant
+        mission_launch_divergent = $missionLaunchDivergent
+        mission_launch_valid_for_attainment = $missionLaunchValidForAttainment
     }
 }
 
@@ -602,6 +663,7 @@ function Get-MissionAttainmentMarkdown {
         "",
         "- Pair root: $($MissionAttainment.pair_root)",
         "- Mission brief path used: $($MissionAttainment.mission_brief_path_used)",
+        "- Mission execution path used: $($MissionAttainment.mission_execution.path)",
         "- Evidence origin: $($MissionAttainment.evidence_origin)",
         "- Treatment profile used: $($MissionAttainment.treatment_profile_used)",
         "- Current certification verdict: $($MissionAttainment.current_certification_verdict)",
@@ -610,6 +672,9 @@ function Get-MissionAttainmentMarkdown {
         "- Mission operational success: $($MissionAttainment.mission_operational_success)",
         "- Mission grounded success: $($MissionAttainment.mission_grounded_success)",
         "- Mission promotion impact: $($MissionAttainment.mission_promotion_impact)",
+        "- Mission launch compliant: $($MissionAttainment.mission_execution.mission_compliant)",
+        "- Mission launch divergent: $($MissionAttainment.mission_execution.mission_divergent)",
+        "- Valid for mission-attainment analysis: $($MissionAttainment.mission_execution.valid_for_mission_attainment_analysis)",
         "- Explanation: $($MissionAttainment.explanation)",
         "",
         "## Targets Met",
@@ -660,12 +725,20 @@ function Get-MissionAttainmentMarkdown {
         "- Current next objective: $($MissionAttainment.next_mission.objective)",
         "- Recommended next live action: $($MissionAttainment.next_mission.recommended_next_live_action)",
         "",
+        "## Mission Execution",
+        "",
+        "- Drift policy verdict: $($MissionAttainment.mission_execution.drift_policy_verdict)",
+        "- Drift detected: $($MissionAttainment.mission_execution.drift_detected)",
+        "- Mission execution explanation: $($MissionAttainment.mission_execution.explanation)",
+        "",
         "## Artifacts",
         "",
         "- Live monitor JSON: $($MissionAttainment.artifacts.live_monitor_status_json)",
         "- Scorecard JSON: $($MissionAttainment.artifacts.scorecard_json)",
         "- Grounded evidence certificate JSON: $($MissionAttainment.artifacts.grounded_evidence_certificate_json)",
         "- Session outcome dossier JSON: $($MissionAttainment.artifacts.session_outcome_dossier_json)",
+        "- Mission execution JSON: $($MissionAttainment.artifacts.mission_execution_json)",
+        "- Mission execution Markdown: $($MissionAttainment.artifacts.mission_execution_markdown)",
         "- Mission attainment JSON: $($MissionAttainment.artifacts.mission_attainment_json)",
         "- Mission attainment Markdown: $($MissionAttainment.artifacts.mission_attainment_markdown)"
     )
@@ -721,10 +794,12 @@ else {
 $guidedDocketPath = Resolve-ExistingPath -Path (Join-Path $resolvedPairRoot "guided_session\final_session_docket.json")
 $guidedDocket = Read-JsonFile -Path $guidedDocketPath
 $missionPaths = Resolve-MissionBriefPaths -ResolvedPairRoot $resolvedPairRoot -GuidedDocket $guidedDocket
+$missionExecutionPaths = Resolve-MissionExecutionPaths -ResolvedPairRoot $resolvedPairRoot -GuidedDocket $guidedDocket
 $mission = Read-JsonFile -Path $missionPaths.json_path
 if ($null -eq $mission) {
     throw "Mission brief could not be parsed: $($missionPaths.json_path)"
 }
+$missionExecution = Read-JsonFile -Path $missionExecutionPaths.json_path
 
 $monitorInfo = Ensure-LiveMonitorStatus -ResolvedPairRoot $resolvedPairRoot -Mission $mission -ResolvedLabRoot $resolvedLabRoot -ResolvedPairsRoot $resolvedPairsRoot
 $dossierInfo = Ensure-OutcomeDossier -ResolvedPairRoot $resolvedPairRoot -ResolvedLabRoot $resolvedLabRoot -ResolvedPairsRoot $resolvedPairsRoot -ResolvedRegistryPath $resolvedRegistryPath
@@ -801,7 +876,7 @@ $targetResults = [ordered]@{
         -FailureExplanation ("Mission success required promotion-counting grounded evidence, but the session stayed outside the promotion ledger: {0}" -f ([string](Get-ObjectPropertyValue -Object $certificate -Name "explanation" -Default "")))
 }
 
-$verdictInfo = Get-MissionVerdict -TargetResults $targetResults -Certificate $certificate -Scorecard $scorecard -Dossier $dossier -MonitorStatus $monitorStatus
+$verdictInfo = Get-MissionVerdict -TargetResults $targetResults -Certificate $certificate -Scorecard $scorecard -Dossier $dossier -MonitorStatus $monitorStatus -MissionExecution $missionExecution
 $metTargetItems = Get-MetTargetItems -TargetResults $targetResults
 $missedTargetItems = Get-MissedTargetItems -TargetResults $targetResults
 $whatChanged = Get-ObjectPropertyValue -Object $dossier -Name "what_changed_because_of_this_session" -Default $null
@@ -838,6 +913,17 @@ $missionAttainment = [ordered]@{
     target_keys_met = @($metTargetItems | ForEach-Object { [string](Get-ObjectPropertyValue -Object $_ -Name "key" -Default "") })
     target_keys_missed = @($missedTargetItems | ForEach-Object { [string](Get-ObjectPropertyValue -Object $_ -Name "key" -Default "") })
     target_results = $targetResults
+    mission_execution = [ordered]@{
+        available = $null -ne $missionExecution
+        path = $missionExecutionPaths.json_path
+        markdown_path = $missionExecutionPaths.markdown_path
+        mission_compliant = [bool](Get-ObjectPropertyValue -Object $missionExecution -Name "mission_compliant" -Default $true)
+        mission_divergent = [bool](Get-ObjectPropertyValue -Object $missionExecution -Name "mission_divergent" -Default $false)
+        valid_for_mission_attainment_analysis = [bool](Get-ObjectPropertyValue -Object $missionExecution -Name "valid_for_mission_attainment_analysis" -Default $true)
+        drift_policy_verdict = [string](Get-ObjectPropertyValue -Object $missionExecution -Name "drift_policy_verdict" -Default "")
+        drift_detected = [bool](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $missionExecution -Name "drift_summary" -Default $null) -Name "drift_detected" -Default $false)
+        explanation = [string](Get-ObjectPropertyValue -Object $missionExecution -Name "explanation" -Default "")
+    }
     mission_context = [ordered]@{
         objective_before_session = [string](Get-ObjectPropertyValue -Object $mission -Name "current_next_live_objective" -Default "")
         recommended_live_treatment_profile_before_session = [string](Get-ObjectPropertyValue -Object $mission -Name "recommended_live_treatment_profile" -Default "")
@@ -871,6 +957,8 @@ $missionAttainment = [ordered]@{
     artifacts = [ordered]@{
         mission_brief_json = $missionPaths.json_path
         mission_brief_markdown = $missionPaths.markdown_path
+        mission_execution_json = $missionExecutionPaths.json_path
+        mission_execution_markdown = $missionExecutionPaths.markdown_path
         live_monitor_status_json = $monitorInfo.json_path
         live_monitor_status_markdown = $monitorInfo.markdown_path
         scorecard_json = $scorecardPath
@@ -890,6 +978,7 @@ Write-TextFile -Path $outputMarkdownPath -Value (Get-MissionAttainmentMarkdown -
 Write-Host "Session mission attainment:"
 Write-Host "  Pair root: $resolvedPairRoot"
 Write-Host "  Mission brief path: $($missionPaths.json_path)"
+Write-Host "  Mission execution path: $($missionExecutionPaths.json_path)"
 Write-Host "  Mission verdict: $($missionAttainment.mission_verdict)"
 Write-Host "  Grounded certification verdict: $($missionAttainment.current_certification_verdict)"
 Write-Host "  Promotion impact: $($missionAttainment.mission_promotion_impact)"
@@ -901,6 +990,8 @@ Write-Host "  Mission attainment Markdown: $outputMarkdownPath"
     PairRoot = $resolvedPairRoot
     MissionBriefPath = $missionPaths.json_path
     MissionBriefMarkdownPath = $missionPaths.markdown_path
+    MissionExecutionJsonPath = $missionExecutionPaths.json_path
+    MissionExecutionMarkdownPath = $missionExecutionPaths.markdown_path
     MissionVerdict = [string]$missionAttainment.mission_verdict
     MissionOperationalSuccess = [bool]$missionAttainment.mission_operational_success
     MissionGroundedSuccess = [bool]$missionAttainment.mission_grounded_success

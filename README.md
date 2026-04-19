@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-33
+HLDM-JKBOTTI-AI-STAND-20260415-34
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -22,6 +22,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/build_latest_session_outcome_dossier.ps1` and `scripts/build_latest_session_outcome_dossier.bat` for the one-shot post-session outcome dossier that consolidates scorecard, shadow review, grounded certification, latest-session delta, responsive gate, and next-live planning into one operator-facing artifact.
 - `scripts/plan_next_live_session.ps1` and `scripts/plan_next_live_session.bat` for explicit promotion-gap accounting that says what certified grounded evidence is still missing before responsive can open and what the next conservative live session should try to prove.
 - `scripts/prepare_next_live_session_mission.ps1` and `scripts/prepare_next_live_session_mission.bat` for the pre-run operator mission brief that turns the current planner, gate, and latest outcome context into one exact next-session target artifact before launch.
+- `scripts/run_current_live_mission.ps1` and `scripts/run_current_live_mission.bat` for mission-driven launch, drift detection, dry-run inspection, and explicit mission-execution recording before the guided workflow starts.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -197,10 +198,11 @@ The paired live-session runner is the recommended next human workflow:
 - the pair runner defaults the treatment lane to `conservative`, because it is the safest next live profile for collecting honest evidence before trying `responsive`.
 - `scripts\monitor_live_pair_session.ps1` is the thin live observer for that pair root. It polls the current pair artifacts plus the active runtime history, writes `live_monitor_status.json` and `live_monitor_status.md`, and keeps the stop/keep-running decision conservative.
 - `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pre-run mission brief, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, the next-live planner, the outcome dossier, and the final session docket.
+- `scripts\run_current_live_mission.ps1` is the mission-driven launcher. It reads the latest mission brief by default, enforces conservative drift policy before launch, and records `guided_session\mission_execution.json` / `.md` so later closeout can tell whether the operator actually launched the current mission.
 - `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
 - `scripts\prepare_next_live_session_mission.ps1` is the pre-run operator brief. It reuses the current responsive gate, the next-live planner, and the latest outcome dossier context to produce `next_live_session_mission.json` and `next_live_session_mission.md` with the exact thresholds, stop condition, failure conditions, and mission statement for the very next live run.
 - each paired run writes `pair_summary.json`, `pair_summary.md`, `comparison.json`, `comparison.md`, `control_join_instructions.txt`, `treatment_join_instructions.txt`, and the nested lane/session-pack folders.
-- each guided paired run also writes `session_outcome_dossier.json` / `.md` and `mission_attainment.json` / `.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, and points the final guided docket back at all three layers so the operator can compare "what was the target before launch?" against "what counted after the run?" and "did that actually achieve the mission?".
+- each guided paired run also writes `session_outcome_dossier.json` / `.md` and `mission_attainment.json` / `.md` under the pair root, snapshots the pre-run mission under `guided_session\mission\`, writes `guided_session\mission_execution.json` / `.md`, and points the final guided docket back at all four layers so the operator can compare "what was the target before launch?" against "what was actually launched?" against "what counted after the run?" and "did that actually achieve the mission?".
 - `scripts\run_shadow_profile_review.ps1` can then replay the saved treatment lane through `conservative`, `default`, and `responsive` offline without spending another live human session.
 
 `scripts\run_balance_eval.ps1` now separates plumbing health from tuning usability:
@@ -242,22 +244,22 @@ Interpret the operator note conservatively:
 
 If `Half-Life\hl.exe` is available locally, `scripts\launch_local_hldm_client.ps1 -Port <port> -DryRun` resolves the client path and prints the launch command without starting the game. If the executable is missing, the helper fails with a precise prereq message instead of failing silently.
 
-For the next real conservative human pair session, use the guided workflow first:
+For the next real conservative human pair session, prefer the mission-driven runner first:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 80 -WaitForHumanJoin -HumanJoinGraceSeconds 120 -TreatmentProfile conservative -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1
 ```
 
-If you want to inspect the exact target before launch, generate the mission brief directly first:
+Inspect the exact mission-derived launch without starting a session like this:
 
 ```powershell
-powershell -NoProfile -File .\scripts\prepare_next_live_session_mission.ps1
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun
 ```
 
 Rehearse the same guided workflow end to end without a real human participant like this:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_guided_live_pair_session.ps1 -RehearsalMode -RehearsalFixtureId strong_signal_keep_conservative -RehearsalStepSeconds 2 -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -DurationSeconds 18 -WaitForHumanJoin -HumanJoinGraceSeconds 20 -MinHumanSnapshots 3 -MinHumanPresenceSeconds 60 -MinPatchEventsForUsableLane 2 -MinPostPatchObservationSeconds 20 -TreatmentProfile conservative -AutoStartMonitor -AutoStopWhenSufficient -MonitorPollSeconds 1 -RunPostPipeline
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -RehearsalMode -RehearsalFixtureId strong_signal_keep_conservative -RehearsalStepSeconds 2 -AutoStopWhenSufficient -MonitorPollSeconds 1
 ```
 
 That rehearsal path validates only workflow behavior:
@@ -518,6 +520,7 @@ In the planner, "evidence gap" means the configured promotion thresholds minus t
 Use `scripts\prepare_next_live_session_mission.ps1` immediately before the next real live session when the operator needs one concrete pre-run target instead of piecing it together from the planner, gate, and latest dossier manually.
 
 - it writes `next_live_session_mission.json` and `next_live_session_mission.md` under `lab\logs\eval\registry\`
+- it now also carries launcher defaults such as the default pair output root, `Release|Win32`, and default skip-flag values so the mission runner can compare launch drift against an explicit baseline instead of guessing
 - it reuses the current registry summary, responsive gate, and next-live planner outputs instead of creating a second decision engine
 - it also reads the latest available live outcome dossier when one exists, so the mission can state whether the project is still in the same blocked state or is coming off a recent non-grounded run
 - it is narrower than the planner: the planner explains the whole promotion gap, while the mission brief narrows that into the exact next-session target, exact thresholds, exact stop condition, and exact ways the session can still fail to count
@@ -537,6 +540,36 @@ Or with the thin wrapper:
 scripts\prepare_next_live_session_mission.bat
 ```
 
+## Current Live Mission Runner
+
+Use `scripts\run_current_live_mission.ps1` when the question is not only "what should the next live session do?" but "launch exactly that mission, or tell me precisely why not."
+
+- it reads `lab\logs\eval\registry\next_live_session_mission.json` by default, or accepts `-MissionPath` when you want a specific saved brief
+- it launches the existing `scripts\run_guided_live_pair_session.ps1` stack instead of creating a parallel launcher
+- it writes a preview `mission_execution.json` / `.md` in dry-run mode and writes the final launch record under `guided_session\mission_execution.json` / `.md` after a real or rehearsal-backed run starts
+- it compares mission vs requested launch for map, bot count, bot skill, control port, treatment port, treatment profile, human-signal thresholds, patch-while-human-present target, post-patch observation target, skip flags, and output roots
+- output-root drift is recorded and allowed by default because it does not change the experiment semantics; safe port drift requires `-AllowSafePortOverride`
+- mission-changing drift such as map changes, bot-count changes, treatment-profile changes, or weakened thresholds is blocked unless `-AllowMissionOverride` is supplied
+- if the mission still says `conservative` and the responsive gate is closed, switching to `responsive` is blocked by default; even with `-AllowMissionOverride`, the run stays mission-divergent and mission-attainment will not present it as mission-perfect
+- `-DryRun` prints the mission path, exact launch parameters, exact guided-runner command, and whether drift would be blocked, warned, or allowed without starting the session
+- `-PrintCommandOnly` is the same no-launch policy path when you only need the exact command text
+- mission-attainment later reads `mission_execution.json`; if the launch diverged from the mission in an experiment-changing way, the closeout becomes `mission-divergent-run` instead of a false mission-met result
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun -ControlPort 27018 -TreatmentPort 27019 -AllowSafePortOverride
+powershell -NoProfile -File .\scripts\run_current_live_mission.ps1 -DryRun -TreatmentProfile responsive -AllowMissionOverride
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\run_current_live_mission.bat
+```
+
 ## Mission Attainment
 
 Use `scripts\evaluate_latest_session_mission.ps1` immediately after a completed session when the question is not only "what happened?" but "did this run achieve the exact mission it was started for?"
@@ -544,10 +577,11 @@ Use `scripts\evaluate_latest_session_mission.ps1` immediately after a completed 
 - it writes `mission_attainment.json` and `mission_attainment.md` into the pair root
 - by default it evaluates the latest pair pack; pass `-PairRoot .\lab\logs\eval\pairs\<pair-pack>` when you want a specific saved pair
 - it requires the mission snapshot that was used before launch; if the pair predates mission snapshots, it fails honestly instead of fabricating a result
-- it reuses the saved mission brief, live monitor status, scorecard, grounded certification, outcome dossier, and latest-session delta instead of inventing another scoring engine
+- it reuses the saved mission brief, mission execution record, live monitor status, scorecard, grounded certification, outcome dossier, and latest-session delta instead of inventing another scoring engine
 - it is different from the mission brief: the mission brief is pre-run and says what must happen, while mission attainment is post-run and says whether that exact target was met
 - it is different from the live monitor: the live monitor answers whether the operator can stop safely during the run, while mission attainment compares all mission targets against the final captured evidence after the run
 - it is different from the outcome dossier: the dossier is the broad post-run consolidation layer, while mission attainment is the narrow mission-closeout layer anchored to one saved mission snapshot
+- it now also checks whether the launch itself stayed mission-compliant; mission-divergent launches return `mission-divergent-run` even if the captured evidence otherwise looks strong
 - the `target_results` block is the exact target-vs-actual view; for each mission target read `target_value`, `actual_value`, `met`, and `explanation` literally
 - `mission-met-but-no-promotion-impact` means the run satisfied the monitor-facing mission thresholds, but the evidence still did not count toward or move the real promotion ledger
 - `mission-met-and-gap-reduced` means the run counted as grounded evidence and shrank at least one real promotion-gap component without changing the next objective or responsive gate
@@ -834,6 +868,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_control_treatment_pair.bat`: `cmd.exe` wrapper for the paired control-vs-treatment helper.
 - `scripts/run_guided_live_pair_session.ps1`: guided conservative-first operator workflow that runs preflight, the paired capture, optional auto-start monitoring with sufficient-only auto-stop, the full post-session evidence pipeline, and the final session docket.
 - `scripts/run_guided_live_pair_session.bat`: `cmd.exe` wrapper for the guided live pair-session workflow.
+- `scripts/run_current_live_mission.ps1`: mission-driven wrapper that launches the current mission, records drift, and writes `mission_execution.json` / `.md` before the post-run closeout reuses that launch record.
+- `scripts/run_current_live_mission.bat`: `cmd.exe` wrapper for the mission-driven runner.
 - `scripts/build_latest_session_outcome_dossier.ps1`: consolidates the latest pair's scorecard, shadow review, grounded certification, before-vs-after delta, current gate, and current next-live plan into `session_outcome_dossier.json` plus `session_outcome_dossier.md`.
 - `scripts/build_latest_session_outcome_dossier.bat`: `cmd.exe` wrapper for the outcome-dossier helper.
 - `scripts/plan_next_live_session.ps1`: computes the certified-grounded promotion gap, emits `next_live_plan.json` plus `next_live_plan.md`, and recommends the next live profile and session objective.

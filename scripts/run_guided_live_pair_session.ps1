@@ -28,6 +28,9 @@ param(
     [switch]$RehearsalMode,
     [string]$RehearsalFixtureId = "strong_signal_keep_conservative",
     [int]$RehearsalStepSeconds = 2,
+    [string]$MissionJsonPath = "",
+    [string]$MissionMarkdownPath = "",
+    [string]$MissionExecutionSeedJsonPath = "",
     [Alias("EvalRoot")]
     [string]$OutputRoot = ""
 )
@@ -108,6 +111,22 @@ function Get-ObjectPropertyValue {
     return $property.Value
 }
 
+function Set-ObjectPropertyValue {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$Value
+    )
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) {
+        $property.Value = $Value
+        return
+    }
+
+    Add-Member -InputObject $Object -MemberType NoteProperty -Name $Name -Value $Value
+}
+
 function Get-AbsolutePath {
     param(
         [string]$Path,
@@ -127,6 +146,28 @@ function Get-AbsolutePath {
     }
 
     return Join-Path (Get-RepoRoot) $Path
+}
+
+function Format-DisplayValue {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    if ($Value -is [bool]) {
+        return $Value.ToString().ToLowerInvariant()
+    }
+
+    if ($Value -is [double] -or $Value -is [single] -or $Value -is [decimal]) {
+        return [string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0:0.###}", [double]$Value)
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
+        return (@($Value) | ForEach-Object { Format-DisplayValue -Value $_ }) -join ", "
+    }
+
+    return [string]$Value
 }
 
 function Format-ProcessArgument {
@@ -414,6 +455,119 @@ function Get-RecommendedOperatorAction {
     }
 }
 
+function Get-MissionExecutionMarkdown {
+    param([object]$Execution)
+
+    $lines = @(
+        "# Mission Execution",
+        "",
+        "- Mission path used: $($Execution.mission_path_used)",
+        "- Mission Markdown path used: $($Execution.mission_markdown_path_used)",
+        "- Mission hash SHA256: $($Execution.mission_identity.sha256)",
+        "- Mission objective: $($Execution.mission_identity.current_next_live_objective)",
+        "- Mission recommended live profile: $($Execution.mission_identity.recommended_live_treatment_profile)",
+        "- Execution mode: $($Execution.execution_mode)",
+        "- Pair root: $($Execution.pair_root)",
+        "- Guided session root: $($Execution.guided_session_root)",
+        "- Mission compliant: $($Execution.mission_compliant)",
+        "- Mission divergent: $($Execution.mission_divergent)",
+        "- Valid for mission-attainment analysis: $($Execution.valid_for_mission_attainment_analysis)",
+        "- Drift detected: $($Execution.drift_summary.drift_detected)",
+        "- Drift policy verdict: $($Execution.drift_policy_verdict)",
+        "- Explanation: $($Execution.explanation)",
+        "",
+        "## Requested Launch Parameters",
+        "",
+        "- Map: $($Execution.requested_execution_parameters.map)",
+        "- Bot count: $($Execution.requested_execution_parameters.bot_count)",
+        "- Bot skill: $($Execution.requested_execution_parameters.bot_skill)",
+        "- Control port: $($Execution.requested_execution_parameters.control_port)",
+        "- Treatment port: $($Execution.requested_execution_parameters.treatment_port)",
+        "- Treatment profile: $($Execution.requested_execution_parameters.treatment_profile)",
+        "- Min human snapshots: $($Execution.requested_execution_parameters.min_human_snapshots)",
+        "- Min human presence seconds: $($Execution.requested_execution_parameters.min_human_presence_seconds)",
+        "- Min patch-while-human-present events: $($Execution.requested_execution_parameters.min_patch_events_for_usable_lane)",
+        "- Min post-patch observation seconds: $($Execution.requested_execution_parameters.min_post_patch_observation_seconds)",
+        "- Pair output root: $($Execution.requested_execution_parameters.output_root)",
+        "- Skip SteamCMD update: $($Execution.requested_execution_parameters.skip_steamcmd_update)",
+        "- Skip Metamod download: $($Execution.requested_execution_parameters.skip_metamod_download)",
+        "- Rehearsal mode: $($Execution.requested_execution_parameters.rehearsal_mode)",
+        "",
+        "## Drift Fields",
+        ""
+    )
+
+    foreach ($entry in @($Execution.drift_summary.fields.PSObject.Properties)) {
+        $field = $entry.Value
+        $lines += ("- {0}: mission={1}; actual={2}; match={3}; allowed={4}; explanation={5}" -f
+            [string](Get-ObjectPropertyValue -Object $field -Name "field_name" -Default $entry.Name),
+            (Format-DisplayValue -Value (Get-ObjectPropertyValue -Object $field -Name "mission_value" -Default $null)),
+            (Format-DisplayValue -Value (Get-ObjectPropertyValue -Object $field -Name "actual_value" -Default $null)),
+            ([bool](Get-ObjectPropertyValue -Object $field -Name "match" -Default $false)).ToString().ToLowerInvariant(),
+            ([bool](Get-ObjectPropertyValue -Object $field -Name "allowed" -Default $false)).ToString().ToLowerInvariant(),
+            [string](Get-ObjectPropertyValue -Object $field -Name "explanation" -Default "")
+        )
+    }
+
+    $lines += @(
+        "",
+        "## Guided Runner Command",
+        "",
+        '```powershell',
+        ([string](Get-ObjectPropertyValue -Object $Execution -Name "guided_runner_command" -Default "")),
+        '```',
+        ""
+    )
+
+    return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
+}
+
+function Finalize-MissionExecutionArtifacts {
+    param(
+        [string]$SeedJsonPath,
+        [string]$PairRoot,
+        [string]$GuidedSessionRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SeedJsonPath) -or -not (Test-Path -LiteralPath $SeedJsonPath)) {
+        return [pscustomobject]@{
+            JsonPath = ""
+            MarkdownPath = ""
+            Payload = $null
+        }
+    }
+
+    $payload = Read-JsonFile -Path $SeedJsonPath
+    if ($null -eq $payload) {
+        throw "Mission execution seed could not be parsed: $SeedJsonPath"
+    }
+
+    $missionExecutionJsonPath = Join-Path $GuidedSessionRoot "mission_execution.json"
+    $missionExecutionMarkdownPath = Join-Path $GuidedSessionRoot "mission_execution.md"
+
+    Set-ObjectPropertyValue -Object $payload -Name "pair_root" -Value $PairRoot
+    Set-ObjectPropertyValue -Object $payload -Name "guided_session_root" -Value $GuidedSessionRoot
+    Set-ObjectPropertyValue -Object $payload -Name "execution_record_status" -Value "launched"
+
+    $artifacts = Get-ObjectPropertyValue -Object $payload -Name "artifacts" -Default ([ordered]@{})
+    if ($artifacts -isnot [System.Collections.IDictionary]) {
+        $artifacts = [ordered]@{}
+    }
+    $artifacts.mission_execution_json = $missionExecutionJsonPath
+    $artifacts.mission_execution_markdown = $missionExecutionMarkdownPath
+    Set-ObjectPropertyValue -Object $payload -Name "artifacts" -Value $artifacts
+
+    Write-JsonFile -Path $missionExecutionJsonPath -Value $payload
+    $payloadForMarkdown = Read-JsonFile -Path $missionExecutionJsonPath
+    Write-TextFile -Path $missionExecutionMarkdownPath -Value (Get-MissionExecutionMarkdown -Execution $payloadForMarkdown)
+
+    return [pscustomobject]@{
+        JsonPath = $missionExecutionJsonPath
+        MarkdownPath = $missionExecutionMarkdownPath
+        Payload = $payloadForMarkdown
+    }
+}
+
 function Get-FinalSessionDocketMarkdown {
     param([object]$Docket)
 
@@ -465,6 +619,15 @@ function Get-FinalSessionDocketMarkdown {
         "- Mission promotion impact: $($Docket.mission_attainment.mission_promotion_impact)",
         "- Mission explanation: $($Docket.mission_attainment.explanation)",
         "",
+        "## Mission Execution",
+        "",
+        "- Drift policy verdict: $($Docket.mission_execution.drift_policy_verdict)",
+        "- Mission compliant launch: $($Docket.mission_execution.mission_compliant)",
+        "- Mission divergent launch: $($Docket.mission_execution.mission_divergent)",
+        "- Valid for mission-attainment analysis: $($Docket.mission_execution.valid_for_mission_attainment_analysis)",
+        "- Drift detected: $($Docket.mission_execution.drift_detected)",
+        "- Mission execution explanation: $($Docket.mission_execution.explanation)",
+        "",
         "## Artifacts",
         "",
         "- Pair summary JSON: $($Docket.artifacts.pair_summary_json)",
@@ -477,6 +640,8 @@ function Get-FinalSessionDocketMarkdown {
         "- Mission brief Markdown: $($Docket.artifacts.mission_brief_markdown)",
         "- Mission snapshot JSON: $($Docket.artifacts.mission_snapshot_json)",
         "- Mission snapshot Markdown: $($Docket.artifacts.mission_snapshot_markdown)",
+        "- Mission execution JSON: $($Docket.artifacts.mission_execution_json)",
+        "- Mission execution Markdown: $($Docket.artifacts.mission_execution_markdown)",
         "- Registry path: $($Docket.artifacts.registry_path)",
         "- Monitor history NDJSON: $($Docket.artifacts.monitor_history_ndjson)",
         "- Rehearsal metadata JSON: $($Docket.artifacts.rehearsal_metadata_json)",
@@ -641,14 +806,40 @@ if ([string]$preflightResult.Verdict -eq "blocked") {
     throw "Preflight reported 'blocked'. Resolve the listed blockers before running the guided pair session."
 }
 
-$missionArgs = @{
-    LabRoot = $LabRoot
+$missionPayload = $null
+if (-not [string]::IsNullOrWhiteSpace($MissionJsonPath)) {
+    $MissionJsonPath = Get-AbsolutePath -Path $MissionJsonPath -BasePath $repoRoot
+    if (-not (Test-Path -LiteralPath $MissionJsonPath)) {
+        throw "MissionJsonPath was not found: $MissionJsonPath"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($MissionMarkdownPath)) {
+        $MissionMarkdownPath = Get-AbsolutePath -Path $MissionMarkdownPath -BasePath $repoRoot
+    }
+    elseif (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($MissionJsonPath, ".md"))) {
+        $MissionMarkdownPath = [System.IO.Path]::ChangeExtension($MissionJsonPath, ".md")
+    }
+
+    $missionPayload = Read-JsonFile -Path $MissionJsonPath
 }
-$missionResult = & $missionScriptPath @missionArgs
-$missionJsonPath = [string](Get-ObjectPropertyValue -Object $missionResult -Name "MissionJsonPath" -Default "")
-$missionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionResult -Name "MissionMarkdownPath" -Default "")
-$missionRecommendedProfile = [string](Get-ObjectPropertyValue -Object $missionResult -Name "RecommendedLiveProfile" -Default "")
-$missionCurrentObjective = [string](Get-ObjectPropertyValue -Object $missionResult -Name "CurrentNextLiveObjective" -Default "")
+else {
+    $missionArgs = @{
+        LabRoot = $LabRoot
+    }
+    $missionResult = & $missionScriptPath @missionArgs
+    $MissionJsonPath = [string](Get-ObjectPropertyValue -Object $missionResult -Name "MissionJsonPath" -Default "")
+    $MissionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionResult -Name "MissionMarkdownPath" -Default "")
+    $missionPayload = Read-JsonFile -Path $MissionJsonPath
+}
+
+if ($null -eq $missionPayload) {
+    throw "Mission brief could not be parsed: $MissionJsonPath"
+}
+
+$missionJsonPath = $MissionJsonPath
+$missionMarkdownPath = $MissionMarkdownPath
+$missionRecommendedProfile = [string](Get-ObjectPropertyValue -Object $missionPayload -Name "recommended_live_treatment_profile" -Default "")
+$missionCurrentObjective = [string](Get-ObjectPropertyValue -Object $missionPayload -Name "current_next_live_objective" -Default "")
 
 Write-Host "  Mission brief JSON: $missionJsonPath"
 Write-Host "  Mission brief Markdown: $missionMarkdownPath"
@@ -773,6 +964,9 @@ $monitorHistoryPath = Join-Path $guidedSessionRoot "monitor_verdict_history.ndjs
 $missionSnapshotRoot = Ensure-Directory -Path (Join-Path $guidedSessionRoot "mission")
 $missionSnapshotJsonPath = ""
 $missionSnapshotMarkdownPath = ""
+$missionExecutionJsonPath = ""
+$missionExecutionMarkdownPath = ""
+$missionExecutionPayload = $null
 $rehearsalRegistryRoot = if ($RehearsalMode) {
     Ensure-Directory -Path (Join-Path $guidedSessionRoot "registry")
 }
@@ -810,11 +1004,21 @@ else {
     Write-Warning "Mission Markdown was not available to snapshot into the pair root."
 }
 
+$missionExecutionArtifact = Finalize-MissionExecutionArtifacts `
+    -SeedJsonPath $MissionExecutionSeedJsonPath `
+    -PairRoot $pairRoot `
+    -GuidedSessionRoot $guidedSessionRoot
+$missionExecutionJsonPath = [string](Get-ObjectPropertyValue -Object $missionExecutionArtifact -Name "JsonPath" -Default "")
+$missionExecutionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionExecutionArtifact -Name "MarkdownPath" -Default "")
+$missionExecutionPayload = Get-ObjectPropertyValue -Object $missionExecutionArtifact -Name "Payload" -Default $null
+
 Write-Host "  Active pair root: $pairRoot"
 Write-Host "  Final session docket JSON: $finalDocketJsonPath"
 Write-Host "  Final session docket Markdown: $finalDocketMarkdownPath"
 Write-Host "  Mission snapshot JSON: $missionSnapshotJsonPath"
 Write-Host "  Mission snapshot Markdown: $missionSnapshotMarkdownPath"
+Write-Host "  Mission execution JSON: $missionExecutionJsonPath"
+Write-Host "  Mission execution Markdown: $missionExecutionMarkdownPath"
 Write-Host "  Monitor history NDJSON: $monitorHistoryPath"
 if ($RehearsalMode) {
     Write-Host "  Rehearsal registry path: $postPipelineRegistryPath"
@@ -1171,6 +1375,15 @@ $docket = [ordered]@{
         mission_promotion_impact = [bool](Get-ObjectPropertyValue -Object $missionAttainment -Name "mission_promotion_impact" -Default $false)
         explanation = [string](Get-ObjectPropertyValue -Object $missionAttainment -Name "explanation" -Default "")
     }
+    mission_execution = [ordered]@{
+        available = $null -ne $missionExecutionPayload
+        drift_policy_verdict = [string](Get-ObjectPropertyValue -Object $missionExecutionPayload -Name "drift_policy_verdict" -Default "")
+        mission_compliant = [bool](Get-ObjectPropertyValue -Object $missionExecutionPayload -Name "mission_compliant" -Default $true)
+        mission_divergent = [bool](Get-ObjectPropertyValue -Object $missionExecutionPayload -Name "mission_divergent" -Default $false)
+        valid_for_mission_attainment_analysis = [bool](Get-ObjectPropertyValue -Object $missionExecutionPayload -Name "valid_for_mission_attainment_analysis" -Default $true)
+        drift_detected = [bool](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $missionExecutionPayload -Name "drift_summary" -Default $null) -Name "drift_detected" -Default $false)
+        explanation = [string](Get-ObjectPropertyValue -Object $missionExecutionPayload -Name "explanation" -Default "")
+    }
     artifacts = [ordered]@{
         pair_summary_json = $pairSummaryJsonPath
         scorecard_json = Join-Path $pairRoot "scorecard.json"
@@ -1183,6 +1396,8 @@ $docket = [ordered]@{
         mission_brief_markdown = $missionMarkdownPath
         mission_snapshot_json = $missionSnapshotJsonPath
         mission_snapshot_markdown = $missionSnapshotMarkdownPath
+        mission_execution_json = $missionExecutionJsonPath
+        mission_execution_markdown = $missionExecutionMarkdownPath
         registry_path = if ($registerResult -and $registerResult.RegistryPath) { [string]$registerResult.RegistryPath } elseif ($postPipelineRegistryPath) { $postPipelineRegistryPath } else { Join-Path (Get-RegistryRootDefault -LabRoot $LabRoot) "pair_sessions.ndjson" }
         monitor_history_ndjson = $monitorHistoryPath
         rehearsal_metadata_json = Join-Path $pairRoot "rehearsal_metadata.json"
@@ -1226,6 +1441,8 @@ Write-Host "  Primary operator action: $($operatorAction.Primary)"
     FinalSessionDocketMarkdownPath = $finalDocketMarkdownPath
     MissionBriefJsonPath = $missionJsonPath
     MissionBriefMarkdownPath = $missionMarkdownPath
+    MissionExecutionJsonPath = $missionExecutionJsonPath
+    MissionExecutionMarkdownPath = $missionExecutionMarkdownPath
     OutcomeDossierJsonPath = $outcomeDossierJsonPath
     OutcomeDossierMarkdownPath = $outcomeDossierMarkdownPath
     MissionAttainmentJsonPath = $missionAttainmentJsonPath
