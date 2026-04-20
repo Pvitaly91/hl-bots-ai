@@ -291,15 +291,15 @@ function Get-AttemptExplanation {
 
     switch ($AttemptVerdict) {
         "first-grounded-conservative-captured" {
-            if (-not [string]::IsNullOrWhiteSpace($MissionExplanation)) {
-                return $MissionExplanation
+            if (-not [string]::IsNullOrWhiteSpace($DossierExplanation)) {
+                return $DossierExplanation
             }
 
             return "The session launched the conservative mission, cleared grounded certification, and created the first grounded conservative evidence pack."
         }
         "conservative-session-grounded-but-not-first" {
-            if (-not [string]::IsNullOrWhiteSpace($MissionExplanation)) {
-                return $MissionExplanation
+            if (-not [string]::IsNullOrWhiteSpace($DossierExplanation)) {
+                return $DossierExplanation
             }
 
             return "The session counted as grounded conservative evidence, but it was not the first grounded conservative pack in the registry."

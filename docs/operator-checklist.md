@@ -16,6 +16,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_mission_continuation_rehearsal.ps1` is available so the whole failure-and-recovery chain can be rehearsed before the first real human-rich conservative session
 - `scripts\run_recovery_branch_matrix.ps1` is available so the full recovery branch suite can be rerun and summarized into one operator-facing readiness certificate before the first real human-rich conservative session
 - `scripts\run_first_grounded_conservative_attempt.ps1` is available so the first real conservative evidence-capture attempt can run through the current mission, recovery, and closeout stack while producing one milestone-oriented attempt report
+- `scripts\run_human_participation_conservative_attempt.ps1` is available so a launchable local client can be turned into a real control-then-treatment conservative participation attempt with explicit human-participation tracking
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -52,6 +53,12 @@ When the goal is specifically the first grounded conservative capture attempt, p
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1
+```
+
+When the local client is available and you want the helper to drive the actual control-then-treatment join sequence too, prefer:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
 ```
 
 Inspect the exact mission-derived launch without starting it like this:
@@ -111,7 +118,7 @@ Default ports and lanes:
 
 1. Run preflight and stop only if the verdict is `blocked`.
 2. Read `next_live_session_mission.md` or let the mission runner reuse the current brief automatically.
-3. For the first grounded conservative milestone attempt, start `scripts\run_first_grounded_conservative_attempt.ps1`. Otherwise start the mission-driven workflow directly unless you explicitly need the manual helper-by-helper flow.
+3. For the first grounded conservative milestone attempt, start `scripts\run_human_participation_conservative_attempt.ps1` when `hl.exe` is launchable on this machine. Fall back to `scripts\run_first_grounded_conservative_attempt.ps1` when you need the same mission/closeout stack without automatic local joins. Otherwise start the mission-driven workflow directly unless you explicitly need the manual helper-by-helper flow.
 4. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, join-helper command, monitor status or exact monitor command, pair output root, and final-docket target.
 5. If `hl.exe` was found, prefer `scripts\join_live_pair_lane.ps1 -Lane Control -PairRoot <pair-root>` or the printed port-based join helper command. Otherwise use the printed `connect` command manually.
 6. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
@@ -399,6 +406,14 @@ How to read grounded evidence certification:
 - if there is still no real human signal in the environment, the helper should end with an honest non-grounded verdict and keep `responsive` closed
 - if you shorten timing or skip environment-prep steps for validation only, pass `-AllowMissionOverride` explicitly and treat the result as orchestration validation rather than the real milestone attempt
 
+## Client-Assisted Grounded Conservative Attempt
+
+- run `powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1` when this machine can launch `hl.exe` and you want the helper to turn that into a real control-then-treatment participation attempt
+- it reuses `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1` instead of creating a new mission or closeout path
+- it launches the control lane first, then the treatment lane second, and writes `human_participation_conservative_attempt.json` / `.md`
+- the report records whether control join was attempted, whether treatment join was attempted, whether saved lane evidence actually showed human presence in each lane, and which grounded criteria were still missing
+- it must not treat `hl.exe` launch alone as grounded evidence; if the pair still misses human thresholds, treatment patch-while-human-present, or post-patch observation, the report must say so directly
+
 ## Local Client Discovery And Lane Join
 
 - run `powershell -NoProfile -File .\scripts\discover_hldm_client.ps1` before the session when you need an explicit answer about whether automatic local lane joining is available
@@ -407,6 +422,7 @@ How to read grounded evidence certification:
 - run `powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -PairRoot <pair-root> -DryRun` to preview the treatment lane target for a specific pair
 - the pair runner now writes the helper commands into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`
 - if automatic local launch is unavailable, proceed manually with the printed loopback or LAN `connect` command instead of pretending the machine is fully join-ready
+- when you want the supported sequential control-then-treatment path on top of the first grounded conservative wrapper, run `powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1`
 
 ## Latest-Session Delta
 

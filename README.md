@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-41
+HLDM-JKBOTTI-AI-STAND-20260415-42
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -30,6 +30,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_mission_continuation_rehearsal.ps1` and `scripts/run_mission_continuation_rehearsal.bat` for the end-to-end failure-injection rehearsal that starts from the mission-driven launcher, injects a controlled branch, runs recovery assessment plus the continuation controller, and writes a suite report.
 - `scripts/run_recovery_branch_matrix.ps1` and `scripts/run_recovery_branch_matrix.bat` for the consolidated recovery branch suite, branch matrix, and operator-readiness certificate that summarize whether the full continuation policy is ready for the first real human-rich conservative session.
 - `scripts/run_first_grounded_conservative_attempt.ps1` and `scripts/run_first_grounded_conservative_attempt.bat` for the milestone-oriented conservative live attempt wrapper that runs the current mission, reuses continuation if needed, and writes one concise answer about whether the first grounded conservative evidence pack was actually captured.
+- `scripts/run_human_participation_conservative_attempt.ps1` and `scripts/run_human_participation_conservative_attempt.bat` for the client-assisted conservative attempt wrapper that discovers `hl.exe`, drives sequential control-then-treatment joins when possible, and writes one human-participation audit report on top of the existing first-grounded attempt flow.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -784,6 +785,29 @@ Or with the thin wrapper:
 scripts\run_first_grounded_conservative_attempt.bat
 ```
 
+## Client-Assisted Grounded Conservative Attempt
+
+Use `scripts\run_human_participation_conservative_attempt.ps1` when `hl.exe` is available locally and the goal is not only to launch the first grounded conservative attempt, but to turn that availability into an actual control-then-treatment human-participation run.
+
+- it stays thin by reusing `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1` instead of creating a second mission or closeout engine
+- it launches the existing first-grounded conservative attempt in the background, waits for the pair root to appear, then auto-joins the control lane first and the treatment lane second when those ports become active
+- it writes `human_participation_conservative_attempt.json` and `human_participation_conservative_attempt.md` into the final pair root when a pair exists
+- it records exact control and treatment join helper commands, whether auto-launch was attempted, whether the saved pair evidence shows real human presence in each lane, and whether the run stayed sequential, interrupted, or non-grounded
+- it never treats `hl.exe` launch by itself as proof of grounded evidence; the report only credits lane participation when the saved pair evidence shows human snapshots or human-presence time
+- it differs from `run_first_grounded_conservative_attempt.ps1`: the first-grounded helper summarizes the mission and closeout result, while the client-assisted helper adds local-client discovery, lane-join execution, and explicit human-participation tracking on top of that same result
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\run_human_participation_conservative_attempt.bat
+```
+
 ## Local Client Discovery And Lane Join
 
 Use `scripts\discover_hldm_client.ps1` before a real grounded conservative attempt when you need an explicit answer to "can this machine launch `hl.exe` into the live lane right now?"
@@ -813,6 +837,12 @@ powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -P
 ```
 
 The pair runner now writes the helper commands directly into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`, so the operator can either launch the client automatically or fall back to the printed `connect` commands manually.
+
+When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
+```
 
 ## Responsive Trial Gate
 

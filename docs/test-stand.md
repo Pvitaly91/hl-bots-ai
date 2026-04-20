@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-41
+HLDM-JKBOTTI-AI-STAND-20260415-42
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -822,6 +822,22 @@ Or with the thin wrapper:
 scripts\run_first_grounded_conservative_attempt.bat
 ```
 
+## Client-Assisted Grounded Conservative Attempt
+
+Use `scripts\run_human_participation_conservative_attempt.ps1` when this machine can launch `hl.exe` and the goal is to turn that local client availability into a real control-then-treatment conservative participation attempt.
+
+- it reuses `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1`
+- it starts the existing first-grounded conservative attempt in the background, waits for the pair root to appear, then launches the local client into the control lane first and the treatment lane second when those ports become active
+- it writes `human_participation_conservative_attempt.json` and `human_participation_conservative_attempt.md`
+- it records exact join commands, whether control/treatment auto-launch was attempted, whether saved lane evidence actually showed human presence, and which grounded criteria were still missing if the run stayed non-grounded
+- it must not claim human-rich grounded evidence just because `hl.exe` launched; the report stays tied to the saved lane evidence and certification output
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
+```
+
 ## Local Client Discovery And Lane Join
 
 Use `scripts\discover_hldm_client.ps1` before a human-rich live pair when you need a direct answer about whether this machine can actually launch `hl.exe` into the lane.
@@ -852,6 +868,12 @@ powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -P
 ```
 
 `run_control_treatment_pair.ps1` now writes the pair-aware helper commands into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`, so the operator can either auto-launch through the helper or keep using the manual `connect` commands.
+
+When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
+```
 
 ## Responsive Trial Gate
 
