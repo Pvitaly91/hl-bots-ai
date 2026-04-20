@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-43
+HLDM-JKBOTTI-AI-STAND-20260415-44
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -828,8 +828,9 @@ Use `scripts\run_human_participation_conservative_attempt.ps1` when this machine
 
 - it reuses `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1`
 - it starts the existing first-grounded conservative attempt in the background, waits for the pair root to appear, then launches the local client into the control lane first and the treatment lane second when those ports become active
+- on the sequential auto-join path it now keeps the client in control until the control-first switch gate says control is actually safe to leave
 - it writes `human_participation_conservative_attempt.json` and `human_participation_conservative_attempt.md`
-- it records exact join commands, whether control/treatment auto-launch was attempted, whether saved lane evidence actually showed human presence, and which grounded criteria were still missing if the run stayed non-grounded
+- it records exact join commands, the control-first switch helper command and verdict, whether control/treatment auto-launch was attempted, whether saved lane evidence actually showed human presence, and which grounded criteria were still missing if the run stayed non-grounded
 - it must not claim human-rich grounded evidence just because `hl.exe` launched; the report stays tied to the saved lane evidence and certification output
 
 Run it like this:
@@ -838,11 +839,27 @@ Run it like this:
 powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
 ```
 
+## Control-First Switch Gate
+
+Use `scripts\guide_control_to_treatment_switch.ps1` when the operational question is "is control finally safe to leave, or exactly what is still missing?"
+
+- it reads the mission thresholds first, then combines pair artifacts and the guided monitor verdict history to answer whether the operator should stay in control, switch now, keep waiting in treatment, or accept that the pair timed out non-grounded
+- it is narrower than `monitor_live_pair_session.ps1`: the broader live monitor answers whether the whole pair is sufficient, while this helper answers whether the control-to-treatment handoff is justified yet
+- on a failed pair it makes the blocker explicit, such as "control was still short by 1 snapshot and 20 seconds"
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -PairRoot <pair-root> -Once
+powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -UseLatest
+```
+
 ## Next Grounded Conservative Cycle
 
 Use `scripts\run_next_grounded_conservative_cycle.ps1` once the first grounded conservative session already exists and the next question is whether the newest live conservative run became the second grounded conservative capture or only moved the planner partway forward.
 
 - it reuses the client-assisted conservative attempt path instead of creating a second live-session runner
+- because the client-assisted helper now uses the control-first switch gate on the sequential auto-join path, this cycle helper inherits the same control-before-treatment discipline automatically
 - it writes `grounded_conservative_cycle_report.json` and `grounded_conservative_cycle_report.md`
 - `second-grounded-conservative-capture` means the pair counted toward promotion and moved grounded conservative sessions from `1` to `2`
 - `conservative-gap-reduced-but-objective-unchanged` means the pair counted and reduced the gap, but the planner still points at the same next objective after the run

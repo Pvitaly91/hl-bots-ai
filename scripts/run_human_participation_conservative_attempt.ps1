@@ -10,8 +10,11 @@ param(
     [string]$JoinSequence = "ControlThenTreatment",
     [switch]$AutoJoinControl,
     [switch]$AutoJoinTreatment,
+    [switch]$AutoSwitchWhenControlReady,
     [int]$ControlJoinDelaySeconds = 5,
     [int]$TreatmentJoinDelaySeconds = 5,
+    [int]$ControlGatePollSeconds = 5,
+    [int]$ControlStaySecondsMinimum = -1,
     [int]$ControlStaySeconds = -1,
     [int]$TreatmentStaySeconds = -1
 )
@@ -354,6 +357,161 @@ function Invoke-LaneJoinHelper {
     }
 }
 
+function Invoke-ControlSwitchGuide {
+    param(
+        [string]$PairRoot,
+        [string]$MissionPath,
+        [int]$PollSeconds
+    )
+
+    $guideScriptPath = Join-Path $PSScriptRoot "guide_control_to_treatment_switch.ps1"
+    $commandParts = @(
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".\scripts\guide_control_to_treatment_switch.ps1",
+        "-PairRoot",
+        $PairRoot,
+        "-Once",
+        "-PollSeconds",
+        [string]$PollSeconds
+    )
+    $guideArgs = [ordered]@{
+        PairRoot = $PairRoot
+        Once = $true
+        PollSeconds = $PollSeconds
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($MissionPath)) {
+        $commandParts += @("-MissionPath", $MissionPath)
+        $guideArgs.MissionPath = $MissionPath
+    }
+
+    $commandText = @($commandParts | ForEach-Object { Format-ProcessArgumentText -Value ([string]$_) }) -join " "
+
+    try {
+        $result = & $guideScriptPath @guideArgs
+        return [pscustomobject]@{
+            Attempted = $true
+            CommandText = $commandText
+            Error = ""
+            Result = $result
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Attempted = $true
+            CommandText = $commandText
+            Error = $_.Exception.Message
+            Result = $null
+        }
+    }
+}
+
+function Wait-ForControlReadySwitch {
+    param(
+        [string]$PairRoot,
+        [string]$MissionPath,
+        [int]$PollSeconds,
+        [int]$MinimumStaySeconds,
+        [System.Diagnostics.Process]$AttemptProcess,
+        [int]$TimeoutSeconds = 600
+    )
+
+    $startedAtUtc = (Get-Date).ToUniversalTime()
+    $minimumStayMetAtUtc = $startedAtUtc.AddSeconds([Math]::Max(0, $MinimumStaySeconds))
+    $deadlineUtc = $startedAtUtc.AddSeconds([Math]::Max(60, $TimeoutSeconds))
+    $lastPrintKey = ""
+    $lastExecution = $null
+
+    while ((Get-Date).ToUniversalTime() -lt $deadlineUtc) {
+        $execution = Invoke-ControlSwitchGuide -PairRoot $PairRoot -MissionPath $MissionPath -PollSeconds $PollSeconds
+        $lastExecution = $execution
+        $guideResult = Get-ObjectPropertyValue -Object $execution -Name "Result" -Default $null
+        $guideError = [string](Get-ObjectPropertyValue -Object $execution -Name "Error" -Default "")
+
+        if ($null -eq $guideResult) {
+            return [pscustomobject]@{
+                ReadyToSwitch = $false
+                GuideExecution = $execution
+                Terminal = $true
+                Explanation = if ($guideError) { $guideError } else { "The control-first switch helper did not produce a readable result." }
+            }
+        }
+
+        $controlLane = Get-ObjectPropertyValue -Object $guideResult -Name "control_lane" -Default $null
+        $treatmentLane = Get-ObjectPropertyValue -Object $guideResult -Name "treatment_lane" -Default $null
+        $verdict = [string](Get-ObjectPropertyValue -Object $guideResult -Name "current_switch_verdict" -Default "")
+        $controlSafeToLeave = [bool](Get-ObjectPropertyValue -Object $controlLane -Name "safe_to_leave" -Default $false)
+        $minimumStaySatisfied = (Get-Date).ToUniversalTime() -ge $minimumStayMetAtUtc
+
+        $printKey = @(
+            $verdict
+            [string](Get-ObjectPropertyValue -Object $controlLane -Name "actual_human_snapshots" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $controlLane -Name "actual_human_presence_seconds" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $controlLane -Name "remaining_human_snapshots" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $controlLane -Name "remaining_human_presence_seconds" -Default 0)
+            [string]$minimumStaySatisfied
+        ) -join "|"
+
+        if ($printKey -ne $lastPrintKey) {
+            Write-Host "  Control-first verdict: $verdict"
+            Write-Host "    Control snapshots / seconds: $($controlLane.actual_human_snapshots) / $($controlLane.actual_human_presence_seconds)"
+            Write-Host "    Control remaining snapshots / seconds: $($controlLane.remaining_human_snapshots) / $($controlLane.remaining_human_presence_seconds)"
+            if (-not $minimumStaySatisfied) {
+                $remainingMinimum = [Math]::Ceiling(($minimumStayMetAtUtc - (Get-Date).ToUniversalTime()).TotalSeconds)
+                Write-Host "    Minimum control stay still active for about $remainingMinimum second(s)."
+            }
+            Write-Host "    Explanation: $($guideResult.explanation)"
+            $lastPrintKey = $printKey
+        }
+
+        if ($controlSafeToLeave -and $minimumStaySatisfied) {
+            return [pscustomobject]@{
+                ReadyToSwitch = $true
+                GuideExecution = $execution
+                Terminal = $false
+                Explanation = [string](Get-ObjectPropertyValue -Object $guideResult -Name "explanation" -Default "")
+            }
+        }
+
+        if ($verdict -in @("insufficient-timeout", "blocked-no-active-pair")) {
+            return [pscustomobject]@{
+                ReadyToSwitch = $false
+                GuideExecution = $execution
+                Terminal = $true
+                Explanation = [string](Get-ObjectPropertyValue -Object $guideResult -Name "explanation" -Default "")
+            }
+        }
+
+        if ($null -ne $AttemptProcess) {
+            try {
+                if ($AttemptProcess.HasExited) {
+                    return [pscustomobject]@{
+                        ReadyToSwitch = $false
+                        GuideExecution = $execution
+                        Terminal = $true
+                        Explanation = "The background conservative attempt exited before the control-first switch gate cleared."
+                    }
+                }
+            }
+            catch {
+            }
+        }
+
+        Start-Sleep -Seconds $PollSeconds
+    }
+
+    return [pscustomobject]@{
+        ReadyToSwitch = $false
+        GuideExecution = $lastExecution
+        Terminal = $true
+        Explanation = "Timed out waiting for the control-first switch gate to clear within $TimeoutSeconds second(s)."
+    }
+}
+
 function Get-ReportPaths {
     param(
         [string]$PairRoot,
@@ -530,6 +688,8 @@ function Get-HumanAttemptMarkdown {
         "- Client path source: $($Report.client_discovery.client_path_source)",
         "- Sequential participation: $($Report.participation.sequential)",
         "- Overlapping participation: $($Report.participation.overlapping)",
+        "- Control-first gate used: $($Report.participation.control_first_gate_used)",
+        "- Control-first gate auto-switch enabled: $($Report.participation.auto_switch_when_control_ready)",
         "",
         "## Lane Participation",
         "",
@@ -545,6 +705,15 @@ function Get-HumanAttemptMarkdown {
         "- Treatment join succeeded: $($Report.treatment_lane_join.join_succeeded)",
         "- Treatment human snapshots: $($Report.treatment_lane_join.human_snapshots_count)",
         "- Treatment human seconds: $($Report.treatment_lane_join.seconds_with_human_presence)",
+        "",
+        "## Control-First Switch Guidance",
+        "",
+        "- Switch helper command: $($Report.control_switch_guidance.helper_command)",
+        "- Switch verdict at handoff: $($Report.control_switch_guidance.verdict_at_handoff)",
+        "- Safe to leave control at handoff: $($Report.control_switch_guidance.safe_to_leave_control)",
+        "- Control remaining snapshots at handoff: $($Report.control_switch_guidance.control_remaining_human_snapshots)",
+        "- Control remaining seconds at handoff: $($Report.control_switch_guidance.control_remaining_human_presence_seconds)",
+        "- Switch explanation: $($Report.control_switch_guidance.explanation)",
         "",
         "## Evidence Result",
         "",
@@ -580,6 +749,7 @@ function Get-HumanAttemptMarkdown {
         "## Artifacts",
         "",
         "- Discovery JSON: $($Report.artifacts.local_client_discovery_json)",
+        "- Control-first switch JSON: $($Report.artifacts.control_to_treatment_switch_json)",
         "- First grounded attempt JSON: $($Report.artifacts.first_grounded_conservative_attempt_json)",
         "- Pair summary JSON: $($Report.artifacts.pair_summary_json)",
         "- Grounded evidence certificate JSON: $($Report.artifacts.grounded_evidence_certificate_json)",
@@ -616,9 +786,6 @@ if ($null -eq $mission) {
 
 $controlPresenceTarget = [int][Math]::Ceiling([double](Get-ObjectPropertyValue -Object $mission -Name "target_minimum_control_human_presence_seconds" -Default 60.0))
 $treatmentPresenceTarget = [int][Math]::Ceiling([double](Get-ObjectPropertyValue -Object $mission -Name "target_minimum_treatment_human_presence_seconds" -Default 60.0))
-if ($ControlStaySeconds -lt 1) {
-    $ControlStaySeconds = [Math]::Max(15, $controlPresenceTarget + 10)
-}
 if ($TreatmentStaySeconds -lt 1) {
     $TreatmentStaySeconds = [Math]::Max(15, $treatmentPresenceTarget + 10)
 }
@@ -638,6 +805,24 @@ $autoJoinTreatmentEnabled = if ($PSBoundParameters.ContainsKey("AutoJoinTreatmen
 }
 else {
     $JoinSequence -in @("ControlThenTreatment", "TreatmentOnly")
+}
+$autoSwitchControlEnabled = if ($PSBoundParameters.ContainsKey("AutoSwitchWhenControlReady")) {
+    [bool]$AutoSwitchWhenControlReady
+}
+else {
+    $JoinSequence -eq "ControlThenTreatment" -and $autoJoinControlEnabled -and $autoJoinTreatmentEnabled
+}
+$resolvedControlStayMinimum = if ($ControlStaySecondsMinimum -gt 0) {
+    $ControlStaySecondsMinimum
+}
+elseif ($ControlStaySeconds -gt 0) {
+    $ControlStaySeconds
+}
+elseif (-not $autoSwitchControlEnabled) {
+    [Math]::Max(15, $controlPresenceTarget + 10)
+}
+else {
+    0
 }
 
 $discoveryResult = & $discoveryScriptPath -ClientExePath $ClientExePath -LabRoot $resolvedLabRoot
@@ -662,6 +847,10 @@ $pairSummary = $null
 $certificate = $null
 $missionAttainment = $null
 $finalDocket = $null
+$controlSwitchExecution = $null
+$controlSwitchReport = $null
+$controlSwitchReadyToLeave = $false
+$controlSwitchExplanation = ""
 $controlJoinExecution = $null
 $treatmentJoinExecution = $null
 $controlProcessId = 0
@@ -729,6 +918,13 @@ if ($attemptProcess) {
         $controlPortWait = Wait-ForPortActive -Port $controlPort -Label "control" -AttemptProcess $attemptProcess -TimeoutSeconds 180
         Write-Host "  Control lane port wait: $($controlPortWait.Explanation)"
         if ($controlPortWait.Ready) {
+            $controlSwitchPreview = Invoke-ControlSwitchGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $ControlGatePollSeconds
+            $controlSwitchExecution = $controlSwitchPreview
+            $controlSwitchReport = Get-ObjectPropertyValue -Object $controlSwitchPreview -Name "Result" -Default $null
+            if ($controlSwitchExecution.CommandText) {
+                Write-Host "  Control-first switch helper: $($controlSwitchExecution.CommandText)"
+            }
+
             $controlJoinExecution = Invoke-LaneJoinHelper -Lane "Control" -PairRoot $pairRoot -ResolvedClientExePath $resolvedClientExePath -Port $controlPort -Map $missionMap
             if ($controlJoinExecution.Result) {
                 $controlProcessId = [int](Get-ObjectPropertyValue -Object $controlJoinExecution.Result -Name "ProcessId" -Default 0)
@@ -739,9 +935,31 @@ if ($attemptProcess) {
                 Write-Warning "Control lane join failed: $($controlJoinExecution.Error)"
             }
 
-            if ($controlProcessId -gt 0 -and $ControlStaySeconds -gt 0) {
-                Start-Sleep -Seconds $ControlStaySeconds
-                Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "control lane stay complete" | Out-Null
+            if ($controlProcessId -gt 0) {
+                if ($autoSwitchControlEnabled) {
+                    $controlSwitchWait = Wait-ForControlReadySwitch `
+                        -PairRoot $pairRoot `
+                        -MissionPath $missionArtifacts.JsonPath `
+                        -PollSeconds $ControlGatePollSeconds `
+                        -MinimumStaySeconds $resolvedControlStayMinimum `
+                        -AttemptProcess $attemptProcess
+                    $controlSwitchExecution = Get-ObjectPropertyValue -Object $controlSwitchWait -Name "GuideExecution" -Default $controlSwitchExecution
+                    $controlSwitchReport = Get-ObjectPropertyValue -Object $controlSwitchExecution -Name "Result" -Default $null
+                    $controlSwitchReadyToLeave = [bool](Get-ObjectPropertyValue -Object $controlSwitchWait -Name "ReadyToSwitch" -Default $false)
+                    $controlSwitchExplanation = [string](Get-ObjectPropertyValue -Object $controlSwitchWait -Name "Explanation" -Default "")
+
+                    if ($controlSwitchReadyToLeave) {
+                        Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "control-first gate cleared" | Out-Null
+                    }
+                    else {
+                        Write-Warning "Control-first gate did not clear before the control lane ended or timed out: $controlSwitchExplanation"
+                        Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "control lane gate blocked" | Out-Null
+                    }
+                }
+                elseif ($resolvedControlStayMinimum -gt 0) {
+                    Start-Sleep -Seconds $resolvedControlStayMinimum
+                    Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "control lane stay complete" | Out-Null
+                }
             }
         }
         else {
@@ -754,7 +972,7 @@ if ($attemptProcess) {
         }
     }
 
-    if ($pairRoot -and $autoJoinTreatmentEnabled) {
+    if ($pairRoot -and $autoJoinTreatmentEnabled -and (-not $autoSwitchControlEnabled -or $controlSwitchReadyToLeave -or $JoinSequence -ne "ControlThenTreatment")) {
         if ($TreatmentJoinDelaySeconds -gt 0) {
             Start-Sleep -Seconds $TreatmentJoinDelaySeconds
         }
@@ -785,6 +1003,9 @@ if ($attemptProcess) {
                 Result = $null
             }
         }
+    }
+    elseif ($pairRoot -and $autoJoinTreatmentEnabled -and $autoSwitchControlEnabled -and -not $controlSwitchReadyToLeave -and $JoinSequence -eq "ControlThenTreatment") {
+        Write-Warning "Skipping automatic treatment join because the control-first switch gate never cleared."
     }
 
     try {
@@ -876,6 +1097,16 @@ $explanation = Get-HumanAttemptExplanation `
     -PairSummary $pairSummary `
     -MissingTargetDetails @($missingTargetDetails)
 
+$controlSwitchGuidanceExplanation = if (-not [string]::IsNullOrWhiteSpace($controlSwitchExplanation)) {
+    $controlSwitchExplanation
+}
+else {
+    [string](Get-ObjectPropertyValue -Object $controlSwitchReport -Name "explanation" -Default "")
+}
+$controlSwitchArtifacts = Get-ObjectPropertyValue -Object $controlSwitchReport -Name "artifacts" -Default $null
+$controlSwitchJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $controlSwitchArtifacts -Name "control_to_treatment_switch_json" -Default ""))
+$controlSwitchMarkdownPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $controlSwitchArtifacts -Name "control_to_treatment_switch_markdown" -Default ""))
+
 $report = [ordered]@{
     schema_version = 1
     prompt_id = Get-RepoPromptId
@@ -902,6 +1133,8 @@ $report = [ordered]@{
         sequential = $JoinSequence -eq "ControlThenTreatment" -and $autoJoinControlEnabled -and $autoJoinTreatmentEnabled
         overlapping = $false
         local_client_launch_bounded_test_only = $false
+        control_first_gate_used = $autoSwitchControlEnabled
+        auto_switch_when_control_ready = $autoSwitchControlEnabled
     }
     control_lane_join = [ordered]@{
         attempted = [bool]($null -ne $controlJoinExecution)
@@ -913,7 +1146,7 @@ $report = [ordered]@{
         join_succeeded = $controlHumanSignal
         join_target = [string](Get-ObjectPropertyValue -Object $controlLane -Name "join_target" -Default ("127.0.0.1:{0}" -f $controlPort))
         process_id = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "ProcessId" -Default 0)
-        stay_seconds = $ControlStaySeconds
+        stay_seconds = $resolvedControlStayMinimum
         human_snapshots_count = $controlHumanSnapshots
         seconds_with_human_presence = $controlHumanSeconds
         error = [string](Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Error" -Default "")
@@ -932,6 +1165,16 @@ $report = [ordered]@{
         human_snapshots_count = $treatmentHumanSnapshots
         seconds_with_human_presence = $treatmentHumanSeconds
         error = [string](Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Error" -Default "")
+    }
+    control_switch_guidance = [ordered]@{
+        helper_command = [string](Get-ObjectPropertyValue -Object $controlSwitchExecution -Name "CommandText" -Default "")
+        verdict_at_handoff = [string](Get-ObjectPropertyValue -Object $controlSwitchReport -Name "current_switch_verdict" -Default "")
+        safe_to_leave_control = [bool](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlSwitchReport -Name "control_lane" -Default $null) -Name "safe_to_leave" -Default $false)
+        control_remaining_human_snapshots = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlSwitchReport -Name "control_lane" -Default $null) -Name "remaining_human_snapshots" -Default 0)
+        control_remaining_human_presence_seconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlSwitchReport -Name "control_lane" -Default $null) -Name "remaining_human_presence_seconds" -Default 0.0)
+        explanation = $controlSwitchGuidanceExplanation
+        minimum_stay_seconds = $resolvedControlStayMinimum
+        poll_seconds = $ControlGatePollSeconds
     }
     control_lane_verdict = [string](Get-ObjectPropertyValue -Object $controlLane -Name "lane_verdict" -Default "")
     treatment_lane_verdict = [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "lane_verdict" -Default "")
@@ -960,6 +1203,8 @@ $report = [ordered]@{
         human_participation_conservative_attempt_markdown = $outputPaths.MarkdownPath
         local_client_discovery_json = $discoveryReportJsonPath
         local_client_discovery_markdown = $discoveryReportMarkdownPath
+        control_to_treatment_switch_json = $controlSwitchJsonPath
+        control_to_treatment_switch_markdown = $controlSwitchMarkdownPath
         first_grounded_conservative_attempt_json = $firstAttemptJsonPath
         first_grounded_conservative_attempt_markdown = $firstAttemptMarkdownPath
         pair_summary_json = $pairSummaryPath
@@ -986,6 +1231,7 @@ Write-Host "Human-participation conservative attempt:"
 Write-Host "  Attempt verdict: $($report.attempt_verdict)"
 Write-Host "  Pair root: $($report.pair_root)"
 Write-Host "  Control join succeeded: $($report.control_lane_join.join_succeeded)"
+Write-Host "  Control-first switch verdict: $($report.control_switch_guidance.verdict_at_handoff)"
 Write-Host "  Treatment join succeeded: $($report.treatment_lane_join.join_succeeded)"
 Write-Host "  Certification verdict: $($report.certification_verdict)"
 Write-Host "  Counts toward promotion: $($report.counts_toward_promotion)"
