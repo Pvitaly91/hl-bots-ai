@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-39
+HLDM-JKBOTTI-AI-STAND-20260415-40
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -29,6 +29,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/inject_pair_session_failure.ps1` and `scripts/inject_pair_session_failure.bat` for rehearsal-safe staging of controlled interrupted-session branches such as before-sufficiency, during-post-pipeline, or missing-mission-snapshot without touching a real live pair by default.
 - `scripts/run_mission_continuation_rehearsal.ps1` and `scripts/run_mission_continuation_rehearsal.bat` for the end-to-end failure-injection rehearsal that starts from the mission-driven launcher, injects a controlled branch, runs recovery assessment plus the continuation controller, and writes a suite report.
 - `scripts/run_recovery_branch_matrix.ps1` and `scripts/run_recovery_branch_matrix.bat` for the consolidated recovery branch suite, branch matrix, and operator-readiness certificate that summarize whether the full continuation policy is ready for the first real human-rich conservative session.
+- `scripts/run_first_grounded_conservative_attempt.ps1` and `scripts/run_first_grounded_conservative_attempt.bat` for the milestone-oriented conservative live attempt wrapper that runs the current mission, reuses continuation if needed, and writes one concise answer about whether the first grounded conservative evidence pack was actually captured.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -747,6 +748,39 @@ Read the outputs in this order:
 - `recovery_readiness_certificate.md` for the operator-facing go or no-go verdict
 - `recovery_branch_matrix.md` for branch-by-branch evidence and any failure explanation
 - branch-local `continuation_rehearsal_report.md` files only when the matrix shows a gap that needs inspection
+
+## First Grounded Conservative Attempt
+
+Use `scripts\run_first_grounded_conservative_attempt.ps1` when the goal is no longer workflow rehearsal or recovery validation but the actual first conservative live evidence capture attempt.
+
+- it stays thin by reusing `prepare_next_live_session_mission.ps1`, `run_current_live_mission.ps1`, `assess_latest_session_recovery.ps1`, `continue_current_live_mission.ps1`, `build_latest_session_outcome_dossier.ps1`, and `evaluate_latest_session_mission.ps1`
+- it preserves `conservative` as the treatment profile and keeps the no-AI control lane unchanged
+- it writes `first_grounded_conservative_attempt.json` and `first_grounded_conservative_attempt.md` into the final pair root when a pair exists
+- it answers the milestone questions directly: whether the first grounded conservative session was captured, whether the session counted toward promotion, what changed in the grounded-evidence state, and why the attempt failed if it stayed non-grounded
+- if the live run interrupts or closes out partially, it uses the supported continuation path instead of inventing a second recovery flow
+- if the environment still does not provide real human-rich signal, the helper still runs the real mission path as far as possible and reports `conservative-session-insufficient-human-signal` or another honest non-success verdict instead of fabricating grounded evidence
+- it differs from `run_current_live_mission.ps1`: the mission runner launches the session, while this helper also wraps the honest after-action closeout and milestone summary for the first grounded conservative capture attempt
+- even after a clean attempt, `responsive` must stay closed unless the real grounded evidence and gate outputs actually change
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1
+```
+
+For an explicit validation-only fallback in an environment without a real player, keep it clearly mission-divergent and say so with `-AllowMissionOverride`:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1 -AllowMissionOverride -DurationSeconds 20 -HumanJoinGraceSeconds 10 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+That fallback is only for orchestration validation. It must still end as non-grounded and must not be confused with the true first grounded conservative capture attempt.
+
+Or with the thin wrapper:
+
+```bat
+scripts\run_first_grounded_conservative_attempt.bat
+```
 
 ## Responsive Trial Gate
 

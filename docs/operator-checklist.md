@@ -15,6 +15,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\inject_pair_session_failure.ps1` is available so failure branches can be staged safely against rehearsal-only pair roots instead of improvising on live evidence
 - `scripts\run_mission_continuation_rehearsal.ps1` is available so the whole failure-and-recovery chain can be rehearsed before the first real human-rich conservative session
 - `scripts\run_recovery_branch_matrix.ps1` is available so the full recovery branch suite can be rerun and summarized into one operator-facing readiness certificate before the first real human-rich conservative session
+- `scripts\run_first_grounded_conservative_attempt.ps1` is available so the first real conservative evidence-capture attempt can run through the current mission, recovery, and closeout stack while producing one milestone-oriented attempt report
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -37,6 +38,12 @@ Then prefer the mission-driven live workflow:
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_current_live_mission.ps1
+```
+
+When the goal is specifically the first grounded conservative capture attempt, prefer this milestone wrapper instead:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1
 ```
 
 Inspect the exact mission-derived launch without starting it like this:
@@ -96,7 +103,7 @@ Default ports and lanes:
 
 1. Run preflight and stop only if the verdict is `blocked`.
 2. Read `next_live_session_mission.md` or let the mission runner reuse the current brief automatically.
-3. Start the mission-driven workflow unless you explicitly need the manual helper-by-helper flow.
+3. For the first grounded conservative milestone attempt, start `scripts\run_first_grounded_conservative_attempt.ps1`. Otherwise start the mission-driven workflow directly unless you explicitly need the manual helper-by-helper flow.
 4. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, monitor status or exact monitor command, pair output root, and final-docket target.
 5. Join the control lane first.
 6. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
@@ -373,6 +380,16 @@ How to read grounded evidence certification:
 - if it says `ready-with-known-gaps` or `blocked`, stop and inspect `recovery_branch_matrix.md` before spending the next real human-rich session
 - a ready certificate does not count as grounded tuning evidence. It only says the continuation controller, salvage path, rerun path, and promotion-safety barriers behaved correctly in rehearsal
 - the certificate must confirm that rehearsal evidence stayed excluded from promotion, salvaged rehearsal branches did not pollute the live registry, and the responsive gate stayed closed on rehearsal-only evidence
+
+## First Grounded Conservative Attempt
+
+- run `powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1` when you are ready to attempt the first real grounded conservative control+treatment pack
+- the helper launches the current mission in conservative mode, reuses the normal live monitor and post-run stack, and writes `first_grounded_conservative_attempt.json` / `.md`
+- read that attempt report first after the run when the question is "did we get the first grounded conservative pack, did it count, and what changed?"
+- if the attempt stayed non-grounded, the report must explain why directly instead of implying success
+- if the attempt interrupted, the helper may use the supported continuation controller and salvage path automatically; do not invent a manual post-run workaround first
+- if there is still no real human signal in the environment, the helper should end with an honest non-grounded verdict and keep `responsive` closed
+- if you shorten timing or skip environment-prep steps for validation only, pass `-AllowMissionOverride` explicitly and treat the result as orchestration validation rather than the real milestone attempt
 
 ## Latest-Session Delta
 

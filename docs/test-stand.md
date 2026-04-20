@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-39
+HLDM-JKBOTTI-AI-STAND-20260415-40
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -790,6 +790,37 @@ scripts\run_recovery_branch_matrix.bat
 ```
 
 Inspect `recovery_readiness_certificate.md` first, then `recovery_branch_matrix.md` if you need the per-branch explanation behind the verdict.
+
+## First Grounded Conservative Attempt
+
+Use `scripts\run_first_grounded_conservative_attempt.ps1` when you are ready to spend the first conservative live attempt that might become the first grounded conservative evidence pack.
+
+- it reuses the existing mission-driven launch path instead of inventing a second runner
+- it keeps the treatment profile fixed at `conservative`, keeps the no-AI control lane unchanged, and reuses the live monitor plus the normal post-run closeout stack
+- it writes `first_grounded_conservative_attempt.json` and `first_grounded_conservative_attempt.md` so the operator gets one concise answer about whether the attempt captured grounded conservative evidence, reduced the promotion gap, or failed honestly
+- if the session ends incomplete, it reuses the continuation controller and salvage flow instead of trying to finalize the run ad hoc
+- if there is still no real human-rich signal in the environment, the helper must say so directly and keep the responsive gate unchanged
+- this differs from `run_current_live_mission.ps1`: the mission runner launches the session, while the first-grounded helper is the milestone-oriented wrapper that also summarizes certification, grounded deltas, mission attainment, and the before/after evidence state
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1
+```
+
+For an honest validation-only fallback in an environment without a real player, keep the run explicitly mission-divergent instead of pretending it is the real first grounded attempt:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_first_grounded_conservative_attempt.ps1 -AllowMissionOverride -DurationSeconds 20 -HumanJoinGraceSeconds 10 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+That fallback is only for validation of the orchestration path. It still must remain non-grounded and excluded from promotion.
+
+Or with the thin wrapper:
+
+```bat
+scripts\run_first_grounded_conservative_attempt.bat
+```
 
 ## Responsive Trial Gate
 
