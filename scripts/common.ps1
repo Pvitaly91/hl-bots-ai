@@ -247,6 +247,377 @@ function Get-HldsJoinInfo {
     }
 }
 
+function Format-ProcessArgumentText {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return '""'
+    }
+
+    if ($Value -match '[\s"]') {
+        return '"' + ($Value -replace '"', '\"') + '"'
+    }
+
+    return $Value
+}
+
+function Resolve-NormalizedPathCandidate {
+    param(
+        [string]$Path,
+        [string]$AppendLeaf = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    if ([string]::IsNullOrWhiteSpace($expanded)) {
+        return ""
+    }
+
+    try {
+        $fullPath = [System.IO.Path]::GetFullPath($expanded)
+    }
+    catch {
+        return ""
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($AppendLeaf) -and (Test-Path -LiteralPath $fullPath -PathType Container)) {
+        $fullPath = Join-Path $fullPath $AppendLeaf
+    }
+
+    return $fullPath
+}
+
+function Get-SteamLibraryRootsFromVdf {
+    param([string]$LibraryFoldersPath)
+
+    if ([string]::IsNullOrWhiteSpace($LibraryFoldersPath) -or -not (Test-Path -LiteralPath $LibraryFoldersPath)) {
+        return @()
+    }
+
+    $roots = New-Object System.Collections.Generic.List[string]
+    foreach ($line in Get-Content -LiteralPath $LibraryFoldersPath) {
+        $pathText = ""
+        if ($line -match '"path"\s*"([^"]+)"') {
+            $pathText = $Matches[1]
+        }
+        elseif ($line -match '^\s*"\d+"\s*"([^"]+)"') {
+            $candidateText = [string]$Matches[1]
+            if ($candidateText -match '[:\\/]') {
+                $pathText = $candidateText
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($pathText)) {
+            $normalized = ($pathText -replace '\\\\', '\').Trim()
+            try {
+                $fullPath = [System.IO.Path]::GetFullPath($normalized)
+                if (-not [string]::IsNullOrWhiteSpace($fullPath)) {
+                    $roots.Add($fullPath) | Out-Null
+                }
+            }
+            catch {
+            }
+        }
+    }
+
+    return @($roots | Select-Object -Unique)
+}
+
+function Get-SteamRegistryInstallRoots {
+    $roots = New-Object System.Collections.Generic.List[string]
+    $registrySpecs = @(
+        @{ Path = "HKCU:\Software\Valve\Steam"; PropertyNames = @("SteamPath", "InstallPath") },
+        @{ Path = "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam"; PropertyNames = @("InstallPath", "SteamPath") },
+        @{ Path = "HKLM:\SOFTWARE\Valve\Steam"; PropertyNames = @("InstallPath", "SteamPath") }
+    )
+
+    foreach ($spec in $registrySpecs) {
+        try {
+            $properties = Get-ItemProperty -Path $spec.Path -ErrorAction Stop
+            foreach ($propertyName in $spec.PropertyNames) {
+                $value = [string]$properties.$propertyName
+                if ([string]::IsNullOrWhiteSpace($value)) {
+                    continue
+                }
+
+                $candidate = Resolve-NormalizedPathCandidate -Path $value
+                if ([string]::IsNullOrWhiteSpace($candidate)) {
+                    continue
+                }
+
+                if ([System.IO.Path]::GetFileName($candidate) -ieq "steam.exe") {
+                    $candidate = Split-Path -Path $candidate -Parent
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                    $roots.Add($candidate) | Out-Null
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    return @($roots | Select-Object -Unique)
+}
+
+function Get-HalfLifeClientDiscovery {
+    param([string]$PreferredPath = "")
+
+    $checkedSources = New-Object System.Collections.Generic.List[object]
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+    $seenCandidates = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    $discoveredClientPath = ""
+    $discoveryExplanation = ""
+
+    function Add-ClientDiscoveryCheck {
+        param(
+            [string]$SourceName,
+            [string]$CheckKind,
+            [string]$PathChecked,
+            [bool]$Exists,
+            [string]$Details
+        )
+
+        $checkedSources.Add([pscustomobject]@{
+            source_name = $SourceName
+            check_kind = $CheckKind
+            path_checked = $PathChecked
+            exists = $Exists
+            details = $Details
+        }) | Out-Null
+    }
+
+    function Test-ClientCandidate {
+        param(
+            [string]$SourceName,
+            [string]$CandidatePath,
+            [string]$Details
+        )
+
+        if ([string]::IsNullOrWhiteSpace($CandidatePath)) {
+            Add-ClientDiscoveryCheck -SourceName $SourceName -CheckKind "client-executable" -PathChecked "" -Exists $false -Details $Details
+            return $false
+        }
+
+        $normalizedCandidate = Resolve-NormalizedPathCandidate -Path $CandidatePath
+        $exists = -not [string]::IsNullOrWhiteSpace($normalizedCandidate) -and (Test-Path -LiteralPath $normalizedCandidate -PathType Leaf)
+        Add-ClientDiscoveryCheck -SourceName $SourceName -CheckKind "client-executable" -PathChecked $normalizedCandidate -Exists $exists -Details $Details
+        if ($exists) {
+            Set-Variable -Name discoveredClientPath -Scope 1 -Value ((Resolve-Path -LiteralPath $normalizedCandidate).Path)
+            return $true
+        }
+
+        return $false
+    }
+
+    function Add-LibraryRootsForSteamRoot {
+        param(
+            [string]$SourceName,
+            [string]$SteamRoot
+        )
+
+        if ([string]::IsNullOrWhiteSpace($SteamRoot)) {
+            return
+        }
+
+        $normalizedRoot = Resolve-NormalizedPathCandidate -Path $SteamRoot
+        if ([string]::IsNullOrWhiteSpace($normalizedRoot)) {
+            return
+        }
+
+        $libraryFoldersPath = Join-Path $normalizedRoot "steamapps\libraryfolders.vdf"
+        $libraryRoots = @(Get-SteamLibraryRootsFromVdf -LibraryFoldersPath $libraryFoldersPath)
+        $foundLibraries = $libraryRoots.Count -gt 0
+        Add-ClientDiscoveryCheck -SourceName $SourceName -CheckKind "steam-library-folders" -PathChecked $libraryFoldersPath -Exists $foundLibraries -Details $(if ($foundLibraries) { ($libraryRoots -join "; ") } else { "No Steam library folders were discovered from this root." })
+
+        foreach ($libraryRoot in $libraryRoots) {
+            if ($seenCandidates.Add($libraryRoot)) {
+                $candidateRoots.Add($libraryRoot) | Out-Null
+            }
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
+        $preferredCandidate = Resolve-NormalizedPathCandidate -Path $PreferredPath -AppendLeaf "hl.exe"
+        if (Test-ClientCandidate -SourceName "explicit-client-path" -CandidatePath $preferredCandidate -Details "Checked the explicit -ClientExePath first.") {
+            $discoveryExplanation = "Found hl.exe from -ClientExePath."
+        }
+    }
+
+    if (-not $discoveredClientPath) {
+        $envCandidate = Resolve-NormalizedPathCandidate -Path $env:HL_CLIENT_EXE -AppendLeaf "hl.exe"
+        if (Test-ClientCandidate -SourceName "env:HL_CLIENT_EXE" -CandidatePath $envCandidate -Details "Checked the HL_CLIENT_EXE environment variable.") {
+            $discoveryExplanation = "Found hl.exe from HL_CLIENT_EXE."
+        }
+    }
+
+    if (-not $discoveredClientPath -and -not [string]::IsNullOrWhiteSpace($env:HALF_LIFE_EXE)) {
+        $fallbackEnvCandidate = Resolve-NormalizedPathCandidate -Path $env:HALF_LIFE_EXE -AppendLeaf "hl.exe"
+        if (Test-ClientCandidate -SourceName "env:HALF_LIFE_EXE" -CandidatePath $fallbackEnvCandidate -Details "Checked the legacy HALF_LIFE_EXE environment variable.") {
+            $discoveryExplanation = "Found hl.exe from HALF_LIFE_EXE."
+        }
+    }
+
+    $standardSteamRoots = @(
+        (Resolve-NormalizedPathCandidate -Path (Join-Path ${env:ProgramFiles(x86)} "Steam")),
+        (Resolve-NormalizedPathCandidate -Path (Join-Path ${env:ProgramFiles} "Steam")),
+        "C:\Program Files (x86)\Steam",
+        "C:\Program Files\Steam"
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    if (-not $discoveredClientPath) {
+        foreach ($steamRoot in $standardSteamRoots) {
+            $directCandidate = Resolve-NormalizedPathCandidate -Path (Join-Path $steamRoot "steamapps\common\Half-Life\hl.exe")
+            if (Test-ClientCandidate -SourceName "standard-steam-root" -CandidatePath $directCandidate -Details "Checked the standard Steam install root for Half-Life.") {
+                $discoveryExplanation = "Found hl.exe under a standard Steam install root."
+                break
+            }
+        }
+    }
+
+    foreach ($steamRoot in $standardSteamRoots) {
+        Add-LibraryRootsForSteamRoot -SourceName "standard-steam-root" -SteamRoot $steamRoot
+    }
+
+    if (-not $discoveredClientPath) {
+        foreach ($libraryRoot in @($candidateRoots | Select-Object -Unique)) {
+            $libraryCandidate = Resolve-NormalizedPathCandidate -Path (Join-Path $libraryRoot "steamapps\common\Half-Life\hl.exe")
+            if (Test-ClientCandidate -SourceName "steam-library-folder" -CandidatePath $libraryCandidate -Details "Checked a Steam library folder for Half-Life.") {
+                $discoveryExplanation = "Found hl.exe under a discovered Steam library folder."
+                break
+            }
+        }
+    }
+
+    $registrySteamRoots = Get-SteamRegistryInstallRoots
+    if (-not $discoveredClientPath) {
+        foreach ($steamRoot in $registrySteamRoots) {
+            $registryCandidate = Resolve-NormalizedPathCandidate -Path (Join-Path $steamRoot "steamapps\common\Half-Life\hl.exe")
+            if (Test-ClientCandidate -SourceName "registry-steam-root" -CandidatePath $registryCandidate -Details "Checked a Steam install path hinted by the Windows registry.") {
+                $discoveryExplanation = "Found hl.exe from a registry-discovered Steam install hint."
+                break
+            }
+        }
+    }
+
+    foreach ($steamRoot in $registrySteamRoots) {
+        Add-LibraryRootsForSteamRoot -SourceName "registry-steam-root" -SteamRoot $steamRoot
+    }
+
+    if (-not $discoveredClientPath) {
+        foreach ($libraryRoot in @($candidateRoots | Select-Object -Unique)) {
+            $libraryCandidate = Resolve-NormalizedPathCandidate -Path (Join-Path $libraryRoot "steamapps\common\Half-Life\hl.exe")
+            if (Test-ClientCandidate -SourceName "registry-steam-library-folder" -CandidatePath $libraryCandidate -Details "Checked a Steam library folder that was discovered from a registry Steam root.") {
+                $discoveryExplanation = "Found hl.exe from a registry-discovered Steam library folder."
+                break
+            }
+        }
+    }
+
+    $legacyCandidates = @(
+        "C:\Sierra\Half-Life\hl.exe",
+        "C:\Program Files (x86)\Sierra\Half-Life\hl.exe",
+        "C:\Program Files\Sierra\Half-Life\hl.exe"
+    )
+    if (-not $discoveredClientPath) {
+        foreach ($legacyCandidate in $legacyCandidates) {
+            if (Test-ClientCandidate -SourceName "legacy-half-life-path" -CandidatePath $legacyCandidate -Details "Checked a legacy locally documented Half-Life install path.") {
+                $discoveryExplanation = "Found hl.exe under a legacy Half-Life install path."
+                break
+            }
+        }
+    }
+
+    $launchable = $false
+    if ($discoveredClientPath) {
+        try {
+            $stream = [System.IO.File]::Open($discoveredClientPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                $launchable = $true
+            }
+            finally {
+                $stream.Dispose()
+            }
+        }
+        catch {
+            $launchable = $false
+        }
+    }
+
+    $verdict = if ($discoveredClientPath) {
+        if ($launchable) { "client-found-and-launchable" } else { "client-found-but-unverified" }
+    }
+    else {
+        "client-not-found"
+    }
+
+    if (-not $discoveryExplanation) {
+        if ($discoveredClientPath) {
+            $discoveryExplanation = if ($launchable) {
+                "Found hl.exe and verified that the file is readable for local client launch."
+            }
+            else {
+                "Found hl.exe, but the file could not be verified as launchable from this environment."
+            }
+        }
+        else {
+            $discoveryExplanation = "Half-Life client discovery did not find hl.exe. Checked the explicit path, environment variables, standard Steam roots, discoverable Steam library folders, registry Steam hints, and legacy documented install paths."
+        }
+    }
+
+    $discoverySourcesChecked = @()
+    foreach ($entry in $checkedSources) {
+        $discoverySourcesChecked += $entry
+    }
+
+    $payload = [ordered]@{
+        client_path = $discoveredClientPath
+        discovery_verdict = $verdict
+        launchable = $launchable
+        launchable_for_local_lane_join = $launchable
+        discovery_sources_checked = $discoverySourcesChecked
+        explanation = $discoveryExplanation
+    }
+
+    return New-Object psobject -Property $payload
+}
+
+function Get-HalfLifeClientLaunchPlan {
+    param(
+        [string]$PreferredClientPath = "",
+        [string]$ServerHost = "127.0.0.1",
+        [int]$Port,
+        [string]$Game = "valve"
+    )
+
+    $discovery = Get-HalfLifeClientDiscovery -PreferredPath $PreferredClientPath
+    $joinInfo = Get-HldsJoinInfo -Port $Port -ServerHost $ServerHost
+    $arguments = @(
+        "-game", $Game,
+        "+connect", $joinInfo.LoopbackAddress
+    )
+
+    $commandText = ""
+    if ($discovery.launchable -and -not [string]::IsNullOrWhiteSpace($discovery.client_path)) {
+        $commandParts = @((Format-ProcessArgumentText -Value $discovery.client_path))
+        $commandParts += @($arguments | ForEach-Object { Format-ProcessArgumentText -Value ([string]$_) })
+        $commandText = $commandParts -join " "
+    }
+
+    return [pscustomobject]@{
+        client_discovery = $discovery
+        client_exe_path = [string]$discovery.client_path
+        join_info = $joinInfo
+        arguments = $arguments
+        command_text = $commandText
+        launchable = [bool]$discovery.launchable
+    }
+}
+
 function Get-ServerModRoot {
     param([string]$HldsRoot)
     return Join-Path $HldsRoot "valve"

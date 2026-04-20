@@ -720,6 +720,10 @@ $requestedExecutionParameters = [ordered]@{
     auto_stop_when_sufficient = [bool]$AutoStopWhenSufficient
 }
 
+$localClientDiscovery = Get-HalfLifeClientDiscovery
+$controlJoinHelperCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\join_live_pair_lane.ps1 -Lane Control -Port {0} -Map {1}" -f $actualControlPort, $actualMap
+$treatmentJoinHelperCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -Port {0} -Map {1}" -f $actualTreatmentPort, $actualMap
+
 $guidedRunnerArgs = [ordered]@{
     MissionJsonPath = $missionPaths.JsonPath
     Map = $actualMap
@@ -859,6 +863,13 @@ Write-Host "  Drift policy verdict: $policyVerdict"
 Write-Host "  Mission compliant: $missionCompliant"
 Write-Host "  Mission divergent: $missionDivergent"
 Write-Host "  Valid for mission-attainment analysis: $validForMissionAttainmentAnalysis"
+Write-Host "  Local client discovery: $($localClientDiscovery.discovery_verdict)"
+if ($localClientDiscovery.client_path) {
+    Write-Host "    Client path: $($localClientDiscovery.client_path)"
+}
+Write-Host "    Explanation: $($localClientDiscovery.explanation)"
+Write-Host "  Control join helper: $controlJoinHelperCommand"
+Write-Host "  Treatment join helper: $treatmentJoinHelperCommand"
 Write-Host "  Guided runner command: $guidedRunnerCommand"
 
 if ($PrintCommandOnly -or $DryRun) {

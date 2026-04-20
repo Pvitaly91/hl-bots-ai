@@ -16,6 +16,8 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_mission_continuation_rehearsal.ps1` is available so the whole failure-and-recovery chain can be rehearsed before the first real human-rich conservative session
 - `scripts\run_recovery_branch_matrix.ps1` is available so the full recovery branch suite can be rerun and summarized into one operator-facing readiness certificate before the first real human-rich conservative session
 - `scripts\run_first_grounded_conservative_attempt.ps1` is available so the first real conservative evidence-capture attempt can run through the current mission, recovery, and closeout stack while producing one milestone-oriented attempt report
+- `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
+- `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -32,6 +34,12 @@ Then generate or inspect the current mission brief:
 
 ```powershell
 powershell -NoProfile -File .\scripts\prepare_next_live_session_mission.ps1
+```
+
+Then check whether this machine can launch `hl.exe` automatically:
+
+```powershell
+powershell -NoProfile -File .\scripts\discover_hldm_client.ps1
 ```
 
 Then prefer the mission-driven live workflow:
@@ -104,10 +112,10 @@ Default ports and lanes:
 1. Run preflight and stop only if the verdict is `blocked`.
 2. Read `next_live_session_mission.md` or let the mission runner reuse the current brief automatically.
 3. For the first grounded conservative milestone attempt, start `scripts\run_first_grounded_conservative_attempt.ps1`. Otherwise start the mission-driven workflow directly unless you explicitly need the manual helper-by-helper flow.
-4. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, monitor status or exact monitor command, pair output root, and final-docket target.
-5. Join the control lane first.
+4. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, join-helper command, monitor status or exact monitor command, pair output root, and final-docket target.
+5. If `hl.exe` was found, prefer `scripts\join_live_pair_lane.ps1 -Lane Control -PairRoot <pair-root>` or the printed port-based join helper command. Otherwise use the printed `connect` command manually.
 6. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
-7. Let the runner advance to the treatment lane, then join the treatment lane second.
+7. Let the runner advance to the treatment lane, then join the treatment lane second with the corresponding join helper or the printed manual `connect` command.
 8. If the guided runner auto-started the monitor, let it keep polling. If not, run the printed monitor command manually.
 9. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
 10. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
@@ -390,6 +398,15 @@ How to read grounded evidence certification:
 - if the attempt interrupted, the helper may use the supported continuation controller and salvage path automatically; do not invent a manual post-run workaround first
 - if there is still no real human signal in the environment, the helper should end with an honest non-grounded verdict and keep `responsive` closed
 - if you shorten timing or skip environment-prep steps for validation only, pass `-AllowMissionOverride` explicitly and treat the result as orchestration validation rather than the real milestone attempt
+
+## Local Client Discovery And Lane Join
+
+- run `powershell -NoProfile -File .\scripts\discover_hldm_client.ps1` before the session when you need an explicit answer about whether automatic local lane joining is available
+- `client-found-and-launchable` means the local client helper can be used directly; `client-not-found` means automatic launch is unavailable and preflight should stay `ready-with-warnings`
+- run `powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Control -UseLatest -DryRun` to preview the control lane target without launching
+- run `powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -PairRoot <pair-root> -DryRun` to preview the treatment lane target for a specific pair
+- the pair runner now writes the helper commands into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`
+- if automatic local launch is unavailable, proceed manually with the printed loopback or LAN `connect` command instead of pretending the machine is fully join-ready
 
 ## Latest-Session Delta
 

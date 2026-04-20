@@ -140,6 +140,7 @@ $mixedScriptPath = Join-Path $PSScriptRoot "run_mixed_balance_eval.ps1"
 $reviewScriptPath = Join-Path $PSScriptRoot "review_latest_pair_run.ps1"
 $setupScriptPath = Join-Path $PSScriptRoot "setup_test_stand.ps1"
 $clientHelperPath = Join-Path $PSScriptRoot "launch_local_hldm_client.ps1"
+$joinHelperPath = Join-Path $PSScriptRoot "join_live_pair_lane.ps1"
 
 $warnings = [System.Collections.Generic.List[string]]::new()
 $blockers = [System.Collections.Generic.List[string]]::new()
@@ -238,24 +239,17 @@ if (-not (Test-Path -LiteralPath $bootstrapLogPath)) {
     Add-Message -List $warnings -Message "Bootstrap log is not present yet: $bootstrapLogPath"
 }
 
-$clientHelperState = "not-checked"
-$clientHelperMessage = ""
-if (Test-Path -LiteralPath $clientHelperPath) {
-    try {
-        $clientDryRun = & $clientHelperPath -ClientExePath $ClientExePath -Port $ControlPort -DryRun
-        $clientHelperState = "available"
-        $clientHelperMessage = "Client helper resolved $($clientDryRun.ClientExePath)"
-    }
-    catch {
-        $clientHelperState = "warning"
-        $clientHelperMessage = $_.Exception.Message
-        Add-Message -List $warnings -Message "Local client helper is not ready: $clientHelperMessage"
-    }
+$clientDiscovery = Get-HalfLifeClientDiscovery -PreferredPath $ClientExePath
+$clientHelperState = [string]$clientDiscovery.discovery_verdict
+$clientHelperMessage = [string]$clientDiscovery.explanation
+$controlJoinHelperCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\join_live_pair_lane.ps1 -Lane Control -Port {0} -Map {1} -DryRun" -f $ControlPort, $Map
+$treatmentJoinHelperCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -Port {0} -Map {1} -DryRun" -f $TreatmentPort, $Map
+
+if (-not $clientDiscovery.launchable_for_local_lane_join) {
+    Add-Message -List $warnings -Message "Local client discovery did not find a launchable hl.exe. Automatic lane join remains unavailable, but manual connect via the printed lane targets is still possible. $clientHelperMessage"
 }
 else {
-    $clientHelperState = "missing"
-    $clientHelperMessage = "Optional client helper script was not found."
-    Add-Message -List $warnings -Message $clientHelperMessage
+    Add-Message -List $notes -Message "Local client discovery found a launchable hl.exe at $($clientDiscovery.client_path)."
 }
 
 if ($resolvedProfile) {
@@ -298,9 +292,13 @@ Write-Host "  Bootstrap log path: $bootstrapLogPath"
 Write-Host "  Control lane: $($controlJoinInfo.LoopbackAddress) ($controlConfigPath)"
 Write-Host "  Treatment lane: $($treatmentJoinInfo.LoopbackAddress)"
 Write-Host "  Treatment profile: $resolvedProfileName"
-Write-Host "  Client helper: $clientHelperState"
+Write-Host "  Local client discovery: $clientHelperState"
 if ($clientHelperMessage) {
     Write-Host "    $clientHelperMessage"
+}
+if (Test-Path -LiteralPath $joinHelperPath) {
+    Write-Host "  Join helper dry-run (control): $controlJoinHelperCommand"
+    Write-Host "  Join helper dry-run (treatment): $treatmentJoinHelperCommand"
 }
 
 if ($notes.Count -gt 0) {
@@ -341,6 +339,11 @@ Write-Host "Final operator-facing verdict: $verdict"
     TreatmentProfile = $resolvedProfileName
     ClientHelperState = $clientHelperState
     ClientHelperMessage = $clientHelperMessage
+    LocalClientDiscoveryVerdict = [string]$clientDiscovery.discovery_verdict
+    LocalClientPath = [string]$clientDiscovery.client_path
+    LocalClientLaunchable = [bool]$clientDiscovery.launchable_for_local_lane_join
+    ControlJoinHelperCommand = $controlJoinHelperCommand
+    TreatmentJoinHelperCommand = $treatmentJoinHelperCommand
     Warnings = @($warnings)
     Blockers = @($blockers)
     Notes = @($notes)

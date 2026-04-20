@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-40
+HLDM-JKBOTTI-AI-STAND-20260415-41
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -30,6 +30,8 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_mission_continuation_rehearsal.ps1` and `scripts/run_mission_continuation_rehearsal.bat` for the end-to-end failure-injection rehearsal that starts from the mission-driven launcher, injects a controlled branch, runs recovery assessment plus the continuation controller, and writes a suite report.
 - `scripts/run_recovery_branch_matrix.ps1` and `scripts/run_recovery_branch_matrix.bat` for the consolidated recovery branch suite, branch matrix, and operator-readiness certificate that summarize whether the full continuation policy is ready for the first real human-rich conservative session.
 - `scripts/run_first_grounded_conservative_attempt.ps1` and `scripts/run_first_grounded_conservative_attempt.bat` for the milestone-oriented conservative live attempt wrapper that runs the current mission, reuses continuation if needed, and writes one concise answer about whether the first grounded conservative evidence pack was actually captured.
+- `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
+- `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -781,6 +783,36 @@ Or with the thin wrapper:
 ```bat
 scripts\run_first_grounded_conservative_attempt.bat
 ```
+
+## Local Client Discovery And Lane Join
+
+Use `scripts\discover_hldm_client.ps1` before a real grounded conservative attempt when you need an explicit answer to "can this machine launch `hl.exe` into the live lane right now?"
+
+- it checks `-ClientExePath` first, then `HL_CLIENT_EXE`, then standard Steam roots, Steam library folders, registry Steam hints, and finally the legacy local Half-Life paths already mentioned in this repo
+- it writes `local_client_discovery.json` and `local_client_discovery.md`
+- `client-not-found` means automatic local launch is unavailable here, not that the servers are broken
+- `ready-with-warnings` in preflight now explicitly covers the case where the servers are ready but `hl.exe` was not found and the operator must join manually
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\discover_hldm_client.ps1
+```
+
+Use `scripts\join_live_pair_lane.ps1` when you want the local client to join one live lane cleanly without hand-copying the port:
+
+- `-PairRoot` or `-UseLatest` lets the helper read the pair pack and pick the correct control or treatment target
+- `-Port` and `-Map` keep the helper usable before a pair root exists
+- `-DryRun` prints the resolved lane target, the client-discovery result, and the exact launch command without starting the client
+
+Examples:
+
+```powershell
+powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Control -UseLatest -DryRun
+powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -PairRoot D:\DEV\CPP\HL-Bots\lab\logs\eval\fgca40-live\20260420-212515-crossfire-b4-s3-cp27016-tp27017 -DryRun
+```
+
+The pair runner now writes the helper commands directly into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`, so the operator can either launch the client automatically or fall back to the printed `connect` commands manually.
 
 ## Responsive Trial Gate
 

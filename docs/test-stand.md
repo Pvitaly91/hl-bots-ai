@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-40
+HLDM-JKBOTTI-AI-STAND-20260415-41
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -821,6 +821,37 @@ Or with the thin wrapper:
 ```bat
 scripts\run_first_grounded_conservative_attempt.bat
 ```
+
+## Local Client Discovery And Lane Join
+
+Use `scripts\discover_hldm_client.ps1` before a human-rich live pair when you need a direct answer about whether this machine can actually launch `hl.exe` into the lane.
+
+- it checks `-ClientExePath` first, then `HL_CLIENT_EXE`, then standard Steam roots, discoverable Steam library folders, registry Steam hints, and the older locally documented Half-Life install paths
+- it writes `local_client_discovery.json` and `local_client_discovery.md`
+- `client-not-found` means automatic local launch is unavailable and the operator should rely on the printed loopback/LAN/manual `connect` instructions instead
+- preflight now treats missing `hl.exe` as `ready-with-warnings` rather than pretending the environment is fully join-ready
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\discover_hldm_client.ps1
+```
+
+Use `scripts\join_live_pair_lane.ps1` to launch or preview the local client for one lane:
+
+- `-Lane Control|Treatment` chooses the lane
+- `-PairRoot` or `-UseLatest` makes the helper read the existing pair pack instead of retyping ports
+- `-DryRun` shows the exact lane target and client command without launching
+- if `hl.exe` is still unavailable, the helper stays honest and reports that prerequisite gap directly
+
+Examples:
+
+```powershell
+powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Control -UseLatest -DryRun
+powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -PairRoot D:\DEV\CPP\HL-Bots\lab\logs\eval\fgca40-live\20260420-212515-crossfire-b4-s3-cp27016-tp27017 -DryRun
+```
+
+`run_control_treatment_pair.ps1` now writes the pair-aware helper commands into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`, so the operator can either auto-launch through the helper or keep using the manual `connect` commands.
 
 ## Responsive Trial Gate
 

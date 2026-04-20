@@ -68,7 +68,9 @@ function Get-LaneJoinInstructionsText {
         [object]$JoinInfo,
         [string]$PairRoot,
         [int]$MinHumanPresenceSeconds,
-        [string]$TreatmentProfileName
+        [string]$TreatmentProfileName,
+        [string]$JoinHelperCommand,
+        [string]$JoinHelperDryRunCommand
     )
 
     $lines = @(
@@ -93,6 +95,8 @@ function Get-LaneJoinInstructionsText {
     $lines += @(
         "Useful human session target: keep at least one human in-lane for about $MinHumanPresenceSeconds seconds or longer.",
         "If no humans join, this lane stays plumbing-valid at most and should not be treated as tuning evidence.",
+        "Pair-aware join helper: $JoinHelperCommand",
+        "Pair-aware join helper dry-run: $JoinHelperDryRunCommand",
         "Pair pack root: $PairRoot"
     )
 
@@ -108,7 +112,9 @@ function Get-PairJoinInstructionsText {
         [string]$TreatmentProfileName,
         [string]$PairRoot,
         [int]$MinHumanPresenceSeconds,
-        [int]$HumanJoinGraceSeconds
+        [int]$HumanJoinGraceSeconds,
+        [string]$ControlJoinHelperCommand,
+        [string]$TreatmentJoinHelperCommand
     )
 
     $lines = @(
@@ -123,6 +129,8 @@ function Get-PairJoinInstructionsText {
         "Treatment becomes most interpretable when it patches while humans are present and there is time to observe the aftermath.",
         "If humans never join, the pair should be treated as insufficient-data only.",
         "If humans join briefly, the pair should be treated as weak-signal.",
+        "Control join helper: $ControlJoinHelperCommand",
+        "Treatment join helper: $TreatmentJoinHelperCommand",
         "After the run, review pair_summary.md first, then comparison.md, run scripts\review_latest_pair_run.ps1, and finish with scripts\score_latest_pair_session.ps1.",
         "Human-join grace window: $HumanJoinGraceSeconds seconds",
         "Pair pack root: $PairRoot"
@@ -209,6 +217,7 @@ function Get-PairSummaryMarkdown {
         "- Seconds with human presence: $($PairSummary.control_lane.seconds_with_human_presence)",
         "- Session pack: $($PairSummary.control_lane.session_pack_json)",
         "- Join instructions: $($PairSummary.control_lane.join_instructions)",
+        "- Join helper: $($PairSummary.control_lane.join_helper_command)",
         "",
         "## Treatment Lane",
         "",
@@ -228,6 +237,7 @@ function Get-PairSummaryMarkdown {
         "- Apparent benefit too weak to trust: $($PairSummary.comparison.apparent_benefit_too_weak_to_trust)",
         "- Session pack: $($PairSummary.treatment_lane.session_pack_json)",
         "- Join instructions: $($PairSummary.treatment_lane.join_instructions)",
+        "- Join helper: $($PairSummary.treatment_lane.join_helper_command)",
         "",
         "## Pair Artifacts",
         "",
@@ -235,7 +245,9 @@ function Get-PairSummaryMarkdown {
         "- Comparison Markdown: $($PairSummary.artifacts.comparison_markdown)",
         "- Combined join instructions: $($PairSummary.artifacts.pair_join_instructions)",
         "- Control join instructions: $($PairSummary.artifacts.control_join_instructions)",
-        "- Treatment join instructions: $($PairSummary.artifacts.treatment_join_instructions)"
+        "- Treatment join instructions: $($PairSummary.artifacts.treatment_join_instructions)",
+        "- Control join helper: $($PairSummary.artifacts.control_join_helper_command)",
+        "- Treatment join helper: $($PairSummary.artifacts.treatment_join_helper_command)"
     )
 
     return ($lines -join [Environment]::NewLine) + [Environment]::NewLine
@@ -315,6 +327,11 @@ $treatmentJoinInfo = Get-HldsJoinInfo -Port $TreatmentPort
 $controlJoinInstructionsPath = Join-Path $pairRoot "control_join_instructions.txt"
 $treatmentJoinInstructionsPath = Join-Path $pairRoot "treatment_join_instructions.txt"
 $pairJoinInstructionsPath = Join-Path $pairRoot "pair_join_instructions.txt"
+$clientDiscovery = Get-HalfLifeClientDiscovery
+$controlJoinHelperCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\join_live_pair_lane.ps1 -Lane Control -PairRoot {0}" -f (Format-ProcessArgumentText -Value $pairRoot)
+$controlJoinHelperDryRunCommand = "$controlJoinHelperCommand -DryRun"
+$treatmentJoinHelperCommand = "powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -PairRoot {0}" -f (Format-ProcessArgumentText -Value $pairRoot)
+$treatmentJoinHelperDryRunCommand = "$treatmentJoinHelperCommand -DryRun"
 
 Write-TextFile -Path $controlJoinInstructionsPath -Value (
     Get-LaneJoinInstructionsText `
@@ -324,7 +341,9 @@ Write-TextFile -Path $controlJoinInstructionsPath -Value (
         -JoinInfo $controlJoinInfo `
         -PairRoot $pairRoot `
         -MinHumanPresenceSeconds $MinHumanPresenceSeconds `
-        -TreatmentProfileName ""
+        -TreatmentProfileName "" `
+        -JoinHelperCommand $controlJoinHelperCommand `
+        -JoinHelperDryRunCommand $controlJoinHelperDryRunCommand
 )
 Write-TextFile -Path $treatmentJoinInstructionsPath -Value (
     Get-LaneJoinInstructionsText `
@@ -334,7 +353,9 @@ Write-TextFile -Path $treatmentJoinInstructionsPath -Value (
         -JoinInfo $treatmentJoinInfo `
         -PairRoot $pairRoot `
         -MinHumanPresenceSeconds $MinHumanPresenceSeconds `
-        -TreatmentProfileName $resolvedTuningProfile.name
+        -TreatmentProfileName $resolvedTuningProfile.name `
+        -JoinHelperCommand $treatmentJoinHelperCommand `
+        -JoinHelperDryRunCommand $treatmentJoinHelperDryRunCommand
 )
 Write-TextFile -Path $pairJoinInstructionsPath -Value (
     Get-PairJoinInstructionsText `
@@ -345,7 +366,9 @@ Write-TextFile -Path $pairJoinInstructionsPath -Value (
         -TreatmentProfileName $resolvedTuningProfile.name `
         -PairRoot $pairRoot `
         -MinHumanPresenceSeconds $MinHumanPresenceSeconds `
-        -HumanJoinGraceSeconds $HumanJoinGraceSeconds
+        -HumanJoinGraceSeconds $HumanJoinGraceSeconds `
+        -ControlJoinHelperCommand $controlJoinHelperCommand `
+        -TreatmentJoinHelperCommand $treatmentJoinHelperCommand
 )
 
 $operatorChecklistPath = Join-Path (Get-RepoRoot) "docs\operator-checklist.md"
@@ -375,6 +398,15 @@ Write-Host "    Console command: $($controlJoinInfo.ConsoleCommand)"
 if (-not [string]::IsNullOrWhiteSpace([string]$controlJoinInfo.LanAddress)) {
     Write-Host "    LAN join target: $($controlJoinInfo.LanAddress)"
 }
+if ($clientDiscovery.launchable_for_local_lane_join) {
+    Write-Host "    Local client discovery: $($clientDiscovery.discovery_verdict) at $($clientDiscovery.client_path)"
+    Write-Host "    Join helper: $controlJoinHelperCommand"
+}
+else {
+    Write-Host "    Local client discovery: $($clientDiscovery.discovery_verdict)"
+    Write-Host "    Automatic join unavailable: $($clientDiscovery.explanation)"
+    Write-Host "    Join helper dry-run: $controlJoinHelperDryRunCommand"
+}
 Write-Host "    Join instructions: $controlJoinInstructionsPath"
 Write-Host "  TREATMENT lane (join second): $TreatmentLaneLabel"
 Write-Host "    Role: AI treatment"
@@ -384,6 +416,12 @@ if (-not [string]::IsNullOrWhiteSpace([string]$treatmentJoinInfo.LanAddress)) {
     Write-Host "    LAN join target: $($treatmentJoinInfo.LanAddress)"
 }
 Write-Host "    Treatment profile: $($resolvedTuningProfile.name)"
+if ($clientDiscovery.launchable_for_local_lane_join) {
+    Write-Host "    Join helper: $treatmentJoinHelperCommand"
+}
+else {
+    Write-Host "    Join helper dry-run: $treatmentJoinHelperDryRunCommand"
+}
 Write-Host "    Join instructions: $treatmentJoinInstructionsPath"
 Write-Host "Success means:"
 Write-Host "  Keep at least one human in each lane for about $MinHumanPresenceSeconds seconds."
@@ -511,6 +549,7 @@ $pairSummary = [ordered]@{
         port = $ControlPort
         join_target = $controlJoinInfo.LoopbackAddress
         join_instructions = $controlJoinInstructionsPath
+        join_helper_command = $controlJoinHelperCommand
         session_pack_json = $controlResult.SessionPackJsonPath
         session_pack_markdown = $controlResult.SessionPackMarkdownPath
         summary_json = $controlResult.SummaryJsonPath
@@ -529,6 +568,7 @@ $pairSummary = [ordered]@{
         treatment_profile = $resolvedTuningProfile.name
         join_target = $treatmentJoinInfo.LoopbackAddress
         join_instructions = $treatmentJoinInstructionsPath
+        join_helper_command = $treatmentJoinHelperCommand
         session_pack_json = $treatmentResult.SessionPackJsonPath
         session_pack_markdown = $treatmentResult.SessionPackMarkdownPath
         summary_json = $treatmentResult.SummaryJsonPath
@@ -550,6 +590,8 @@ $pairSummary = [ordered]@{
         pair_join_instructions = $pairJoinInstructionsPath
         control_join_instructions = $controlJoinInstructionsPath
         treatment_join_instructions = $treatmentJoinInstructionsPath
+        control_join_helper_command = $controlJoinHelperCommand
+        treatment_join_helper_command = $treatmentJoinHelperCommand
     }
 }
 
@@ -582,6 +624,8 @@ Write-Host "  Operator checklist: $operatorChecklistPath"
     ControlJoinInstructionsPath = $controlJoinInstructionsPath
     TreatmentJoinInstructionsPath = $treatmentJoinInstructionsPath
     PairJoinInstructionsPath = $pairJoinInstructionsPath
+    ControlJoinHelperCommand = $controlJoinHelperCommand
+    TreatmentJoinHelperCommand = $treatmentJoinHelperCommand
     ComparisonVerdict = [string]$comparisonSummary.comparison_verdict
     OperatorNoteClassification = $operatorClassification
     TreatmentProfile = $resolvedTuningProfile.name
