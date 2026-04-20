@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-37
+HLDM-JKBOTTI-AI-STAND-20260415-38
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -26,6 +26,8 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/assess_latest_session_recovery.ps1` and `scripts/assess_latest_session_recovery.bat` for interruption classification, artifact-completeness checks, and conservative recovery recommendations after an incomplete or suspicious session.
 - `scripts/finalize_interrupted_session.ps1` and `scripts/finalize_interrupted_session.bat` for conservative salvage of recoverable interrupted sessions when the saved pair already contains enough evidence and only the closeout stack needs to be finished honestly.
 - `scripts/continue_current_live_mission.ps1` and `scripts/continue_current_live_mission.bat` for the top-level continuation decision that chooses no-action, review-only, salvage, rerun, or manual review from the latest session state plus the current mission context.
+- `scripts/inject_pair_session_failure.ps1` and `scripts/inject_pair_session_failure.bat` for rehearsal-safe staging of controlled interrupted-session branches such as before-sufficiency, during-post-pipeline, or missing-mission-snapshot without touching a real live pair by default.
+- `scripts/run_mission_continuation_rehearsal.ps1` and `scripts/run_mission_continuation_rehearsal.bat` for the end-to-end failure-injection rehearsal that starts from the mission-driven launcher, injects a controlled branch, runs recovery assessment plus the continuation controller, and writes a suite report.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -683,6 +685,37 @@ Or with the thin wrapper:
 
 ```bat
 scripts\continue_current_live_mission.bat .\lab\logs\eval\pairs\<pair-pack> -DryRun
+```
+
+## Continuation Rehearsal
+
+Use `scripts\run_mission_continuation_rehearsal.ps1` before the first human-rich conservative session when you want one end-to-end proof that mission launch, failure handling, recovery assessment, continuation choice, and promotion-safe closeout all behave correctly together.
+
+- it writes `continuation_rehearsal_report.json` and `continuation_rehearsal_report.md` under each rehearsed branch, plus `rehearsal_suite_summary.json` and `rehearsal_suite_summary.md` under the suite root
+- it reuses the real mission-driven stack instead of inventing a fake harness: `run_current_live_mission.ps1`, `inject_pair_session_failure.ps1`, `assess_latest_session_recovery.ps1`, `continue_current_live_mission.ps1`, and `finalize_interrupted_session.ps1`
+- supported rehearsal branches include `already-complete`, `after-sufficiency-before-closeout`, `during-post-pipeline`, `before-sufficiency`, `missing-mission-snapshot`, and the optional `partial-artifacts-recoverable`
+- success means the controller chooses the honest branch: no action for already-complete, salvage for recoverable interrupted branches, rerun for pre-sufficiency branches, and manual review when mission-critical context is missing
+- the failure injector is rehearsal-safe by default and keeps copied evidence labeled `rehearsal`, `synthetic_fixture`, and `validation_only`; it does not mutate a real live pair unless someone explicitly asks for unsafe in-place mutation
+- salvaged or rerun rehearsal branches must stay excluded from promotion, must keep the responsive gate closed, and must keep registry activity under the branch-local rehearsal outputs such as `guided_session\registry\`
+- this is different from the real live continuation path: the rehearsal proves the workflow wiring and failure policy, but it does not create grounded evidence or justify changing the live treatment profile
+
+Run the full suite or a selected branch like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1
+powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1 -FailureModes during-post-pipeline
+```
+
+If you already have a completed rehearsal base pair and want to avoid launching another rehearsal run, pass it explicitly:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1 -BasePairRoot .\lab\logs\eval\continuation_rehearsal\<suite>\runtime\<pair-pack> -FailureModes already-complete,before-sufficiency,missing-mission-snapshot
+```
+
+Or use the thin wrapper:
+
+```bat
+scripts\run_mission_continuation_rehearsal.bat -FailureModes already-complete
 ```
 
 ## Responsive Trial Gate

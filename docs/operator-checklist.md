@@ -12,6 +12,8 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\assess_latest_session_recovery.ps1` is available so an interrupted or suspicious pair can be classified before anyone guesses whether to salvage or rerun it
 - `scripts\finalize_interrupted_session.ps1` is available so recoverable interrupted sessions can be finalized without replaying the whole live run
 - `scripts\continue_current_live_mission.ps1` is available so the operator can ask one top-level helper to choose no-action, salvage, rerun, or manual review after a partial run
+- `scripts\inject_pair_session_failure.ps1` is available so failure branches can be staged safely against rehearsal-only pair roots instead of improvising on live evidence
+- `scripts\run_mission_continuation_rehearsal.ps1` is available so the whole failure-and-recovery chain can be rehearsed before the first real human-rich conservative session
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -345,6 +347,21 @@ How to read grounded evidence certification:
 - if rerun is required, the helper reuses the saved mission snapshot when available and otherwise falls back to the current mission brief only when that fallback is explicit and auditable
 - it is different from recovery assessment: recovery classifies the session, while the continuation controller chooses and optionally executes the supported next action
 - it is different from salvage: salvage only finalizes recoverable sessions, while the continuation controller can also say no-action, rerun, or manual review
+
+## Continuation Rehearsal
+
+- run `powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1` before trusting the first real human-rich conservative failure path
+- the runner starts from the current mission-driven launcher, stages a controlled failure branch, runs recovery assessment, runs the continuation controller, and then writes branch-level `continuation_rehearsal_report.json` / `.md` plus a suite summary
+- use `scripts\inject_pair_session_failure.ps1` only on rehearsal or other validation-only pair roots when you need to stage one branch manually
+- the key rehearsal branches are:
+  - `already-complete`: the controller should choose no action
+  - `after-sufficiency-before-closeout` or `during-post-pipeline`: the controller should choose salvage
+  - `before-sufficiency`: the controller should choose rerun
+  - `missing-mission-snapshot`: the controller should stop for manual review
+- rehearsal success means the branch verdict, continuation decision, salvage or rerun behavior, and final artifact stack all match the injected failure mode
+- rehearsal success does not count as grounded live evidence. Salvaged or rerun rehearsal branches must still remain `rehearsal`, `synthetic`, `validation only`, excluded from promotion, and unable to unlock the responsive gate
+- the rehearsal-safe registry must stay under the branch-local outputs such as `guided_session\registry\`; if rehearsal output starts pointing back at the real ledger, stop and fix that before another run
+- use a completed rehearsal base pair with `-BasePairRoot` when you want to cover multiple failure modes without spending another rehearsal launch
 
 ## Latest-Session Delta
 

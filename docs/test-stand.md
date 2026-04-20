@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-37
+HLDM-JKBOTTI-AI-STAND-20260415-38
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -728,6 +728,42 @@ Or with the thin wrapper:
 
 ```bat
 scripts\continue_current_live_mission.bat .\lab\logs\eval\pairs\<pair-pack> -DryRun
+```
+
+## Continuation Rehearsal
+
+Use `scripts\run_mission_continuation_rehearsal.ps1` when you want a disaster rehearsal that starts from the mission-driven launcher, injects a controlled interruption, runs recovery assessment, lets the continuation controller choose salvage or rerun, and then verifies the resulting artifact state.
+
+- it writes branch-local `continuation_rehearsal_report.json` and `continuation_rehearsal_report.md`, plus suite-level `rehearsal_suite_summary.json` and `rehearsal_suite_summary.md`
+- it stays thin: the runner reuses `run_current_live_mission.ps1`, `inject_pair_session_failure.ps1`, `assess_latest_session_recovery.ps1`, `continue_current_live_mission.ps1`, and `finalize_interrupted_session.ps1`
+- `inject_pair_session_failure.ps1` is rehearsal-safe by default and stages failure modes such as `already-complete`, `after-sufficiency-before-closeout`, `during-post-pipeline`, `before-sufficiency`, `missing-mission-snapshot`, and optional `partial-artifacts-recoverable`
+- the honest expected branches are:
+  - already-complete -> no-action or review-only
+  - after-sufficiency-before-closeout -> salvage
+  - during-post-pipeline -> salvage
+  - before-sufficiency -> rerun-current-mission or rerun-current-mission-with-new-pair-root
+  - missing-mission-snapshot -> manual-review-required
+- success means the final branch report shows the right initial recovery verdict, the right continuation decision, the right downstream action, and a structurally complete result only when salvage or rerun truly finished
+- rehearsal success is still workflow validation only. The pair remains `rehearsal`, `synthetic_fixture`, and `validation_only`; certification stays excluded from grounded evidence; the responsive gate stays closed; and registry outputs stay under branch-local rehearsal paths such as `guided_session\registry\`
+- this differs from the real live continuation path because it proves failure-policy wiring without claiming grounded live evidence
+
+Run the whole suite or selected branches like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1
+powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1 -FailureModes during-post-pipeline
+```
+
+If a completed rehearsal base pair already exists, reuse it to avoid another rehearsal launch:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_mission_continuation_rehearsal.ps1 -BasePairRoot .\lab\logs\eval\continuation_rehearsal\<suite>\runtime\<pair-pack> -FailureModes already-complete,before-sufficiency,missing-mission-snapshot
+```
+
+Or use the thin wrapper:
+
+```bat
+scripts\run_mission_continuation_rehearsal.bat -FailureModes already-complete
 ```
 
 ## Responsive Trial Gate

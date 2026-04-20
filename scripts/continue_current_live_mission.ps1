@@ -307,11 +307,123 @@ function Get-MissionContext {
     }
 }
 
+function Get-RerunContext {
+    param(
+        [string]$ResolvedPairRoot,
+        [object]$RecoveryReport
+    )
+
+    $pairSummary = Read-JsonFile -Path (Join-Path $ResolvedPairRoot "pair_summary.json")
+    $rehearsalMetadata = Read-JsonFile -Path (Join-Path $ResolvedPairRoot "rehearsal_metadata.json")
+    $evidence = Get-ObjectPropertyValue -Object $RecoveryReport -Name "evidence" -Default $null
+
+    $rehearsalMode = [bool](Get-ObjectPropertyValue -Object $evidence -Name "rehearsal_mode" -Default $false)
+    if (-not $rehearsalMode) {
+        $rehearsalMode = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "rehearsal_mode" -Default $false)
+    }
+
+    $evidenceOrigin = [string](Get-ObjectPropertyValue -Object $evidence -Name "evidence_origin" -Default "")
+    if (-not $evidenceOrigin) {
+        $evidenceOrigin = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "evidence_origin" -Default "")
+    }
+
+    $validationOnly = [bool](Get-ObjectPropertyValue -Object $evidence -Name "validation_only" -Default $false)
+    if (-not $validationOnly) {
+        $validationOnly = [bool](Get-ObjectPropertyValue -Object $pairSummary -Name "validation_only" -Default $false)
+    }
+
+    $fixtureId = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "fixture_id" -Default "")
+    if (-not $fixtureId) {
+        $fixtureId = [string](Get-ObjectPropertyValue -Object $rehearsalMetadata -Name "fixture_id" -Default "")
+    }
+
+    $rerunAsRehearsal = $rehearsalMode -or ($evidenceOrigin -eq "rehearsal")
+    $outputRoot = ""
+    try {
+        $outputRoot = (Split-Path -Path $ResolvedPairRoot -Parent)
+    }
+    catch {
+        $outputRoot = ""
+    }
+
+    $explanation = if ($rerunAsRehearsal) {
+        "The assessed pair is rehearsal-backed, so reruns stay in rehearsal mode and reuse the same parent output root."
+    }
+    elseif ($outputRoot) {
+        "Reruns will reuse the current pair's parent output root so the new attempt stays adjacent to the interrupted session."
+    }
+    else {
+        "No pair-local rerun context was detected."
+    }
+
+    return [ordered]@{
+        rerun_as_rehearsal = $rerunAsRehearsal
+        rehearsal_fixture_id = $fixtureId
+        evidence_origin = $evidenceOrigin
+        validation_only = $validationOnly
+        output_root = $outputRoot
+        explanation = $explanation
+    }
+}
+
+function Get-RerunLaunchInfo {
+    param(
+        [object]$MissionContext,
+        [object]$RerunContext,
+        [string]$ResolvedLabRoot
+    )
+
+    $missionPath = [string](Get-ObjectPropertyValue -Object $MissionContext -Name "selected_rerun_mission_json_path" -Default "")
+    $missionMarkdownPath = [string](Get-ObjectPropertyValue -Object $MissionContext -Name "selected_rerun_mission_markdown_path" -Default "")
+    $rerunArgs = [ordered]@{
+        MissionPath = $missionPath
+        LabRoot = $ResolvedLabRoot
+    }
+    $commandArgs = @(
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".\scripts\run_current_live_mission.ps1",
+        "-MissionPath",
+        $missionPath
+    )
+
+    if ($missionMarkdownPath) {
+        $rerunArgs.MissionMarkdownPath = $missionMarkdownPath
+        $commandArgs += @("-MissionMarkdownPath", $missionMarkdownPath)
+    }
+
+    $outputRoot = [string](Get-ObjectPropertyValue -Object $RerunContext -Name "output_root" -Default "")
+    if ($outputRoot) {
+        $rerunArgs.OutputRoot = $outputRoot
+        $commandArgs += @("-OutputRoot", $outputRoot)
+    }
+
+    if ([bool](Get-ObjectPropertyValue -Object $RerunContext -Name "rerun_as_rehearsal" -Default $false)) {
+        $rerunArgs.RehearsalMode = $true
+        $commandArgs += "-RehearsalMode"
+
+        $fixtureId = [string](Get-ObjectPropertyValue -Object $RerunContext -Name "rehearsal_fixture_id" -Default "")
+        if ($fixtureId) {
+            $rerunArgs.RehearsalFixtureId = $fixtureId
+            $commandArgs += @("-RehearsalFixtureId", $fixtureId)
+        }
+    }
+
+    return [ordered]@{
+        rerun_args = $rerunArgs
+        command_args = $commandArgs
+    }
+}
+
 function Get-DecisionCommandList {
     param(
         [string]$DecisionBranch,
         [string]$ResolvedPairRoot,
         [object]$MissionContext,
+        [object]$RerunContext,
         [switch]$ForceNewPairRoot
     )
 
@@ -353,22 +465,8 @@ function Get-DecisionCommandList {
                 ))
         }
         "rerun-current-mission" {
-            $rerunArgs = @(
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                ".\scripts\run_current_live_mission.ps1"
-            )
-            $selectedMissionPath = [string](Get-ObjectPropertyValue -Object $MissionContext -Name "selected_rerun_mission_json_path" -Default "")
-            $selectedMissionMarkdownPath = [string](Get-ObjectPropertyValue -Object $MissionContext -Name "selected_rerun_mission_markdown_path" -Default "")
-            if ($selectedMissionPath) {
-                $rerunArgs += @("-MissionPath", $selectedMissionPath)
-            }
-            if ($selectedMissionMarkdownPath) {
-                $rerunArgs += @("-MissionMarkdownPath", $selectedMissionMarkdownPath)
-            }
+            $rerunLaunchInfo = Get-RerunLaunchInfo -MissionContext $MissionContext -RerunContext $RerunContext -ResolvedLabRoot ""
+            $rerunArgs = @($rerunLaunchInfo.command_args)
 
             $commands += (Build-CommandString -Arguments @(
                     "powershell",
@@ -384,22 +482,8 @@ function Get-DecisionCommandList {
             $commands += (Build-CommandString -Arguments $rerunArgs)
         }
         "rerun-current-mission-with-new-pair-root" {
-            $rerunArgs = @(
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                ".\scripts\run_current_live_mission.ps1"
-            )
-            $selectedMissionPath = [string](Get-ObjectPropertyValue -Object $MissionContext -Name "selected_rerun_mission_json_path" -Default "")
-            $selectedMissionMarkdownPath = [string](Get-ObjectPropertyValue -Object $MissionContext -Name "selected_rerun_mission_markdown_path" -Default "")
-            if ($selectedMissionPath) {
-                $rerunArgs += @("-MissionPath", $selectedMissionPath)
-            }
-            if ($selectedMissionMarkdownPath) {
-                $rerunArgs += @("-MissionMarkdownPath", $selectedMissionMarkdownPath)
-            }
+            $rerunLaunchInfo = Get-RerunLaunchInfo -MissionContext $MissionContext -RerunContext $RerunContext -ResolvedLabRoot ""
+            $rerunArgs = @($rerunLaunchInfo.command_args)
 
             $controllerArgs = @(
                 "powershell",
@@ -582,6 +666,7 @@ $certificationContext = Get-ObjectPropertyValue -Object $recoveryReport -Name "c
 $certificationContextForReport = $certificationContext
 $artifactBlock = Get-ObjectPropertyValue -Object $recoveryReport -Name "artifacts" -Default $null
 $missionContext = Get-MissionContext -RecoveryReport $recoveryReport -ResolvedLabRoot $resolvedLabRoot -AllowMissionOverrideForRerun ([bool]$AllowMissionOverride)
+$rerunContext = Get-RerunContext -ResolvedPairRoot $resolvedPairRoot -RecoveryReport $recoveryReport
 
 switch ($recoveryVerdict) {
     "session-complete" {
@@ -654,7 +739,7 @@ if ($decisionBranch -in @("session-already-complete-no-action", "session-already
     $decisionExplanation += " The saved session remains excluded from promotion as '$registrationDisposition'."
 }
 
-$suggestedCommands = Get-DecisionCommandList -DecisionBranch $decisionBranch -ResolvedPairRoot $resolvedPairRoot -MissionContext $missionContext -ForceNewPairRoot:$RerunWithNewPairRoot
+$suggestedCommands = Get-DecisionCommandList -DecisionBranch $decisionBranch -ResolvedPairRoot $resolvedPairRoot -MissionContext $missionContext -RerunContext $rerunContext -ForceNewPairRoot:$RerunWithNewPairRoot
 
 try {
     switch ($decisionBranch) {
@@ -717,26 +802,9 @@ try {
         }
         "rerun-current-mission" {
             $executionAction = "rerun-current-mission"
-            $rerunArgs = @{
-                MissionPath = [string](Get-ObjectPropertyValue -Object $missionContext -Name "selected_rerun_mission_json_path" -Default "")
-                LabRoot = $resolvedLabRoot
-            }
-            $selectedMissionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionContext -Name "selected_rerun_mission_markdown_path" -Default "")
-            $downstreamCommandArgs = @(
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                ".\scripts\run_current_live_mission.ps1",
-                "-MissionPath",
-                $rerunArgs.MissionPath
-            )
-            if ($selectedMissionMarkdownPath) {
-                $rerunArgs.MissionMarkdownPath = $selectedMissionMarkdownPath
-                $downstreamCommandArgs += @("-MissionMarkdownPath", $selectedMissionMarkdownPath)
-            }
-            $downstreamCommand = Build-CommandString -Arguments $downstreamCommandArgs
+            $rerunLaunchInfo = Get-RerunLaunchInfo -MissionContext $missionContext -RerunContext $rerunContext -ResolvedLabRoot $resolvedLabRoot
+            $rerunArgs = $rerunLaunchInfo.rerun_args
+            $downstreamCommand = Build-CommandString -Arguments $rerunLaunchInfo.command_args
 
             if ($Execute) {
                 $executionAttempted = $true
@@ -749,7 +817,12 @@ try {
                 $rerunMissionAttainmentJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $rerunResult -Name "MissionAttainmentJsonPath" -Default ""))
                 $rerunMissionAttainmentMarkdownPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $rerunResult -Name "MissionAttainmentMarkdownPath" -Default ""))
                 $executionStatus = "completed"
-                $executionExplanation = "The controller started a rerun from the selected mission context."
+                $executionExplanation = if ([bool](Get-ObjectPropertyValue -Object $rerunContext -Name "rerun_as_rehearsal" -Default $false)) {
+                    "The controller started a rehearsal-scoped rerun from the selected mission context."
+                }
+                else {
+                    "The controller started a rerun from the selected mission context."
+                }
             }
             else {
                 $executionStatus = if ($DryRun) { "dry-run-preview" } else { "preview-only" }
@@ -758,26 +831,9 @@ try {
         }
         "rerun-current-mission-with-new-pair-root" {
             $executionAction = "rerun-current-mission-with-new-pair-root"
-            $rerunArgs = @{
-                MissionPath = [string](Get-ObjectPropertyValue -Object $missionContext -Name "selected_rerun_mission_json_path" -Default "")
-                LabRoot = $resolvedLabRoot
-            }
-            $selectedMissionMarkdownPath = [string](Get-ObjectPropertyValue -Object $missionContext -Name "selected_rerun_mission_markdown_path" -Default "")
-            $downstreamCommandArgs = @(
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                ".\scripts\run_current_live_mission.ps1",
-                "-MissionPath",
-                $rerunArgs.MissionPath
-            )
-            if ($selectedMissionMarkdownPath) {
-                $rerunArgs.MissionMarkdownPath = $selectedMissionMarkdownPath
-                $downstreamCommandArgs += @("-MissionMarkdownPath", $selectedMissionMarkdownPath)
-            }
-            $downstreamCommand = Build-CommandString -Arguments $downstreamCommandArgs
+            $rerunLaunchInfo = Get-RerunLaunchInfo -MissionContext $missionContext -RerunContext $rerunContext -ResolvedLabRoot $resolvedLabRoot
+            $rerunArgs = $rerunLaunchInfo.rerun_args
+            $downstreamCommand = Build-CommandString -Arguments $rerunLaunchInfo.command_args
 
             if ($Execute) {
                 $executionAttempted = $true
@@ -790,7 +846,12 @@ try {
                 $rerunMissionAttainmentJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $rerunResult -Name "MissionAttainmentJsonPath" -Default ""))
                 $rerunMissionAttainmentMarkdownPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $rerunResult -Name "MissionAttainmentMarkdownPath" -Default ""))
                 $executionStatus = "completed"
-                $executionExplanation = "The controller started a clean rerun. The guided workflow created a new pair root for the new attempt."
+                $executionExplanation = if ([bool](Get-ObjectPropertyValue -Object $rerunContext -Name "rerun_as_rehearsal" -Default $false)) {
+                    "The controller started a clean rehearsal rerun. The guided workflow created a new pair root for the new attempt."
+                }
+                else {
+                    "The controller started a clean rerun. The guided workflow created a new pair root for the new attempt."
+                }
             }
             else {
                 $executionStatus = if ($DryRun) { "dry-run-preview" } else { "preview-only" }
@@ -856,6 +917,7 @@ $report = [ordered]@{
         nonrecoverable = [bool](Get-ObjectPropertyValue -Object $recoveryState -Name "nonrecoverable" -Default $false)
     }
     mission_context = $missionContext
+    rerun_context = $rerunContext
     certification_context = [ordered]@{
         registration_disposition = [string](Get-ObjectPropertyValue -Object $certificationContextForReport -Name "registration_disposition" -Default $registrationDisposition)
         count_toward_grounded_certification_now = [bool](Get-ObjectPropertyValue -Object $certificationContextForReport -Name "count_toward_grounded_certification_now" -Default $false)

@@ -319,14 +319,14 @@ function Get-RegistryContext {
         [bool](Get-ObjectPropertyValue -Object $PairSummary -Name "synthetic_fixture" -Default $false)
 
     $registryPathCandidates = @()
+    if ($shouldIsolateForRehearsal -and $guidedRegistryRootCandidate) {
+        $registryPathCandidates += (Join-Path $guidedRegistryRootCandidate "pair_sessions.ndjson")
+    }
     if (-not [string]::IsNullOrWhiteSpace($ExplicitRegistryPath)) {
         $registryPathCandidates += (Get-AbsolutePath -Path $ExplicitRegistryPath -BasePath (Get-RepoRoot))
     }
     $registryPathCandidates += [string](Get-ObjectPropertyValue -Object $sessionStateArtifacts -Name "registry_path" -Default "")
     $registryPathCandidates += [string](Get-ObjectPropertyValue -Object $docketArtifacts -Name "registry_path" -Default "")
-    if ($shouldIsolateForRehearsal -and $guidedRegistryRootCandidate) {
-        $registryPathCandidates += (Join-Path $guidedRegistryRootCandidate "pair_sessions.ndjson")
-    }
     if ($guidedRegistryRoot) {
         $registryPathCandidates += (Join-Path $guidedRegistryRoot "pair_sessions.ndjson")
     }
