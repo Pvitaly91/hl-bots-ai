@@ -17,6 +17,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_recovery_branch_matrix.ps1` is available so the full recovery branch suite can be rerun and summarized into one operator-facing readiness certificate before the first real human-rich conservative session
 - `scripts\run_first_grounded_conservative_attempt.ps1` is available so the first real conservative evidence-capture attempt can run through the current mission, recovery, and closeout stack while producing one milestone-oriented attempt report
 - `scripts\run_human_participation_conservative_attempt.ps1` is available so a launchable local client can be turned into a real control-then-treatment conservative participation attempt with explicit human-participation tracking
+- `scripts\run_next_grounded_conservative_cycle.ps1` is available so the next live conservative cycle can answer whether the latest run became the second grounded conservative capture, only reduced the gap, or advanced the next objective
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -59,6 +60,12 @@ When the local client is available and you want the helper to drive the actual c
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
+```
+
+After the first grounded conservative capture already exists, use this milestone helper when the question becomes whether the next cycle produced the second grounded conservative pack or advanced the planner:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_next_grounded_conservative_cycle.ps1
 ```
 
 Inspect the exact mission-derived launch without starting it like this:
@@ -119,26 +126,27 @@ Default ports and lanes:
 1. Run preflight and stop only if the verdict is `blocked`.
 2. Read `next_live_session_mission.md` or let the mission runner reuse the current brief automatically.
 3. For the first grounded conservative milestone attempt, start `scripts\run_human_participation_conservative_attempt.ps1` when `hl.exe` is launchable on this machine. Fall back to `scripts\run_first_grounded_conservative_attempt.ps1` when you need the same mission/closeout stack without automatic local joins. Otherwise start the mission-driven workflow directly unless you explicitly need the manual helper-by-helper flow.
-4. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, join-helper command, monitor status or exact monitor command, pair output root, and final-docket target.
-5. If `hl.exe` was found, prefer `scripts\join_live_pair_lane.ps1 -Lane Control -PairRoot <pair-root>` or the printed port-based join helper command. Otherwise use the printed `connect` command manually.
-6. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
-7. Let the runner advance to the treatment lane, then join the treatment lane second with the corresponding join helper or the printed manual `connect` command.
-8. If the guided runner auto-started the monitor, let it keep polling. If not, run the printed monitor command manually.
-9. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
-10. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
-11. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
-12. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
-13. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
-14. Read `mission_attainment.md` immediately after the dossier when you need the exact mission-closeout answer for that run.
-15. If the session was interrupted, the operator terminal died, or the artifact stack looks partial, run `powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -PairRoot <pair-root> -DryRun` first.
-16. If the continuation decision is `salvage-interrupted-session`, rerun the same command with `-Execute` or use the linked `finalize_interrupted_session.ps1` command. Do not replay the live run first.
-17. If the continuation decision is `rerun-current-mission` or `rerun-current-mission-with-new-pair-root`, review the linked saved mission or current mission path, then rerun the controller with `-Execute` when you are ready to spend a new pair.
-18. If the continuation decision is `session-already-complete-no-action` or `session-already-complete-review-only`, read the linked final docket, mission-attainment closeout, outcome dossier, and next live mission instead of rerunning the session.
-19. If the continuation decision is `manual-review-required` or `blocked-no-mission-context`, stop and inspect the detailed helper artifacts instead of forcing salvage or rerun.
-20. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later only when you intentionally need a narrower rebuild outside the supported salvage path.
-21. Run `scripts\evaluate_latest_session_mission.ps1 -PairRoot <pair-root>` later only when you intentionally need to rebuild mission-closeout after a narrower artifact refresh.
-22. Read `next_live_plan` when you need the full promotion-gap math, and read `next_live_session_mission` when you need the exact pre-run target and stop condition.
-23. If the dossier, mission-attainment closeout, recovery assessment, or continuation controller says manual review is needed, continue into the detailed helper artifacts (shadow review, scorecard, registry summary, responsive gate, and raw pair artifacts).
+4. After the first grounded conservative capture already exists, prefer `scripts\run_next_grounded_conservative_cycle.ps1` for the next live conservative evidence cycle so the before/after counts and objective shift are recorded explicitly.
+5. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, join-helper command, monitor status or exact monitor command, pair output root, and final-docket target.
+6. If `hl.exe` was found, prefer `scripts\join_live_pair_lane.ps1 -Lane Control -PairRoot <pair-root>` or the printed port-based join helper command. Otherwise use the printed `connect` command manually.
+7. Stay in the control lane for about the configured `-MinHumanPresenceSeconds` window. Treat roughly 60 seconds or more as the minimum useful target when using the current live defaults.
+8. Let the runner advance to the treatment lane, then join the treatment lane second with the corresponding join helper or the printed manual `connect` command.
+9. If the guided runner auto-started the monitor, let it keep polling. If not, run the printed monitor command manually.
+10. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
+11. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
+12. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
+13. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
+14. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
+15. Read `mission_attainment.md` immediately after the dossier when you need the exact mission-closeout answer for that run.
+16. If the session was interrupted, the operator terminal died, or the artifact stack looks partial, run `powershell -NoProfile -File .\scripts\continue_current_live_mission.ps1 -PairRoot <pair-root> -DryRun` first.
+17. If the continuation decision is `salvage-interrupted-session`, rerun the same command with `-Execute` or use the linked `finalize_interrupted_session.ps1` command. Do not replay the live run first.
+18. If the continuation decision is `rerun-current-mission` or `rerun-current-mission-with-new-pair-root`, review the linked saved mission or current mission path, then rerun the controller with `-Execute` when you are ready to spend a new pair.
+19. If the continuation decision is `session-already-complete-no-action` or `session-already-complete-review-only`, read the linked final docket, mission-attainment closeout, outcome dossier, and next live mission instead of rerunning the session.
+20. If the continuation decision is `manual-review-required` or `blocked-no-mission-context`, stop and inspect the detailed helper artifacts instead of forcing salvage or rerun.
+21. Run `scripts\build_latest_session_outcome_dossier.ps1 -PairRoot <pair-root>` later only when you intentionally need a narrower rebuild outside the supported salvage path.
+22. Run `scripts\evaluate_latest_session_mission.ps1 -PairRoot <pair-root>` later only when you intentionally need to rebuild mission-closeout after a narrower artifact refresh.
+23. Read `next_live_plan` when you need the full promotion-gap math, and read `next_live_session_mission` when you need the exact pre-run target and stop condition.
+24. If the dossier, mission-attainment closeout, recovery assessment, or continuation controller says manual review is needed, continue into the detailed helper artifacts (shadow review, scorecard, registry summary, responsive gate, and raw pair artifacts).
 
 ## What Counts As Insufficient Data
 
@@ -413,6 +421,15 @@ How to read grounded evidence certification:
 - it launches the control lane first, then the treatment lane second, and writes `human_participation_conservative_attempt.json` / `.md`
 - the report records whether control join was attempted, whether treatment join was attempted, whether saved lane evidence actually showed human presence in each lane, and which grounded criteria were still missing
 - it must not treat `hl.exe` launch alone as grounded evidence; if the pair still misses human thresholds, treatment patch-while-human-present, or post-patch observation, the report must say so directly
+
+## Next Grounded Conservative Cycle
+
+- run `powershell -NoProfile -File .\scripts\run_next_grounded_conservative_cycle.ps1` after the first grounded conservative capture already exists
+- it reuses the client-assisted conservative attempt path and writes `grounded_conservative_cycle_report.json` / `.md`
+- `second-grounded-conservative-capture` means the latest live run counted toward promotion and moved grounded conservative sessions from `1` to `2`
+- `conservative-gap-reduced-but-objective-unchanged` means the run counted and reduced the gap, but the planner still points at the same next objective afterward
+- `conservative-objective-advanced` means the run counted and the next objective moved beyond `collect-more-grounded-conservative-sessions`
+- responsive still stays closed unless the existing gate evaluation actually changes
 
 ## Local Client Discovery And Lane Join
 

@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-42
+HLDM-JKBOTTI-AI-STAND-20260415-43
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -836,6 +836,24 @@ Run it like this:
 
 ```powershell
 powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1
+```
+
+## Next Grounded Conservative Cycle
+
+Use `scripts\run_next_grounded_conservative_cycle.ps1` once the first grounded conservative session already exists and the next question is whether the newest live conservative run became the second grounded conservative capture or only moved the planner partway forward.
+
+- it reuses the client-assisted conservative attempt path instead of creating a second live-session runner
+- it writes `grounded_conservative_cycle_report.json` and `grounded_conservative_cycle_report.md`
+- `second-grounded-conservative-capture` means the pair counted toward promotion and moved grounded conservative sessions from `1` to `2`
+- `conservative-gap-reduced-but-objective-unchanged` means the pair counted and reduced the gap, but the planner still points at the same next objective after the run
+- `conservative-objective-advanced` means the pair counted and the planner moved beyond `collect-more-grounded-conservative-sessions`
+- it differs from the first-grounded helper by focusing on milestone advancement after the first capture already exists
+- the helper still keeps `responsive` closed unless the existing responsive-gate evaluation actually changes
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_next_grounded_conservative_cycle.ps1
 ```
 
 ## Local Client Discovery And Lane Join
