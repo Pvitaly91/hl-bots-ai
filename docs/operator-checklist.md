@@ -14,6 +14,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\continue_current_live_mission.ps1` is available so the operator can ask one top-level helper to choose no-action, salvage, rerun, or manual review after a partial run
 - `scripts\inject_pair_session_failure.ps1` is available so failure branches can be staged safely against rehearsal-only pair roots instead of improvising on live evidence
 - `scripts\run_mission_continuation_rehearsal.ps1` is available so the whole failure-and-recovery chain can be rehearsed before the first real human-rich conservative session
+- `scripts\run_recovery_branch_matrix.ps1` is available so the full recovery branch suite can be rerun and summarized into one operator-facing readiness certificate before the first real human-rich conservative session
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -362,6 +363,16 @@ How to read grounded evidence certification:
 - rehearsal success does not count as grounded live evidence. Salvaged or rerun rehearsal branches must still remain `rehearsal`, `synthetic`, `validation only`, excluded from promotion, and unable to unlock the responsive gate
 - the rehearsal-safe registry must stay under the branch-local outputs such as `guided_session\registry\`; if rehearsal output starts pointing back at the real ledger, stop and fix that before another run
 - use a completed rehearsal base pair with `-BasePairRoot` when you want to cover multiple failure modes without spending another rehearsal launch
+
+## Recovery Readiness Matrix
+
+- run `powershell -NoProfile -File .\scripts\run_recovery_branch_matrix.ps1` when you want one consolidated operator verdict on whether the recovery and continuation workflow is ready for the first real human-rich conservative session
+- the helper writes `recovery_branch_matrix.json` / `.md` plus `recovery_readiness_certificate.json` / `.md`
+- the matrix must cover `already-complete`, `after-sufficiency-before-closeout`, `during-post-pipeline`, `partial-artifacts-recoverable`, `before-sufficiency`, and `missing-mission-snapshot`
+- read `recovery_readiness_certificate.md` first. If it says `ready-for-first-grounded-conservative-session`, the recovery policy is operationally validated from a failure-handling standpoint
+- if it says `ready-with-known-gaps` or `blocked`, stop and inspect `recovery_branch_matrix.md` before spending the next real human-rich session
+- a ready certificate does not count as grounded tuning evidence. It only says the continuation controller, salvage path, rerun path, and promotion-safety barriers behaved correctly in rehearsal
+- the certificate must confirm that rehearsal evidence stayed excluded from promotion, salvaged rehearsal branches did not pollute the live registry, and the responsive gate stayed closed on rehearsal-only evidence
 
 ## Latest-Session Delta
 

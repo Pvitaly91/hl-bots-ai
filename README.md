@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-38
+HLDM-JKBOTTI-AI-STAND-20260415-39
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -28,6 +28,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/continue_current_live_mission.ps1` and `scripts/continue_current_live_mission.bat` for the top-level continuation decision that chooses no-action, review-only, salvage, rerun, or manual review from the latest session state plus the current mission context.
 - `scripts/inject_pair_session_failure.ps1` and `scripts/inject_pair_session_failure.bat` for rehearsal-safe staging of controlled interrupted-session branches such as before-sufficiency, during-post-pipeline, or missing-mission-snapshot without touching a real live pair by default.
 - `scripts/run_mission_continuation_rehearsal.ps1` and `scripts/run_mission_continuation_rehearsal.bat` for the end-to-end failure-injection rehearsal that starts from the mission-driven launcher, injects a controlled branch, runs recovery assessment plus the continuation controller, and writes a suite report.
+- `scripts/run_recovery_branch_matrix.ps1` and `scripts/run_recovery_branch_matrix.bat` for the consolidated recovery branch suite, branch matrix, and operator-readiness certificate that summarize whether the full continuation policy is ready for the first real human-rich conservative session.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -717,6 +718,35 @@ Or use the thin wrapper:
 ```bat
 scripts\run_mission_continuation_rehearsal.bat -FailureModes already-complete
 ```
+
+## Recovery Branch Matrix
+
+Use `scripts\run_recovery_branch_matrix.ps1` when you want one consolidated recovery-readiness answer instead of reading individual rehearsal branch reports.
+
+- it runs the required continuation branches as one suite: `already-complete`, `after-sufficiency-before-closeout`, `during-post-pipeline`, `partial-artifacts-recoverable`, `before-sufficiency`, and `missing-mission-snapshot`
+- it stays thin by reusing `inject_pair_session_failure.ps1`, `run_mission_continuation_rehearsal.ps1`, `assess_latest_session_recovery.ps1`, `finalize_interrupted_session.ps1`, and `continue_current_live_mission.ps1`
+- it writes `recovery_branch_matrix.json` and `recovery_branch_matrix.md` with per-branch expected versus actual recovery verdicts, continuation actions, salvage or rerun outcomes, structural-completeness results, and promotion-safety checks
+- it also writes `recovery_readiness_certificate.json` and `recovery_readiness_certificate.md` with one operator verdict: `ready-for-first-grounded-conservative-session`, `ready-with-known-gaps`, or `blocked`
+- success means every required branch matches the expected conservative outcome, salvaged rehearsal branches keep their registry under branch-local outputs such as `guided_session\registry\`, rehearsal evidence stays excluded from promotion, and the responsive gate remains closed on rehearsal-only evidence
+- readiness here is operational only. It proves the failure-handling workflow is wired correctly; it does not add grounded tuning evidence and it does not justify changing the live treatment profile
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_recovery_branch_matrix.ps1
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\run_recovery_branch_matrix.bat
+```
+
+Read the outputs in this order:
+
+- `recovery_readiness_certificate.md` for the operator-facing go or no-go verdict
+- `recovery_branch_matrix.md` for branch-by-branch evidence and any failure explanation
+- branch-local `continuation_rehearsal_report.md` files only when the matrix shows a gap that needs inspection
 
 ## Responsive Trial Gate
 

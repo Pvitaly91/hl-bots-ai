@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-38
+HLDM-JKBOTTI-AI-STAND-20260415-39
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -765,6 +765,31 @@ Or use the thin wrapper:
 ```bat
 scripts\run_mission_continuation_rehearsal.bat -FailureModes already-complete
 ```
+
+## Recovery Branch Matrix
+
+Use `scripts\run_recovery_branch_matrix.ps1` when you want the full recovery-policy validation collapsed into one branch matrix plus one operator-facing readiness certificate.
+
+- it covers the required recovery branches end to end: `already-complete`, `after-sufficiency-before-closeout`, `during-post-pipeline`, `partial-artifacts-recoverable`, `before-sufficiency`, and `missing-mission-snapshot`
+- it stays thin by reusing the existing rehearsal and continuation stack instead of introducing a new recovery engine
+- `recovery_branch_matrix.json` / `.md` record, for each branch, the staged failure mode, expected and actual recovery verdicts, expected and actual continuation decisions, whether salvage or rerun happened, whether the result became structurally complete, and whether promotion exclusion stayed intact
+- `recovery_readiness_certificate.json` / `.md` summarize whether the continuation workflow is operationally ready for the first real human-rich conservative session from a failure-handling standpoint
+- a ready verdict means the controller stayed conservative, salvaged rehearsal outputs stayed isolated under the branch-local rehearsal registry, rehearsal evidence stayed excluded from promotion, and the responsive gate stayed closed on rehearsal-only evidence
+- this is still workflow validation only. Passing the matrix does not create grounded live evidence or justify opening `responsive`
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_recovery_branch_matrix.ps1
+```
+
+Or with the thin wrapper:
+
+```bat
+scripts\run_recovery_branch_matrix.bat
+```
+
+Inspect `recovery_readiness_certificate.md` first, then `recovery_branch_matrix.md` if you need the per-branch explanation behind the verdict.
 
 ## Responsive Trial Gate
 

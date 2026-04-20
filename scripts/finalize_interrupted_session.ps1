@@ -503,6 +503,9 @@ function Get-SalvageStepList {
         [bool]$RegistryEntryPresent
     )
 
+    $comparisonStatus = Get-ArtifactStatusByName -Statuses $ArtifactStatuses -Name "comparison"
+    $needsPairReview = $null -eq $comparisonStatus -or -not $comparisonStatus.found -or $comparisonStatus.stale
+
     $needsCoreCloseout = @(
         @(
             "scorecard",
@@ -536,7 +539,8 @@ function Get-SalvageStepList {
     )
 
     return [ordered]@{
-        rebuild_core_closeout = ($needsCoreCloseout.Count -gt 0) -or ($RecommendedAction -eq "run-post-pipeline-only")
+        rebuild_pair_review = $needsPairReview
+        rebuild_core_closeout = $needsPairReview -or ($needsCoreCloseout.Count -gt 0) -or ($RecommendedAction -eq "run-post-pipeline-only")
         register_pair_result = -not $RegistryEntryPresent
         refresh_registry_summary = (-not $RegistryEntryPresent) -or ($needsRegistrySummary.Count -gt 0)
         refresh_responsive_trial_gate = (-not $RegistryEntryPresent) -or ($needsRegistrySummary -contains "responsive_trial_gate") -or ($needsRegistrySummary -contains "registry_summary") -or ($needsRegistrySummary -contains "profile_recommendation")
@@ -549,6 +553,9 @@ function Get-RecommendedSalvageStepNames {
     param([hashtable]$Plan)
 
     $steps = @()
+    if ($Plan.rebuild_pair_review) {
+        $steps += "review_latest_pair_run.ps1"
+    }
     if ($Plan.rebuild_core_closeout) {
         $steps += "build_latest_session_outcome_dossier.ps1"
     }
@@ -1064,11 +1071,33 @@ try {
     }
 
     $dossierScriptPath = Join-Path $PSScriptRoot "build_latest_session_outcome_dossier.ps1"
+    $reviewScriptPath = Join-Path $PSScriptRoot "review_latest_pair_run.ps1"
     $registerScriptPath = Join-Path $PSScriptRoot "register_pair_session_result.ps1"
     $summaryScriptPath = Join-Path $PSScriptRoot "summarize_pair_session_registry.ps1"
     $gateScriptPath = Join-Path $PSScriptRoot "evaluate_responsive_trial_gate.ps1"
     $plannerScriptPath = Join-Path $PSScriptRoot "plan_next_live_session.ps1"
     $missionScriptPath = Join-Path $PSScriptRoot "evaluate_latest_session_mission.ps1"
+
+    if ($salvagePlan.rebuild_pair_review) {
+        & $reviewScriptPath -PairRoot $resolvedPairRoot | Out-Null
+        $steps += [pscustomobject]@{
+            name = "review_latest_pair_run.ps1"
+            needed = $true
+            ran = $true
+            status = "completed"
+            explanation = "Rebuilt the pair review outputs so comparison artifacts are present before downstream scoring and dossier generation."
+        }
+        $rebuiltArtifacts += @("pair_summary", "comparison")
+    }
+    else {
+        $steps += [pscustomobject]@{
+            name = "review_latest_pair_run.ps1"
+            needed = $false
+            ran = $false
+            status = "skipped-current"
+            explanation = "Pair review outputs were already present and current enough to reuse."
+        }
+    }
 
     if ($salvagePlan.rebuild_core_closeout) {
         $dossierArgs = @{

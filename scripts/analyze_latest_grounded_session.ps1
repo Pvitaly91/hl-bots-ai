@@ -46,6 +46,11 @@ function Write-JsonFile {
         [object]$Value
     )
 
+    $parent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Ensure-Directory -Path $parent | Out-Null
+    }
+
     $json = $Value | ConvertTo-Json -Depth 18
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine, $encoding)
@@ -57,6 +62,11 @@ function Write-TextFile {
         [string]$Value
     )
 
+    $parent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Ensure-Directory -Path $parent | Out-Null
+    }
+
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
@@ -66,6 +76,11 @@ function Write-NdjsonFile {
         [string]$Path,
         [object[]]$Records
     )
+
+    $parent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Ensure-Directory -Path $parent | Out-Null
+    }
 
     $encoding = New-Object System.Text.UTF8Encoding($false)
     $writer = New-Object System.IO.StreamWriter($Path, $false, $encoding)
