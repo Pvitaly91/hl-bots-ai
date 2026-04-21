@@ -65,6 +65,24 @@ function Read-JsonFile {
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Find-LatestProbeReportPath {
+    param([string]$RootPath)
+
+    if ([string]::IsNullOrWhiteSpace($RootPath) -or -not (Test-Path -LiteralPath $RootPath)) {
+        return ""
+    }
+
+    $candidate = Get-ChildItem -LiteralPath $RootPath -Filter "client_join_completion_probe.json" -Recurse -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+
+    if ($null -eq $candidate) {
+        return ""
+    }
+
+    return $candidate.FullName
+}
+
 function Resolve-ExistingPath {
     param([string]$Path)
 
@@ -91,6 +109,35 @@ function New-UniqueDirectoryPath {
 
         $attempt += 1
     }
+}
+
+function Convert-ToLaneSlug {
+    param([string]$Value)
+
+    $sourceValue = if ($null -eq $Value) { "" } else { $Value }
+    $slug = $sourceValue.Trim().ToLowerInvariant()
+    if (-not $slug) {
+        return ""
+    }
+
+    $slug = [regex]::Replace($slug, "[^a-z0-9]+", "-")
+    $slug = $slug.Trim("-")
+    if ($slug.Length -gt 32) {
+        $slug = $slug.Substring(0, 32).Trim("-")
+    }
+
+    return $slug
+}
+
+function Get-CompactMatrixLeafName {
+    param(
+        [string]$Map,
+        [int]$BotCount,
+        [int]$BotSkill,
+        [int]$ControlPort
+    )
+
+    return "{0}-jrm-{1}-b{2}-s{3}-p{4}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), (Convert-ToLaneSlug -Value $Map), $BotCount, $BotSkill, $ControlPort
 }
 
 function Get-ObjectPropertyValue {
@@ -331,6 +378,10 @@ function Get-MatrixMarkdown {
 
     $lines.Add("## Aggregate Summary") | Out-Null
     $lines.Add("") | Out-Null
+    $lines.Add("- Probe lane launch attempted: $($Matrix.aggregate.startup_counts.lane_launch_attempted)") | Out-Null
+    $lines.Add("- Lane root materialized: $($Matrix.aggregate.startup_counts.lane_root_materialized)") | Out-Null
+    $lines.Add("- Port-ready attempts: $($Matrix.aggregate.startup_counts.port_ready)") | Out-Null
+    $lines.Add("- Join-helper-invoked attempts: $($Matrix.aggregate.startup_counts.join_helper_invoked)") | Out-Null
     $lines.Add("- Entered-the-game successes: $($Matrix.aggregate.success_counts.entered_the_game)") | Out-Null
     $lines.Add("- First-human-snapshot successes: $($Matrix.aggregate.success_counts.first_human_snapshot)") | Out-Null
     $lines.Add("- Human-presence-accumulating successes: $($Matrix.aggregate.success_counts.human_presence_accumulating)") | Out-Null
@@ -360,13 +411,16 @@ function Get-MatrixMarkdown {
     $lines.Add("") | Out-Null
     $lines.Add("## Attempts") | Out-Null
     $lines.Add("") | Out-Null
-    $lines.Add("| Attempt | Final verdict | Entered game | First human snapshot | Human presence accumulating | Control lane human usable | Budget exceeded | Probe root |") | Out-Null
-    $lines.Add("| --- | --- | --- | --- | --- | --- | --- | --- |") | Out-Null
+    $lines.Add("| Attempt | Final verdict | Lane root | Port ready | Join helper | Entered game | First human snapshot | Human presence accumulating | Control lane human usable | Budget exceeded | Probe root |") | Out-Null
+    $lines.Add("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |") | Out-Null
     foreach ($attempt in @($Matrix.attempts)) {
         $lines.Add((
-                "| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |" -f
+                "| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} | {10} |" -f
                 $attempt.attempt_index,
                 $attempt.final_attempt_verdict,
+                (Get-BoolString -Value ([bool]$attempt.lane_root_materialized)),
+                (Get-BoolString -Value ([bool]$attempt.port_ready)),
+                (Get-BoolString -Value ([bool]$attempt.join_helper_invoked)),
                 (Get-BoolString -Value ([bool]$attempt.entered_the_game_seen)),
                 (Get-BoolString -Value ([bool]$attempt.first_human_snapshot_seen)),
                 (Get-BoolString -Value ([bool]$attempt.human_presence_accumulating)),
@@ -430,9 +484,9 @@ else {
     Ensure-Directory -Path (Resolve-NormalizedPathCandidate -Path $OutputRoot)
 }
 
-$matrixRootName = "{0}-{1}-b{2}-s{3}-p{4}-join-reliability-matrix" -f (Get-Date -Format "yyyyMMdd-HHmmss"), $Map, $BotCount, $BotSkill, $ControlPort
+$matrixRootName = Get-CompactMatrixLeafName -Map $Map -BotCount $BotCount -BotSkill $BotSkill -ControlPort $ControlPort
 $matrixRoot = New-UniqueDirectoryPath -ParentPath $resolvedOutputRoot -LeafName $matrixRootName
-$attemptsRoot = Ensure-Directory -Path (Join-Path $matrixRoot "attempts")
+$attemptsRoot = Ensure-Directory -Path (Join-Path $matrixRoot "att")
 $matrixJsonPath = Join-Path $matrixRoot "client_join_reliability_matrix.json"
 $matrixMarkdownPath = Join-Path $matrixRoot "client_join_reliability_matrix.md"
 $certificateJsonPath = Join-Path $matrixRoot "client_join_reliability_certificate.json"
@@ -463,7 +517,7 @@ $probeScriptPath = Join-Path $PSScriptRoot "run_client_join_completion_probe.ps1
 $attemptRows = New-Object System.Collections.Generic.List[object]
 
 for ($attemptIndex = 1; $attemptIndex -le $Attempts; $attemptIndex += 1) {
-    $attemptLabel = "attempt-{0:d2}" -f $attemptIndex
+    $attemptLabel = "a{0:d2}" -f $attemptIndex
     $attemptOutputRoot = Ensure-Directory -Path (Join-Path $attemptsRoot $attemptLabel)
     $startedAtUtc = (Get-Date).ToUniversalTime()
     $probeResult = $null
@@ -488,20 +542,30 @@ for ($attemptIndex = 1; $attemptIndex -le $Attempts; $attemptIndex += 1) {
             -JoinDelaySeconds $JoinDelaySeconds `
             -PollSeconds $PollSeconds `
             -DryRun:$DryRun
-
-        $probeJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeResult -Name "ClientJoinCompletionProbeJsonPath" -Default ""))
-        $probeReport = Read-JsonFile -Path $probeJsonPath
     }
     catch {
         $exceptionMessage = $_.Exception.Message
     }
 
+    $probeJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeResult -Name "ClientJoinCompletionProbeJsonPath" -Default ""))
+    if (-not $probeJsonPath) {
+        $probeJsonPath = Resolve-ExistingPath -Path (Find-LatestProbeReportPath -RootPath $attemptOutputRoot)
+    }
+    $probeReport = Read-JsonFile -Path $probeJsonPath
+
     $completedAtUtc = (Get-Date).ToUniversalTime()
     $elapsedSeconds = [Math]::Round(($completedAtUtc - $startedAtUtc).TotalSeconds, 1)
     $timedOutBudget = ($TimeoutSeconds -gt 0) -and ($elapsedSeconds -gt [double]$TimeoutSeconds)
 
-    $clientPath = [string](Get-ObjectPropertyValue -Object $probeReport.launch_observability -Name "client_path" -Default "")
-    $launchCommand = [string](Get-ObjectPropertyValue -Object $probeReport.launch_observability -Name "launch_command" -Default "")
+    $probeArtifacts = Get-ObjectPropertyValue -Object $probeReport -Name "artifacts" -Default $null
+    $probeLaunchObservability = Get-ObjectPropertyValue -Object $probeReport -Name "launch_observability" -Default $null
+    $probeReadinessObservability = Get-ObjectPropertyValue -Object $probeReport -Name "readiness_observability" -Default $null
+    $probeStages = Get-ObjectPropertyValue -Object $probeReport -Name "stages" -Default $null
+    $probeFinalMetrics = Get-ObjectPropertyValue -Object $probeReport -Name "final_metrics" -Default $null
+    $probeClientProcessLaunchedStage = Get-ObjectPropertyValue -Object $probeStages -Name "client_process_launched" -Default $null
+
+    $clientPath = [string](Get-ObjectPropertyValue -Object $probeLaunchObservability -Name "client_path" -Default "")
+    $launchCommand = [string](Get-ObjectPropertyValue -Object $probeLaunchObservability -Name "launch_command" -Default "")
     $probeRoot = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeReport -Name "probe_root" -Default ""))
     $finalAttemptVerdict = if ($probeReport) { Get-AttemptVerdict -ProbeReport $probeReport } else { "inconclusive-manual-review" }
 
@@ -514,16 +578,20 @@ for ($attemptIndex = 1; $attemptIndex -le $Attempts; $attemptIndex += 1) {
             timed_out_budget = $timedOutBudget
             attempt_output_root = $attemptOutputRoot
             probe_root = $probeRoot
-            probe_report_json = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeReport.artifacts -Name "client_join_completion_probe_json" -Default ""))
-            probe_report_markdown = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeReport.artifacts -Name "client_join_completion_probe_markdown" -Default ""))
+            probe_report_json = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeArtifacts -Name "client_join_completion_probe_json" -Default ""))
+            probe_report_markdown = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $probeArtifacts -Name "client_join_completion_probe_markdown" -Default ""))
             discovered_client_path = $clientPath
             launch_command_used = $launchCommand
-            client_process_launched = [bool](Get-ObjectPropertyValue -Object $probeReport.stages.client_process_launched -Name "reached" -Default $false)
-            server_connection_seen = [bool](Get-ObjectPropertyValue -Object $probeReport.final_metrics -Name "server_connection_seen" -Default $false)
-            entered_the_game_seen = [bool](Get-ObjectPropertyValue -Object $probeReport.final_metrics -Name "entered_the_game_seen" -Default $false)
-            first_human_snapshot_seen = [bool](Get-ObjectPropertyValue -Object $probeReport.final_metrics -Name "first_human_snapshot_seen" -Default $false)
-            human_presence_accumulating = [bool](Get-ObjectPropertyValue -Object $probeReport.final_metrics -Name "human_presence_accumulating" -Default $false)
-            control_lane_human_usable = [bool](Get-ObjectPropertyValue -Object $probeReport.final_metrics -Name "control_lane_human_usable" -Default $false)
+            probe_lane_launch_attempted = [bool](Get-ObjectPropertyValue -Object $probeLaunchObservability -Name "probe_lane_launch_attempted" -Default $false)
+            lane_root_materialized = [bool](Get-ObjectPropertyValue -Object $probeReadinessObservability -Name "lane_root_materialized" -Default $false)
+            port_ready = [bool](Get-ObjectPropertyValue -Object $probeReadinessObservability -Name "port_ready" -Default $false)
+            join_helper_invoked = [bool](Get-ObjectPropertyValue -Object $probeReadinessObservability -Name "join_helper_invoked" -Default $false)
+            client_process_launched = [bool](Get-ObjectPropertyValue -Object $probeClientProcessLaunchedStage -Name "reached" -Default $false)
+            server_connection_seen = [bool](Get-ObjectPropertyValue -Object $probeFinalMetrics -Name "server_connection_seen" -Default $false)
+            entered_the_game_seen = [bool](Get-ObjectPropertyValue -Object $probeFinalMetrics -Name "entered_the_game_seen" -Default $false)
+            first_human_snapshot_seen = [bool](Get-ObjectPropertyValue -Object $probeFinalMetrics -Name "first_human_snapshot_seen" -Default $false)
+            human_presence_accumulating = [bool](Get-ObjectPropertyValue -Object $probeFinalMetrics -Name "human_presence_accumulating" -Default $false)
+            control_lane_human_usable = [bool](Get-ObjectPropertyValue -Object $probeFinalMetrics -Name "control_lane_human_usable" -Default $false)
             raw_probe_verdict = [string](Get-ObjectPropertyValue -Object $probeReport -Name "probe_verdict" -Default "")
             final_attempt_verdict = $finalAttemptVerdict
             narrowest_confirmed_break_point = [string](Get-ObjectPropertyValue -Object $probeReport -Name "narrowest_confirmed_break_point" -Default "")
@@ -540,6 +608,12 @@ $aggregate = [pscustomobject]@{
     total_attempts = $attemptsArray.Count
     count_by_final_attempt_verdict = Get-CountMap -Values ($attemptsArray | ForEach-Object { $_.final_attempt_verdict })
     count_by_raw_probe_verdict = Get-CountMap -Values ($attemptsArray | ForEach-Object { $_.raw_probe_verdict })
+    startup_counts = [pscustomobject]@{
+        lane_launch_attempted = @($attemptsArray | Where-Object { [bool]$_.probe_lane_launch_attempted }).Count
+        lane_root_materialized = @($attemptsArray | Where-Object { [bool]$_.lane_root_materialized }).Count
+        port_ready = @($attemptsArray | Where-Object { [bool]$_.port_ready }).Count
+        join_helper_invoked = @($attemptsArray | Where-Object { [bool]$_.join_helper_invoked }).Count
+    }
     success_counts = [pscustomobject]@{
         entered_the_game = @($attemptsArray | Where-Object { [bool]$_.entered_the_game_seen }).Count
         first_human_snapshot = @($attemptsArray | Where-Object { [bool]$_.first_human_snapshot_seen }).Count

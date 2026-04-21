@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-56
+HLDM-JKBOTTI-AI-STAND-20260415-57
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1089,6 +1089,20 @@ powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -At
 - `partially-reliable-repeat-bounded-probes` means the repaired path is no longer totally blocked, but the repeated suite is still mixed and should stay in bounded-probe mode
 - `ready-for-next-strong-signal-attempt` is intentionally strict: the current helper only certifies ready after every repeated bounded attempt reaches entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without exceeding the matrix time budget
 - this matrix is narrower than the broader scorecard or certification flow: it studies join reliability only and does not fabricate grounded promotion evidence by itself
+
+If the repeated suite still fails before join is even attempted, audit the failed probe root directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_probe_lane_startup.ps1 -ProbeRoot .\lab\logs\eval\join_reliability_matrices\<matrix-root>\att\<attempt>\<probe-root>
+```
+
+- this startup audit is narrower than the later join-completion audit: it only studies lane launch, lane-root materialization, port-ready, and whether the join helper was ever invoked
+- `lane root materialized` means the bounded probe really created the lane capture root and lane metadata under the probe output root
+- `port ready` means the bounded control lane reached a real listener on the target port before the join helper gate
+- `lane-launch-attempted-no-root` means startup never created a lane root; if stderr also saved a missing `Resolve-Path` lane root, that is strong evidence of path-depth startup failure
+- `lane-root-created-no-port-ready` means the lane root exists, but the bounded control lane still never became ready on the target port
+- `port-ready-no-join-invocation` means the bounded control lane cleared startup readiness, but the join helper still was not invoked
+- only return to another full strong-signal conservative attempt after repeated bounded probes reliably clear the startup/materialization gates and any remaining break point is later in the join or telemetry chain
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

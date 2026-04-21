@@ -33,6 +33,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\audit_client_presence.ps1` is available so a failed live pair with a launched local client can be diagnosed stage-by-stage before another real attempt is spent
 - `scripts\run_client_join_completion_probe.ps1` is available so the launch-to-snapshot chain can be reproduced in one bounded control-lane probe before another full strong-signal conservative session is spent
 - `scripts\run_client_join_reliability_matrix.ps1` is available so repeated bounded control-lane probes can be summarized into one reliability matrix and one conservative readiness certificate before another full strong-signal conservative session is spent
+- `scripts\audit_probe_lane_startup.ps1` is available so a failed repeated bounded probe can be audited specifically for lane-root materialization, port-ready, and join-invocation failure before another live spend is justified
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -194,7 +195,12 @@ Default ports and lanes:
 56. When one bounded probe succeeds but another still fails earlier in the chain, run `powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -Attempts 3 -UseLatestMissionContext`.
 57. Read `client_join_reliability_matrix.json` / `.md` for the per-attempt matrix: launched process, server connection, entered-the-game, first human snapshot, human presence accumulation, final attempt verdict, and the exact break point when an attempt fails.
 58. Read `client_join_reliability_certificate.json` / `.md` as the one-line spend decision: `not-ready-repeat-join-hardening`, `partially-reliable-repeat-bounded-probes`, or `ready-for-next-strong-signal-attempt`.
-59. Treat `partially-reliable` as a real improvement, not as readiness. The current readiness policy is intentionally strict: every repeated bounded attempt in the suite must reach entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget before another full strong-signal conservative session is justified.
+59. If the repeated matrix still fails before join is even attempted, run `powershell -NoProfile -File .\scripts\audit_probe_lane_startup.ps1 -ProbeRoot <failed-probe-root>`.
+60. Read `probe_lane_startup_audit.json` / `.md` as the narrow startup/materialization answer: lane launch attempted, lane root materialized, port ready, join helper invoked, and the exact saved stderr/stdout paths that support that answer.
+61. Treat `lane-launch-attempted-no-root` as a startup/materialization failure, not as a later join or telemetry problem. If the audit also reports a missing `Resolve-Path` lane root and a very long expected path, assume path-depth startup failure first.
+62. Treat `lane-root-created-no-port-ready` as a later startup readiness problem: the lane capture root exists, but the control lane never became ready on the target port.
+63. Treat `port-ready-no-join-invocation` as a join orchestration problem: startup cleared, but the join helper still was not called.
+64. Treat `partially-reliable` as a real improvement, not as readiness. The current readiness policy is intentionally strict: every repeated bounded attempt in the suite must reach entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget before another full strong-signal conservative session is justified.
 
 ## What Counts As Insufficient Data
 

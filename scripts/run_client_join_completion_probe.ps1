@@ -64,7 +64,7 @@ function Read-NdjsonFile {
     param([string]$Path)
 
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
-        return @()
+        return ,@()
     }
 
     $records = New-Object System.Collections.Generic.List[object]
@@ -81,7 +81,7 @@ function Read-NdjsonFile {
         }
     }
 
-    return @($records.ToArray())
+    return ,@($records.ToArray())
 }
 
 function Resolve-ExistingPath {
@@ -189,6 +189,35 @@ function New-UniqueDirectoryPath {
 
         $attempt += 1
     }
+}
+
+function Convert-ToLaneSlug {
+    param([string]$Value)
+
+    $sourceValue = if ($null -eq $Value) { "" } else { $Value }
+    $slug = $sourceValue.Trim().ToLowerInvariant()
+    if (-not $slug) {
+        return ""
+    }
+
+    $slug = [regex]::Replace($slug, "[^a-z0-9]+", "-")
+    $slug = $slug.Trim("-")
+    if ($slug.Length -gt 32) {
+        $slug = $slug.Substring(0, 32).Trim("-")
+    }
+
+    return $slug
+}
+
+function Get-CompactProbeLeafName {
+    param(
+        [string]$Map,
+        [int]$BotCount,
+        [int]$BotSkill,
+        [int]$Port
+    )
+
+    return "{0}-jcp-{1}-b{2}-s{3}-p{4}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), (Convert-ToLaneSlug -Value $Map), $BotCount, $BotSkill, $Port
 }
 
 function Test-LocalPortActive {
@@ -418,8 +447,12 @@ function Get-ProbeMarkdown {
     $lines.Add("- Client path: $($Report.launch_observability.client_path)") | Out-Null
     $lines.Add("- Client working directory: $($Report.launch_observability.client_working_directory)") | Out-Null
     $lines.Add("- Join target: $($Report.launch_observability.join_target)") | Out-Null
+    $lines.Add("- Probe lane output root: $($Report.launch_observability.probe_lane_output_root)") | Out-Null
     $lines.Add("- qconsole path: $($Report.launch_observability.qconsole_path)") | Out-Null
     $lines.Add("- debug log path: $($Report.launch_observability.debug_log_path)") | Out-Null
+    if ($Report.readiness_observability.join_helper_skipped_reason) {
+        $lines.Add("- Join helper skipped reason: $($Report.readiness_observability.join_helper_skipped_reason)") | Out-Null
+    }
     $lines.Add("") | Out-Null
     $lines.Add("## Stage Verdicts") | Out-Null
     $lines.Add("") | Out-Null
@@ -490,9 +523,9 @@ else {
     Ensure-Directory -Path (Resolve-NormalizedPathCandidate -Path $OutputRoot)
 }
 
-$probeRootName = "{0}-{1}-b{2}-s{3}-p{4}-control-join-completion-probe" -f (Get-Date -Format "yyyyMMdd-HHmmss"), $Map, $BotCount, $BotSkill, $Port
+$probeRootName = Get-CompactProbeLeafName -Map $Map -BotCount $BotCount -BotSkill $BotSkill -Port $Port
 $probeRoot = New-UniqueDirectoryPath -ParentPath $resolvedOutputRoot -LeafName $probeRootName
-$laneOutputRoot = Ensure-Directory -Path (Join-Path $probeRoot "lane_capture")
+$laneOutputRoot = Ensure-Directory -Path (Join-Path $probeRoot "cap")
 $probeStdoutLog = Join-Path $probeRoot "probe_lane.stdout.log"
 $probeStderrLog = Join-Path $probeRoot "probe_lane.stderr.log"
 $reportJsonPath = Join-Path $probeRoot "client_join_completion_probe.json"
@@ -518,6 +551,10 @@ $qconsoleCopyPath = ""
 $debugLogCopyPath = ""
 $portReady = $false
 $laneRootReady = $false
+$probeStartedAtUtc = ""
+$portWaitFinishedAtUtc = ""
+$laneRootWaitFinishedAtUtc = ""
+$joinSkippedReason = ""
 $controlConnectionEvidence = [pscustomobject]@{
     connected_lines = @()
     entered_game_lines = @()
@@ -548,6 +585,8 @@ try {
     if (-not $DryRun -and -not [bool]$launchPlan.launchable) {
         throw [string]$launchPlan.client_discovery.explanation
     }
+
+    $probeStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
 
     $powershellExe = (Get-Command powershell -ErrorAction Stop).Source
     $evalScriptPath = Join-Path $PSScriptRoot "run_balance_eval.ps1"
@@ -587,10 +626,12 @@ try {
 
         $probeTimeoutSeconds = [Math]::Max(90, $HumanJoinGraceSeconds + $DurationSeconds + 30)
         $portWait = Wait-ForPortActive -Port $Port -ProbeProcess $probeProcess -TimeoutSeconds $probeTimeoutSeconds
+        $portWaitFinishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         $portReady = [bool]$portWait.Ready
         Write-Host "  Port readiness: $($portWait.Explanation)"
 
         $laneRootWait = Wait-ForLaneRoot -LaneOutputRoot $laneOutputRoot -ProbeProcess $probeProcess -TimeoutSeconds $probeTimeoutSeconds
+        $laneRootWaitFinishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         $laneRootReady = [bool]$laneRootWait.Ready
         $probeLaneRoot = $laneRootWait.LaneRoot
         Write-Host "  Lane-root readiness: $($laneRootWait.Explanation)"
@@ -605,6 +646,9 @@ try {
             $joinProcessId = [int](Get-ObjectPropertyValue -Object $joinExecution -Name "ProcessId" -Default 0)
             $joinStartedAtUtc = [string](Get-ObjectPropertyValue -Object $joinExecution -Name "LaunchStartedAtUtc" -Default "")
             Write-Host "  Join helper verdict: $([string](Get-ObjectPropertyValue -Object $joinExecution -Name 'ResultVerdict' -Default ''))"
+        }
+        else {
+            $joinSkippedReason = [string]$portWait.Explanation
         }
 
         $probeDeadlineUtc = (Get-Date).ToUniversalTime().AddSeconds([Math]::Max(90, $HumanJoinGraceSeconds + $DurationSeconds + 30))
@@ -949,8 +993,21 @@ $report = [ordered]@{
         launch_started_at_utc = $joinStartedAtUtc
         probe_lane_command = $evalCommandText
         probe_lane_process_id = if ($null -ne $probeProcess) { $probeProcess.Id } else { 0 }
+        probe_lane_launch_attempted = $null -ne $probeProcess
+        probe_lane_output_root = $laneOutputRoot
         server_log_path_for_correlation = $liveServerStdoutLog
         telemetry_json_path_for_correlation = $liveTelemetryPath
+    }
+    readiness_observability = [ordered]@{
+        probe_started_at_utc = $probeStartedAtUtc
+        port_wait_finished_at_utc = $portWaitFinishedAtUtc
+        lane_root_wait_finished_at_utc = $laneRootWaitFinishedAtUtc
+        lane_root_materialized = $laneRootReady
+        port_ready = $portReady
+        join_helper_invoked = $null -ne $joinExecution
+        join_helper_skipped_reason = $joinSkippedReason
+        lane_output_root = $laneOutputRoot
+        lane_root = $probeLaneRoot
     }
     qconsole_snapshot_before = $preQconsoleSnapshot
     qconsole_snapshot_after = $postQconsoleSnapshot

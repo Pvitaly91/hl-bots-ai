@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-56
+HLDM-JKBOTTI-AI-STAND-20260415-57
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -45,6 +45,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_client_presence.ps1` and `scripts/audit_client_presence.bat` for stage-by-stage diagnosis of local-client participation, including launch, server connection, lane attribution, human snapshot accumulation, and final pair-summary reflection.
 - `scripts/run_client_join_completion_probe.ps1` and `scripts/run_client_join_completion_probe.bat` for the bounded control-lane probe that proves or disproves the missing transition from launched client to entered-the-game, first counted human snapshot, and accumulating saved human presence before another full strong-signal conservative run is spent.
 - `scripts/run_client_join_reliability_matrix.ps1` and `scripts/run_client_join_reliability_matrix.bat` for repeated bounded control-lane probes, per-attempt join-stage classification, and a conservative readiness certificate that says whether the repaired local client path is still not ready, only partially reliable, or ready for the next full strong-signal conservative attempt.
+- `scripts/audit_probe_lane_startup.ps1` and `scripts/audit_probe_lane_startup.bat` for the narrower startup/materialization audit that explains whether a failed bounded probe died before lane-root creation, before port-ready, or before join invocation.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1097,6 +1098,22 @@ Use that matrix differently from the one-off probe:
 - `ready-for-next-strong-signal-attempt` is intentionally strict: the current helper only certifies ready after every repeated bounded attempt reaches entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget
 - this helper differs from `audit_client_presence.ps1`: the audit diagnoses one failed pair or probe, while the reliability matrix asks whether the repaired join path is stable enough to justify another full strong-signal conservative spend
 
+If the repeated suite still fails before join is even attempted, audit the failed probe root directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_probe_lane_startup.ps1 -ProbeRoot .\lab\logs\eval\join_reliability_matrices\<matrix-root>\att\<attempt>\<probe-root>
+```
+
+Use that startup audit differently from the later join-completion audit:
+
+- it is only about probe-lane startup and materialization, not later human-signal quality
+- `lane root materialized` means the bounded control lane actually created its lane capture root and lane metadata under the probe output root
+- `port ready` means the bounded control lane reached a real listener on the target port before the join helper gate
+- `lane-launch-attempted-no-root` means startup died before the lane root existed; a saved `Resolve-Path` missing-directory error plus a very long expected path is strong evidence of path-depth failure
+- `lane-root-created-no-port-ready` means the lane root exists, but the bounded control lane still never reached a ready listener
+- `port-ready-no-join-invocation` means startup cleared the lane-root and port-ready gates, but the join helper still was not called
+- only move back to a full strong-signal conservative session after the repeated bounded suite consistently clears startup/materialization and the remaining break, if any, is later in the join or telemetry chain
+
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 
 ```powershell
@@ -1387,6 +1404,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/prepare_strong_signal_conservative_mission.bat`: `cmd.exe` wrapper for the strong-signal conservative mission helper.
 - `scripts/run_client_join_reliability_matrix.ps1`: bounded repeated control-lane probe harness that aggregates per-attempt join-chain outcomes into a reliability matrix and readiness certificate before another full strong-signal conservative run is spent.
 - `scripts/run_client_join_reliability_matrix.bat`: `cmd.exe` wrapper for the join reliability matrix helper.
+- `scripts/audit_probe_lane_startup.ps1`: bounded probe-lane startup/materialization audit that explains whether a failed repeated probe died before lane-root creation, before port-ready, or before join invocation.
+- `scripts/audit_probe_lane_startup.bat`: `cmd.exe` wrapper for the probe-lane startup audit helper.
 - `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
