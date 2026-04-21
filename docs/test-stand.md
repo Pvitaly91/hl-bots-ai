@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-53
+HLDM-JKBOTTI-AI-STAND-20260415-54
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1043,6 +1043,23 @@ powershell -NoProfile -File .\scripts\join_live_pair_lane.ps1 -Lane Treatment -P
 ```
 
 `run_control_treatment_pair.ps1` now writes the pair-aware helper commands into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`, so the operator can either auto-launch through the helper or keep using the manual `connect` commands.
+
+When the client launches but the pair still records no humans, audit the saved pair before spending another live run:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_client_presence.ps1 -PairRoot .\lab\logs\eval\<pair-root>
+```
+
+Read the audit stage-by-stage:
+
+- `client-not-launched`: no saved join attempt exists
+- `client-launched-process-only`: the helper recorded a process start but server evidence is still missing
+- `client-launched-but-no-server-connect`: `hl.exe` started but lane-local HLDS logs never captured a real client connection
+- `client-connected-but-no-lane-attribution`: a connection exists somewhere, but the saved pair cannot attribute it to control or treatment cleanly
+- `lane-attribution-present-but-no-human-snapshots`: lane-local connection evidence exists, but telemetry, lane summaries, live monitor, and final pair summary still never count a human player
+- `human-snapshots-present-control-only`, `human-snapshots-present-treatment-only`, or `human-snapshots-present-both-lanes`: the signal chain progressed into saved telemetry and summaries
+
+This audit is narrower than certification or the scorecard. It does not decide promotion or behavior quality. It only names where a launched local client stops becoming reflected in saved evidence.
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

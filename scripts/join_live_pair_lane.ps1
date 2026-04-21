@@ -130,11 +130,13 @@ if ($launchPlan.command_text) {
 }
 
 $processId = 0
+$launchStartedAtUtc = ""
 if (-not ($DryRun -or $PrintOnly)) {
     if (-not $launchAllowed) {
         throw $explanation
     }
 
+    $launchStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     $process = Start-Process -FilePath $launchPlan.client_exe_path -ArgumentList $launchPlan.arguments -PassThru
     $processId = $process.Id
     Write-Host "  Half-Life client started with PID $processId"
@@ -155,6 +157,7 @@ if (-not ($DryRun -or $PrintOnly)) {
     ClientExePath = [string]$launchPlan.client_exe_path
     LaunchAllowed = $launchAllowed
     LaunchCommand = [string]$launchPlan.command_text
+    LaunchStartedAtUtc = $launchStartedAtUtc
     DryRun = [bool]($DryRun -or $PrintOnly)
     ProcessId = $processId
 }

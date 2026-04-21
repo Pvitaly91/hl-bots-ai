@@ -30,6 +30,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_strong_signal_conservative_attempt.ps1` is available so the strong-signal mission can be spent through the existing client-assisted conservative workflow while recording whether the run actually added the first counted grounded strong-signal conservative session
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
+- `scripts\audit_client_presence.ps1` is available so a failed live pair with a launched local client can be diagnosed stage-by-stage before another real attempt is spent
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -178,6 +179,11 @@ Default ports and lanes:
 43. Prefer `powershell -NoProfile -File .\scripts\run_strong_signal_conservative_attempt.ps1` when you want that stronger-signal mission spent through the existing client-assisted conservative path and summarized into one pair-local attempt report.
 44. Use `run_current_live_mission.ps1 -MissionPath <strong-signal-mission>` only when you intentionally want the lower-level mission runner without the strong-signal attempt wrapper.
 45. Do not treat the strong-signal mission or the strong-signal attempt wrapper as responsive readiness by itself; a successful run only matters if the saved pair actually counts and adds grounded strong-signal conservative evidence.
+46. If the local client launched but the saved pair still shows `0` human snapshots / `0` human presence seconds, stop and run `powershell -NoProfile -File .\scripts\audit_client_presence.ps1 -PairRoot <pair-root>` before another live attempt.
+47. Read `client_presence_audit.json` / `.md` as a chain diagnosis rather than a scorecard: launch, server connect, lane attribution, human snapshot accumulation, and final pair-summary reflection.
+48. Treat `lane-attribution-present-but-no-human-snapshots` as a very specific break: the lane-local HLDS log saw the client connect, but telemetry and summaries never counted that client as an in-game human participant.
+49. Treat `client-launched-but-no-server-connect` differently: that means the launch path worked, but the server never logged a real connection at all.
+50. Only return to another live conservative attempt after the audit either identifies a fixable observability gap or proves the prior run was simply missing real client participation.
 
 ## What Counts As Insufficient Data
 
