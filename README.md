@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-45
+HLDM-JKBOTTI-AI-STAND-20260415-46
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -33,6 +33,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_human_participation_conservative_attempt.ps1` and `scripts/run_human_participation_conservative_attempt.bat` for the client-assisted conservative attempt wrapper that discovers `hl.exe`, drives sequential control-then-treatment joins when possible, and writes one human-participation audit report on top of the existing first-grounded attempt flow.
 - `scripts/guide_control_to_treatment_switch.ps1` and `scripts/guide_control_to_treatment_switch.bat` for control-first live guidance that reports the exact remaining control-side deficit and only recommends switching once the control lane has actually cleared the mission minimums.
 - `scripts/guide_treatment_patch_window.ps1` and `scripts/guide_treatment_patch_window.bat` for treatment-hold live guidance that reports the exact remaining treatment-side grounded patch deficit and only recommends leaving treatment once human-present patch evidence and the post-patch window are both real.
+- `scripts/guide_conservative_phase_flow.ps1` and `scripts/guide_conservative_phase_flow.bat` for the single sequential phase-director that merges the control-first and treatment-hold gates into one authoritative current phase, next operator action, and pair-local phase-flow artifact.
 - `scripts/run_next_grounded_conservative_cycle.ps1` and `scripts/run_next_grounded_conservative_cycle.bat` for the next milestone wrapper that reuses the client-assisted conservative path and writes one explicit answer about whether the latest live cycle became the second grounded conservative capture, only reduced the gap, or advanced the next objective.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
@@ -844,12 +845,29 @@ powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot
 powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -UseLatest
 ```
 
+## Sequential Conservative Phase Flow
+
+Use `scripts\guide_conservative_phase_flow.ps1` when the operator needs one authoritative live answer instead of manually juggling the separate control and treatment helpers.
+
+- it stays thin by reusing the existing control-first and treatment-hold logic instead of inventing a third threshold engine
+- it reports one current phase, one next operator action, and the exact remaining blocker for that phase
+- `phase-control-stay` means remain in the no-AI control lane
+- `phase-control-ready-switch-now` means control has cleared and it is safe to join treatment
+- `phase-treatment-waiting-for-human-signal`, `phase-treatment-waiting-for-patch`, and `phase-treatment-waiting-for-post-patch-window` mean stay in treatment until the named blocker clears
+- `phase-grounded-ready-finish-now` means the sequential phase flow is satisfied and the live session can finish honestly
+- if a saved pair times out non-grounded, `phase-insufficient-timeout` records which phase and threshold were still missing
+
+```powershell
+powershell -NoProfile -File .\scripts\guide_conservative_phase_flow.ps1 -PairRoot <pair-root> -Once
+powershell -NoProfile -File .\scripts\guide_conservative_phase_flow.ps1 -UseLatest
+```
+
 ## Next Grounded Conservative Cycle
 
 Use `scripts\run_next_grounded_conservative_cycle.ps1` after the first grounded conservative capture already exists and the question is no longer "did we get the first one?" but "did this next live conservative cycle become the second grounded conservative capture, only reduce the gap, or advance the next objective?"
 
 - it stays thin by reusing `run_human_participation_conservative_attempt.ps1` and the same mission/client/monitor/closeout stack instead of creating another evaluation engine
-- because the client-assisted helper now uses both the control-first gate and the treatment-hold gate on the sequential auto-join path, this cycle helper inherits the same "do not leave control early and do not leave treatment before grounded patch evidence is real" policy automatically
+- because the client-assisted helper now surfaces the sequential phase-director on the auto-join path, this cycle helper inherits the same "do not leave control early and do not leave treatment before grounded patch evidence is real" policy automatically
 - it writes `grounded_conservative_cycle_report.json` and `grounded_conservative_cycle_report.md` into the resulting pair root
 - it records the before/after grounded conservative count, grounded-too-quiet count, strong-signal count, responsive gate, and next-live objective from the existing delta layer
 - `second-grounded-conservative-capture` means the live run counted toward promotion and moved grounded conservative sessions from `1` to `2`

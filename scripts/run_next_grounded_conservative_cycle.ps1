@@ -146,6 +146,7 @@ function Get-ReportPaths {
 
 function Get-CycleVerdict {
     param(
+        [bool]$ManualReviewRequired,
         [bool]$CountsTowardPromotion,
         [string]$CertificationVerdict,
         [string]$EvidenceOrigin,
@@ -154,6 +155,10 @@ function Get-CycleVerdict {
         [bool]$ReducedPromotionGap,
         [bool]$ObjectiveAdvanced
     )
+
+    if ($ManualReviewRequired) {
+        return "manual-review-required"
+    }
 
     $grounded = $CountsTowardPromotion -and $CertificationVerdict -eq "certified-grounded-evidence" -and $EvidenceOrigin -notin @("rehearsal", "synthetic")
     if (-not $grounded) {
@@ -179,6 +184,7 @@ function Get-CycleExplanation {
     param(
         [string]$CycleVerdict,
         [string]$HumanAttemptExplanation,
+        [string[]]$GroundedConsistencyIssues,
         [int]$GroundedSessionsBefore,
         [int]$GroundedSessionsAfter,
         [int]$GroundedSessionsDelta,
@@ -189,6 +195,13 @@ function Get-CycleExplanation {
     )
 
     switch ($CycleVerdict) {
+        "manual-review-required" {
+            if ($GroundedConsistencyIssues.Count -gt 0) {
+                return "The latest live conservative cycle needs manual review before it can be treated as a clean milestone advance. Certification counted the pair, but the other evidence layers still disagree: $($GroundedConsistencyIssues -join ' ')"
+            }
+
+            return "The latest live conservative cycle needs manual review before it can be treated as a clean milestone advance."
+        }
         "second-grounded-conservative-capture" {
             return "The latest live conservative cycle became the second certified grounded conservative session. The grounded conservative session count moved from $GroundedSessionsBefore to $GroundedSessionsAfter (delta $GroundedSessionsDelta). The next objective moved from '$NextObjectiveBefore' to '$NextObjectiveAfter'. The responsive gate stayed '$ResponsiveGateBefore' -> '$ResponsiveGateAfter'."
         }
@@ -293,6 +306,7 @@ $missionAttainment = $null
 $dossier = $null
 $certificate = $null
 $pairSummary = $null
+$humanAttemptArtifacts = $null
 $humanAttemptJsonPath = ""
 $humanAttemptMarkdownPath = ""
 $outputPaths = Get-ReportPaths -PairRoot "" -ResolvedRegistryRoot $resolvedRegistryRoot -Stamp $cycleStamp
@@ -348,6 +362,7 @@ try {
     $outputPaths = Get-ReportPaths -PairRoot $pairRoot -ResolvedRegistryRoot $resolvedRegistryRoot -Stamp $cycleStamp
 
     $humanAttemptReport = Read-JsonFile -Path $humanAttemptJsonPath
+    $humanAttemptArtifacts = Get-ObjectPropertyValue -Object $humanAttemptReport -Name "artifacts" -Default $null
     $firstAttemptReport = if ($pairRoot) { Read-JsonFile -Path (Join-Path $pairRoot "first_grounded_conservative_attempt.json") } else { $null }
     $delta = if ($pairRoot) { Read-JsonFile -Path (Join-Path $pairRoot "promotion_gap_delta.json") } else { $null }
     $missionAttainment = if ($pairRoot) { Read-JsonFile -Path (Join-Path $pairRoot "mission_attainment.json") } else { $null }
@@ -412,6 +427,8 @@ $groundedTooQuietDelta = [int](Get-ObjectPropertyValue -Object $delta -Name "gro
 $strongSignalBefore = [int](Get-ObjectPropertyValue -Object $delta -Name "strong_signal_before" -Default 0)
 $strongSignalAfter = [int](Get-ObjectPropertyValue -Object $delta -Name "strong_signal_after" -Default 0)
 $strongSignalDelta = [int](Get-ObjectPropertyValue -Object $delta -Name "strong_signal_delta" -Default 0)
+$groundedConsistencyReviewRequired = [bool](Get-ObjectPropertyValue -Object $humanAttemptReport -Name "grounded_consistency_review_required" -Default $false)
+$groundedConsistencyIssues = @([string[]](Get-ObjectPropertyValue -Object $humanAttemptReport -Name "grounded_consistency_issues" -Default @()))
 $responsiveGateBeforeVerdict = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $delta -Name "responsive_gate_before" -Default $null) -Name "gate_verdict" -Default "")
 $responsiveGateBeforeAction = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $delta -Name "responsive_gate_before" -Default $null) -Name "next_live_action" -Default "")
 $responsiveGateAfterVerdict = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $delta -Name "responsive_gate_after" -Default $null) -Name "gate_verdict" -Default "")
@@ -422,7 +439,10 @@ $nextObjectiveBefore = [string](Get-ObjectPropertyValue -Object $delta -Name "ne
 $nextObjectiveAfter = [string](Get-ObjectPropertyValue -Object $delta -Name "next_objective_after" -Default (Get-ObjectPropertyValue -Object $dossier -Name "current_next_live_objective" -Default ""))
 $reducedPromotionGap = [bool](Get-ObjectPropertyValue -Object $delta -Name "reduced_promotion_gap" -Default ($groundedSessionsDelta -ne 0 -or $groundedTooQuietDelta -ne 0 -or $strongSignalDelta -ne 0))
 $objectiveAdvanced = -not [string]::IsNullOrWhiteSpace($nextObjectiveBefore) -and -not [string]::IsNullOrWhiteSpace($nextObjectiveAfter) -and $nextObjectiveBefore -ne $nextObjectiveAfter
+$phaseFlowJsonFallback = if ($pairRoot) { Resolve-ExistingPath -Path (Join-Path $pairRoot "conservative_phase_flow.json") } else { "" }
+$phaseFlowMarkdownFallback = if ($pairRoot) { Resolve-ExistingPath -Path (Join-Path $pairRoot "conservative_phase_flow.md") } else { "" }
 $cycleVerdict = Get-CycleVerdict `
+    -ManualReviewRequired $groundedConsistencyReviewRequired `
     -CountsTowardPromotion $countsTowardPromotion `
     -CertificationVerdict $certificationVerdict `
     -EvidenceOrigin $evidenceOrigin `
@@ -433,6 +453,7 @@ $cycleVerdict = Get-CycleVerdict `
 $explanation = Get-CycleExplanation `
     -CycleVerdict $cycleVerdict `
     -HumanAttemptExplanation ([string](Get-ObjectPropertyValue -Object $humanAttemptReport -Name "explanation" -Default "")) `
+    -GroundedConsistencyIssues @($groundedConsistencyIssues) `
     -GroundedSessionsBefore $groundedSessionsBefore `
     -GroundedSessionsAfter $groundedSessionsAfter `
     -GroundedSessionsDelta $groundedSessionsDelta `
@@ -473,15 +494,19 @@ $report = [ordered]@{
     responsive_gate_after = $responsiveGateAfter
     next_live_objective_before = $nextObjectiveBefore
     next_live_objective_after = $nextObjectiveAfter
-    became_second_grounded_conservative_capture = ($countsTowardPromotion -and $certificationVerdict -eq "certified-grounded-evidence" -and $groundedSessionsBefore -eq 1 -and $groundedSessionsAfter -ge 2)
+    became_second_grounded_conservative_capture = (-not $groundedConsistencyReviewRequired) -and ($countsTowardPromotion -and $certificationVerdict -eq "certified-grounded-evidence" -and $groundedSessionsBefore -eq 1 -and $groundedSessionsAfter -ge 2)
     reduced_promotion_gap = $reducedPromotionGap
     objective_advanced = $objectiveAdvanced
+    manual_review_required = $groundedConsistencyReviewRequired
+    grounded_consistency_issues = @($groundedConsistencyIssues)
     closeout_stack_reused = Get-ObjectPropertyValue -Object $humanAttemptReport -Name "closeout_stack_reused" -Default $null
     artifacts = [ordered]@{
         grounded_conservative_cycle_report_json = $outputPaths.JsonPath
         grounded_conservative_cycle_report_markdown = $outputPaths.MarkdownPath
         human_participation_conservative_attempt_json = $humanAttemptJsonPath
         human_participation_conservative_attempt_markdown = $humanAttemptMarkdownPath
+        conservative_phase_flow_json = [string](Get-ObjectPropertyValue -Object $humanAttemptArtifacts -Name "conservative_phase_flow_json" -Default $phaseFlowJsonFallback)
+        conservative_phase_flow_markdown = [string](Get-ObjectPropertyValue -Object $humanAttemptArtifacts -Name "conservative_phase_flow_markdown" -Default $phaseFlowMarkdownFallback)
         first_grounded_conservative_attempt_json = if ($pairRoot) { Resolve-ExistingPath -Path (Join-Path $pairRoot "first_grounded_conservative_attempt.json") } else { "" }
         first_grounded_conservative_attempt_markdown = if ($pairRoot) { Resolve-ExistingPath -Path (Join-Path $pairRoot "first_grounded_conservative_attempt.md") } else { "" }
         promotion_gap_delta_json = if ($pairRoot) { Resolve-ExistingPath -Path (Join-Path $pairRoot "promotion_gap_delta.json") } else { "" }

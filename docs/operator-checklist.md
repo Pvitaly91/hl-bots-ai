@@ -20,6 +20,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_next_grounded_conservative_cycle.ps1` is available so the next live conservative cycle can answer whether the latest run became the second grounded conservative capture, only reduced the gap, or advanced the next objective
 - `scripts\guide_control_to_treatment_switch.ps1` is available so the operator can see the exact remaining control-side deficit and wait to switch until control is genuinely safe to leave
 - `scripts\guide_treatment_patch_window.ps1` is available so the operator can see the exact remaining treatment-side grounded patch deficit and wait to leave treatment until human-present patch evidence is genuinely ready
+- `scripts\guide_conservative_phase_flow.ps1` is available so the live sequence can be watched through one current phase and one next action instead of juggling separate phase helpers manually
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -131,11 +132,11 @@ Default ports and lanes:
 4. After the first grounded conservative capture already exists, prefer `scripts\run_next_grounded_conservative_cycle.ps1` for the next live conservative evidence cycle so the before/after counts and objective shift are recorded explicitly.
 5. Read the printed mission brief path, mission-execution preview or pair-root mission-execution path, control join target, treatment join target, join-helper command, monitor status or exact monitor command, pair output root, and final-docket target.
 6. If `hl.exe` was found, prefer `scripts\join_live_pair_lane.ps1 -Lane Control -PairRoot <pair-root>` or the printed port-based join helper command. Otherwise use the printed `connect` command manually.
-7. Start `powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -PairRoot <pair-root> -UseLatest` in a second terminal or rely on the built-in control-first gate inside `scripts\run_human_participation_conservative_attempt.ps1`.
-8. Stay in the control lane until the switch helper says `control-ready-switch-to-treatment`. If it still says `stay-in-control`, do not leave yet; read the exact remaining snapshot and seconds deficit.
+7. Start `powershell -NoProfile -File .\scripts\guide_conservative_phase_flow.ps1 -PairRoot <pair-root> -UseLatest` in a second terminal or rely on the built-in sequential phase-director inside `scripts\run_human_participation_conservative_attempt.ps1`.
+8. Stay in the control lane until the phase-director says `phase-control-ready-switch-now`. If it still says `phase-control-stay`, do not leave yet; read the exact remaining control snapshot and seconds deficit.
 9. Let the runner advance to the treatment lane, then join the treatment lane second with the corresponding join helper or the printed manual `connect` command.
-10. Start `powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot <pair-root> -UseLatest` in a second terminal or rely on the built-in treatment-hold gate inside `scripts\run_human_participation_conservative_attempt.ps1`.
-11. Stay in the treatment lane until the treatment helper says `treatment-grounded-ready`. If it still says `stay-in-treatment-waiting-for-patch-while-humans-present` or `stay-in-treatment-waiting-for-post-patch-window`, do not leave yet.
+10. Stay in the treatment lane until the same phase-director says `phase-grounded-ready-finish-now`. If it still says `phase-treatment-waiting-for-human-signal`, `phase-treatment-waiting-for-patch`, or `phase-treatment-waiting-for-post-patch-window`, do not leave yet.
+11. Use the narrower control-only or treatment-only helpers only when you intentionally need the deeper single-phase detail; the sequential phase-director is now the preferred live workflow.
 12. If the guided runner auto-started the broader live monitor, let it keep polling as a parallel sanity check. If not, run the printed monitor command manually.
 13. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
 14. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.

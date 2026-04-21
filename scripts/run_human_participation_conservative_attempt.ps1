@@ -568,6 +568,63 @@ function Invoke-TreatmentPatchGuide {
     }
 }
 
+function Invoke-ConservativePhaseFlowGuide {
+    param(
+        [string]$PairRoot,
+        [string]$MissionPath,
+        [int]$PollSeconds
+    )
+
+    $guideScriptPath = Join-Path $PSScriptRoot "guide_conservative_phase_flow.ps1"
+    $commandParts = @(
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".\scripts\guide_conservative_phase_flow.ps1",
+        "-PairRoot",
+        $PairRoot,
+        "-Once",
+        "-PollSeconds",
+        [string]$PollSeconds
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($MissionPath)) {
+        $commandParts += @("-MissionPath", $MissionPath)
+    }
+
+    $commandText = ($commandParts | ForEach-Object {
+            if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ }
+        }) -join ' '
+
+    $invokeParams = @{
+        PairRoot = $PairRoot
+        Once = $true
+        PollSeconds = $PollSeconds
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($MissionPath)) {
+        $invokeParams["MissionPath"] = $MissionPath
+    }
+
+    try {
+        $result = & $guideScriptPath @invokeParams
+        return [pscustomobject]@{
+            CommandText = $commandText
+            Result = $result
+            Error = ""
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            CommandText = $commandText
+            Result = $null
+            Error = $_.Exception.Message
+        }
+    }
+}
+
 function Wait-ForTreatmentGroundedReady {
     param(
         [string]$PairRoot,
@@ -872,6 +929,16 @@ function Get-HumanAttemptMarkdown {
         "- Treatment-hold gate used: $($Report.participation.treatment_hold_gate_used)",
         "- Treatment-hold auto-finish enabled: $($Report.participation.auto_finish_when_treatment_grounded_ready)",
         "",
+        "## Sequential Phase Guidance",
+        "",
+        "- Helper command: $($Report.phase_flow_guidance.helper_command)",
+        "- Current phase: $($Report.phase_flow_guidance.current_phase)",
+        "- Current phase verdict: $($Report.phase_flow_guidance.current_phase_verdict)",
+        "- Next operator action: $($Report.phase_flow_guidance.next_operator_action)",
+        "- Switch to treatment allowed: $($Report.phase_flow_guidance.switch_to_treatment_allowed)",
+        "- Finish grounded session allowed: $($Report.phase_flow_guidance.finish_grounded_session_allowed)",
+        "- Phase explanation: $($Report.phase_flow_guidance.explanation)",
+        "",
         "## Lane Participation",
         "",
         "- Control attempted: $($Report.control_lane_join.attempted)",
@@ -921,6 +988,7 @@ function Get-HumanAttemptMarkdown {
         "- Mission attainment verdict: $($Report.mission_attainment_verdict)",
         "- Monitor verdict: $($Report.monitor_verdict)",
         "- Final recovery verdict: $($Report.final_recovery_verdict)",
+        "- Grounded consistency review required: $($Report.grounded_consistency_review_required)",
         "",
         "## Grounding Gaps",
         "",
@@ -943,6 +1011,7 @@ function Get-HumanAttemptMarkdown {
         "## Artifacts",
         "",
         "- Discovery JSON: $($Report.artifacts.local_client_discovery_json)",
+        "- Sequential phase flow JSON: $($Report.artifacts.conservative_phase_flow_json)",
         "- Control-first switch JSON: $($Report.artifacts.control_to_treatment_switch_json)",
         "- Treatment patch window JSON: $($Report.artifacts.treatment_patch_window_json)",
         "- First grounded attempt JSON: $($Report.artifacts.first_grounded_conservative_attempt_json)",
@@ -966,6 +1035,7 @@ $resolvedOutputRoot = if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 else {
     Ensure-Directory -Path (Get-AbsolutePath -Path $OutputRoot -BasePath $repoRoot)
 }
+$phaseFlowPollSeconds = [Math]::Max($ControlGatePollSeconds, $TreatmentGatePollSeconds)
 $resolvedRegistryRoot = Get-RegistryRootDefault -LabRoot $resolvedLabRoot
 $attemptStamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $attemptStartUtc = (Get-Date).ToUniversalTime()
@@ -1125,6 +1195,14 @@ if ($attemptProcess) {
     $pairRoot = Wait-ForPairRoot -Root $resolvedOutputRoot -NotBeforeUtc $attemptStartUtc -AttemptProcess $attemptProcess -TimeoutSeconds 240
     if ($pairRoot) {
         Write-Host "  Pair root discovered: $pairRoot"
+        $phaseFlowExecution = Invoke-ConservativePhaseFlowGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $phaseFlowPollSeconds
+        $phaseFlowReport = Get-ObjectPropertyValue -Object $phaseFlowExecution -Name "Result" -Default $null
+        if ($phaseFlowExecution.CommandText) {
+            Write-Host "  Sequential phase-director: $($phaseFlowExecution.CommandText)"
+        }
+        if ($phaseFlowReport) {
+            Write-Host "  Sequential phase verdict: $($phaseFlowReport.current_phase_verdict)"
+        }
     }
     else {
         Write-Warning "The pair root was not discovered before the background attempt exited or timed out."
@@ -1174,6 +1252,11 @@ if ($attemptProcess) {
                     else {
                         Write-Warning "Control-first gate did not clear before the control lane ended or timed out: $controlSwitchExplanation"
                         Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "control lane gate blocked" | Out-Null
+                    }
+
+                    if ($pairRoot) {
+                        $phaseFlowExecution = Invoke-ConservativePhaseFlowGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $phaseFlowPollSeconds
+                        $phaseFlowReport = Get-ObjectPropertyValue -Object $phaseFlowExecution -Name "Result" -Default $phaseFlowReport
                     }
                 }
                 elseif ($resolvedControlStayMinimum -gt 0) {
@@ -1236,6 +1319,11 @@ if ($attemptProcess) {
                     else {
                         Write-Warning "Treatment-hold gate did not clear before the treatment lane ended or timed out: $treatmentPatchExplanation"
                         Stop-ClientProcessIfRunning -ProcessId $treatmentProcessId -Reason "treatment lane gate blocked" | Out-Null
+                    }
+
+                    if ($pairRoot) {
+                        $phaseFlowExecution = Invoke-ConservativePhaseFlowGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $phaseFlowPollSeconds
+                        $phaseFlowReport = Get-ObjectPropertyValue -Object $phaseFlowExecution -Name "Result" -Default $phaseFlowReport
                     }
                 }
                 elseif ($resolvedTreatmentStayMinimum -gt 0) {
@@ -1370,6 +1458,38 @@ if (-not $treatmentPatchReport -and $treatmentPatchJsonPath) {
     $treatmentPatchReport = Read-JsonFile -Path $treatmentPatchJsonPath
     $treatmentPatchArtifacts = Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "artifacts" -Default $null
 }
+$phaseFlowJsonFallback = if ($pairRoot) { Join-Path $pairRoot "conservative_phase_flow.json" } else { "" }
+$phaseFlowMarkdownFallback = if ($pairRoot) { Join-Path $pairRoot "conservative_phase_flow.md" } else { "" }
+if (-not $phaseFlowReport -and $pairRoot) {
+    $phaseFlowExecution = Invoke-ConservativePhaseFlowGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $phaseFlowPollSeconds
+    $phaseFlowReport = Get-ObjectPropertyValue -Object $phaseFlowExecution -Name "Result" -Default $null
+}
+$phaseFlowArtifacts = Get-ObjectPropertyValue -Object $phaseFlowReport -Name "artifacts" -Default $null
+$phaseFlowJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $phaseFlowArtifacts -Name "conservative_phase_flow_json" -Default $phaseFlowJsonFallback))
+$phaseFlowMarkdownPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $phaseFlowArtifacts -Name "conservative_phase_flow_markdown" -Default $phaseFlowMarkdownFallback))
+if (-not $phaseFlowReport -and $phaseFlowJsonPath) {
+    $phaseFlowReport = Read-JsonFile -Path $phaseFlowJsonPath
+    $phaseFlowArtifacts = Get-ObjectPropertyValue -Object $phaseFlowReport -Name "artifacts" -Default $null
+}
+$phaseFlowExplanation = [string](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "explanation" -Default "")
+$phaseFlowFinishAllowed = [bool](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "finish_grounded_session_allowed" -Default $false)
+$phaseFlowVerdict = [string](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "current_phase_verdict" -Default "")
+$groundedConsistencyIssues = New-Object System.Collections.Generic.List[string]
+if ($countsTowardPromotion -and -not $phaseFlowFinishAllowed) {
+    $groundedConsistencyIssues.Add("Phase-director finish gate stayed closed with verdict '$phaseFlowVerdict'.") | Out-Null
+}
+if ($countsTowardPromotion -and $monitorVerdict -notin @("sufficient-for-tuning-usable-review", "sufficient-for-scorecard")) {
+    $groundedConsistencyIssues.Add("Live monitor never reached a sufficient stop verdict and ended as '$monitorVerdict'.") | Out-Null
+}
+if ($countsTowardPromotion -and $missionVerdict -like "mission-failed*") {
+    $groundedConsistencyIssues.Add("Mission-attainment still reports '$missionVerdict'.") | Out-Null
+}
+$groundedConsistencyReviewRequired = $groundedConsistencyIssues.Count -gt 0
+if ($groundedConsistencyReviewRequired) {
+    $manualReviewRequired = $true
+    $attemptVerdict = "manual-review-required"
+    $explanation = "The client-assisted attempt produced evidence that certification counted toward promotion, but the mission/phase evidence is still inconsistent: $($groundedConsistencyIssues -join ' ') Manual review is required before treating this as a clean grounded conservative capture."
+}
 
 $report = [ordered]@{
     schema_version = 1
@@ -1401,6 +1521,16 @@ $report = [ordered]@{
         auto_switch_when_control_ready = $autoSwitchControlEnabled
         treatment_hold_gate_used = $autoFinishTreatmentEnabled
         auto_finish_when_treatment_grounded_ready = $autoFinishTreatmentEnabled
+    }
+    phase_flow_guidance = [ordered]@{
+        helper_command = [string](Get-ObjectPropertyValue -Object $phaseFlowExecution -Name "CommandText" -Default "")
+        current_phase = [string](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "current_phase" -Default "")
+        current_phase_verdict = [string](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "current_phase_verdict" -Default "")
+        next_operator_action = [string](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "next_operator_action" -Default "")
+        switch_to_treatment_allowed = [bool](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "switch_to_treatment_allowed" -Default $false)
+        finish_grounded_session_allowed = [bool](Get-ObjectPropertyValue -Object $phaseFlowReport -Name "finish_grounded_session_allowed" -Default $false)
+        explanation = $phaseFlowExplanation
+        poll_seconds = $phaseFlowPollSeconds
     }
     control_lane_join = [ordered]@{
         attempted = [bool]($null -ne $controlJoinExecution)
@@ -1466,6 +1596,8 @@ $report = [ordered]@{
     mission_attainment_verdict = $missionVerdict
     monitor_verdict = $monitorVerdict
     final_recovery_verdict = $finalRecoveryVerdict
+    grounded_consistency_review_required = $groundedConsistencyReviewRequired
+    grounded_consistency_issues = @([string[]]$groundedConsistencyIssues.ToArray())
     human_signal = [ordered]@{
         control_human_snapshots_count = $controlHumanSnapshots
         control_seconds_with_human_presence = $controlHumanSeconds
@@ -1483,6 +1615,8 @@ $report = [ordered]@{
         human_participation_conservative_attempt_markdown = $outputPaths.MarkdownPath
         local_client_discovery_json = $discoveryReportJsonPath
         local_client_discovery_markdown = $discoveryReportMarkdownPath
+        conservative_phase_flow_json = $phaseFlowJsonPath
+        conservative_phase_flow_markdown = $phaseFlowMarkdownPath
         control_to_treatment_switch_json = $controlSwitchJsonPath
         control_to_treatment_switch_markdown = $controlSwitchMarkdownPath
         treatment_patch_window_json = $treatmentPatchJsonPath

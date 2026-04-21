@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-45
+HLDM-JKBOTTI-AI-STAND-20260415-46
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -870,12 +870,28 @@ powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot
 powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -UseLatest
 ```
 
+## Sequential Conservative Phase Flow
+
+Use `scripts\guide_conservative_phase_flow.ps1` when the operator needs one live status view for the whole control-to-treatment sequence.
+
+- it reuses the control-first and treatment-hold helpers instead of inventing a new threshold set
+- it reports one current phase, one current verdict, and one next operator action
+- `phase-control-stay` means remain in control
+- `phase-control-ready-switch-now` means control has cleared and it is safe to switch to treatment
+- `phase-treatment-waiting-for-human-signal`, `phase-treatment-waiting-for-patch`, and `phase-treatment-waiting-for-post-patch-window` mean stay in treatment until the named blocker clears
+- `phase-grounded-ready-finish-now` means the sequential phase flow is satisfied and the live session can finish honestly
+
+```powershell
+powershell -NoProfile -File .\scripts\guide_conservative_phase_flow.ps1 -PairRoot <pair-root> -Once
+powershell -NoProfile -File .\scripts\guide_conservative_phase_flow.ps1 -UseLatest
+```
+
 ## Next Grounded Conservative Cycle
 
 Use `scripts\run_next_grounded_conservative_cycle.ps1` once the first grounded conservative session already exists and the next question is whether the newest live conservative run became the second grounded conservative capture or only moved the planner partway forward.
 
 - it reuses the client-assisted conservative attempt path instead of creating a second live-session runner
-- because the client-assisted helper now uses both the control-first switch gate and the treatment-hold gate on the sequential auto-join path, this cycle helper inherits the same control-before-treatment and treatment-before-exit discipline automatically
+- because the client-assisted helper now surfaces the sequential phase-director on the auto-join path, this cycle helper inherits the same control-before-treatment and treatment-before-exit discipline automatically
 - it writes `grounded_conservative_cycle_report.json` and `grounded_conservative_cycle_report.md`
 - `second-grounded-conservative-capture` means the pair counted toward promotion and moved grounded conservative sessions from `1` to `2`
 - `conservative-gap-reduced-but-objective-unchanged` means the pair counted and reduced the gap, but the planner still points at the same next objective after the run
