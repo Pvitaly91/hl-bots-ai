@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-44
+HLDM-JKBOTTI-AI-STAND-20260415-45
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -828,9 +828,9 @@ Use `scripts\run_human_participation_conservative_attempt.ps1` when this machine
 
 - it reuses `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1`
 - it starts the existing first-grounded conservative attempt in the background, waits for the pair root to appear, then launches the local client into the control lane first and the treatment lane second when those ports become active
-- on the sequential auto-join path it now keeps the client in control until the control-first switch gate says control is actually safe to leave
+- on the sequential auto-join path it now keeps the client in control until the control-first switch gate says control is actually safe to leave, then keeps the client in treatment until the treatment-hold gate says grounded patch evidence is actually ready
 - it writes `human_participation_conservative_attempt.json` and `human_participation_conservative_attempt.md`
-- it records exact join commands, the control-first switch helper command and verdict, whether control/treatment auto-launch was attempted, whether saved lane evidence actually showed human presence, and which grounded criteria were still missing if the run stayed non-grounded
+- it records exact join commands, the control-first switch helper command and verdict, the treatment-hold helper command and verdict, whether control/treatment auto-launch was attempted, whether saved lane evidence actually showed human presence, and which grounded criteria were still missing if the run stayed non-grounded
 - it must not claim human-rich grounded evidence just because `hl.exe` launched; the report stays tied to the saved lane evidence and certification output
 
 Run it like this:
@@ -854,12 +854,28 @@ powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -Pai
 powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -UseLatest
 ```
 
+## Treatment-Hold Patch Window Gate
+
+Use `scripts\guide_treatment_patch_window.ps1` when control already cleared and the question becomes whether treatment can finally be left without losing grounded patch evidence.
+
+- it reads the mission thresholds, reuses the current switch/status artifacts, and focuses on treatment-side grounded conditions only
+- it is narrower than `monitor_live_pair_session.ps1`: the broader monitor answers whether the whole pair is sufficient, while this helper answers whether treatment itself has the required human-present patch evidence and post-patch window yet
+- it explicitly reports the remaining treatment-side blocker such as "still short by 2 counted patch-while-human-present events" or "stay for another 20 post-patch seconds"
+- it records when a patch was merely applied during the human window from a recommendation that happened before humans joined, so the operator can see why that still does not count as grounded human-present patch evidence
+
+Run it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot <pair-root> -Once
+powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -UseLatest
+```
+
 ## Next Grounded Conservative Cycle
 
 Use `scripts\run_next_grounded_conservative_cycle.ps1` once the first grounded conservative session already exists and the next question is whether the newest live conservative run became the second grounded conservative capture or only moved the planner partway forward.
 
 - it reuses the client-assisted conservative attempt path instead of creating a second live-session runner
-- because the client-assisted helper now uses the control-first switch gate on the sequential auto-join path, this cycle helper inherits the same control-before-treatment discipline automatically
+- because the client-assisted helper now uses both the control-first switch gate and the treatment-hold gate on the sequential auto-join path, this cycle helper inherits the same control-before-treatment and treatment-before-exit discipline automatically
 - it writes `grounded_conservative_cycle_report.json` and `grounded_conservative_cycle_report.md`
 - `second-grounded-conservative-capture` means the pair counted toward promotion and moved grounded conservative sessions from `1` to `2`
 - `conservative-gap-reduced-but-objective-unchanged` means the pair counted and reduced the gap, but the planner still points at the same next objective after the run

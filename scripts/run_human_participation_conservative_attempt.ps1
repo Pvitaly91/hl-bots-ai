@@ -11,10 +11,13 @@ param(
     [switch]$AutoJoinControl,
     [switch]$AutoJoinTreatment,
     [switch]$AutoSwitchWhenControlReady,
+    [switch]$AutoFinishWhenTreatmentGroundedReady,
     [int]$ControlJoinDelaySeconds = 5,
     [int]$TreatmentJoinDelaySeconds = 5,
     [int]$ControlGatePollSeconds = 5,
+    [int]$TreatmentGatePollSeconds = 5,
     [int]$ControlStaySecondsMinimum = -1,
+    [int]$TreatmentStaySecondsMinimum = -1,
     [int]$ControlStaySeconds = -1,
     [int]$TreatmentStaySeconds = -1
 )
@@ -512,6 +515,163 @@ function Wait-ForControlReadySwitch {
     }
 }
 
+function Invoke-TreatmentPatchGuide {
+    param(
+        [string]$PairRoot,
+        [string]$MissionPath,
+        [int]$PollSeconds
+    )
+
+    $guideScriptPath = Join-Path $PSScriptRoot "guide_treatment_patch_window.ps1"
+    $commandParts = @(
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".\scripts\guide_treatment_patch_window.ps1",
+        "-PairRoot",
+        $PairRoot,
+        "-Once",
+        "-PollSeconds",
+        [string]$PollSeconds
+    )
+    $guideArgs = [ordered]@{
+        PairRoot = $PairRoot
+        Once = $true
+        PollSeconds = $PollSeconds
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($MissionPath)) {
+        $commandParts += @("-MissionPath", $MissionPath)
+        $guideArgs.MissionPath = $MissionPath
+    }
+
+    $commandText = @($commandParts | ForEach-Object { Format-ProcessArgumentText -Value ([string]$_) }) -join " "
+
+    try {
+        $result = & $guideScriptPath @guideArgs
+        return [pscustomobject]@{
+            Attempted = $true
+            CommandText = $commandText
+            Error = ""
+            Result = $result
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Attempted = $true
+            CommandText = $commandText
+            Error = $_.Exception.Message
+            Result = $null
+        }
+    }
+}
+
+function Wait-ForTreatmentGroundedReady {
+    param(
+        [string]$PairRoot,
+        [string]$MissionPath,
+        [int]$PollSeconds,
+        [int]$MinimumStaySeconds,
+        [System.Diagnostics.Process]$AttemptProcess,
+        [int]$TimeoutSeconds = 900
+    )
+
+    $startedAtUtc = (Get-Date).ToUniversalTime()
+    $minimumStayMetAtUtc = $startedAtUtc.AddSeconds([Math]::Max(0, $MinimumStaySeconds))
+    $deadlineUtc = $startedAtUtc.AddSeconds([Math]::Max(60, $TimeoutSeconds))
+    $lastPrintKey = ""
+    $lastExecution = $null
+
+    while ((Get-Date).ToUniversalTime() -lt $deadlineUtc) {
+        $execution = Invoke-TreatmentPatchGuide -PairRoot $PairRoot -MissionPath $MissionPath -PollSeconds $PollSeconds
+        $lastExecution = $execution
+        $guideResult = Get-ObjectPropertyValue -Object $execution -Name "Result" -Default $null
+        $guideError = [string](Get-ObjectPropertyValue -Object $execution -Name "Error" -Default "")
+
+        if ($null -eq $guideResult) {
+            return [pscustomobject]@{
+                ReadyToFinish = $false
+                GuideExecution = $execution
+                Terminal = $true
+                Explanation = if ($guideError) { $guideError } else { "The treatment-hold helper did not produce a readable result." }
+            }
+        }
+
+        $treatmentLane = Get-ObjectPropertyValue -Object $guideResult -Name "treatment_lane" -Default $null
+        $verdict = [string](Get-ObjectPropertyValue -Object $guideResult -Name "current_verdict" -Default "")
+        $treatmentSafeToLeave = [bool](Get-ObjectPropertyValue -Object $guideResult -Name "treatment_safe_to_leave" -Default $false)
+        $minimumStaySatisfied = (Get-Date).ToUniversalTime() -ge $minimumStayMetAtUtc
+
+        $printKey = @(
+            $verdict
+            [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "actual_human_snapshots" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "actual_human_presence_seconds" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "actual_patch_while_human_present_events" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "actual_post_patch_observation_seconds" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "remaining_patch_while_human_present_events" -Default 0)
+            [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "remaining_post_patch_observation_seconds" -Default 0)
+            [string]$minimumStaySatisfied
+        ) -join "|"
+
+        if ($printKey -ne $lastPrintKey) {
+            Write-Host "  Treatment-hold verdict: $verdict"
+            Write-Host "    Treatment snapshots / seconds: $($treatmentLane.actual_human_snapshots) / $($treatmentLane.actual_human_presence_seconds)"
+            Write-Host "    Treatment patch events / remaining: $($treatmentLane.actual_patch_while_human_present_events) / $($treatmentLane.remaining_patch_while_human_present_events)"
+            Write-Host "    Treatment post-patch seconds / remaining: $($treatmentLane.actual_post_patch_observation_seconds) / $($treatmentLane.remaining_post_patch_observation_seconds)"
+            if (-not $minimumStaySatisfied) {
+                $remainingMinimum = [Math]::Ceiling(($minimumStayMetAtUtc - (Get-Date).ToUniversalTime()).TotalSeconds)
+                Write-Host "    Minimum treatment stay still active for about $remainingMinimum second(s)."
+            }
+            Write-Host "    Explanation: $($guideResult.explanation)"
+            $lastPrintKey = $printKey
+        }
+
+        if ($treatmentSafeToLeave -and $minimumStaySatisfied) {
+            return [pscustomobject]@{
+                ReadyToFinish = $true
+                GuideExecution = $execution
+                Terminal = $false
+                Explanation = [string](Get-ObjectPropertyValue -Object $guideResult -Name "explanation" -Default "")
+            }
+        }
+
+        if ($verdict -in @("insufficient-timeout", "blocked-no-active-pair")) {
+            return [pscustomobject]@{
+                ReadyToFinish = $false
+                GuideExecution = $execution
+                Terminal = $true
+                Explanation = [string](Get-ObjectPropertyValue -Object $guideResult -Name "explanation" -Default "")
+            }
+        }
+
+        if ($null -ne $AttemptProcess) {
+            try {
+                if ($AttemptProcess.HasExited) {
+                    return [pscustomobject]@{
+                        ReadyToFinish = $false
+                        GuideExecution = $execution
+                        Terminal = $true
+                        Explanation = "The background conservative attempt exited before the treatment-hold gate cleared."
+                    }
+                }
+            }
+            catch {
+            }
+        }
+
+        Start-Sleep -Seconds $PollSeconds
+    }
+
+    return [pscustomobject]@{
+        ReadyToFinish = $false
+        GuideExecution = $lastExecution
+        Terminal = $true
+        Explanation = "Timed out waiting for the treatment-hold gate to clear within $TimeoutSeconds second(s)."
+    }
+}
+
 function Get-ReportPaths {
     param(
         [string]$PairRoot,
@@ -617,6 +777,9 @@ function Get-HumanAttemptExplanation {
     $missionExplanation = [string](Get-ObjectPropertyValue -Object $MissionAttainment -Name "explanation" -Default "")
     $controlLane = Get-ObjectPropertyValue -Object $PairSummary -Name "control_lane" -Default $null
     $treatmentLane = Get-ObjectPropertyValue -Object $PairSummary -Name "treatment_lane" -Default $null
+    $comparison = Get-ObjectPropertyValue -Object $PairSummary -Name "comparison" -Default $null
+    $comparisonExplanation = [string](Get-ObjectPropertyValue -Object $comparison -Name "comparison_explanation" -Default (Get-ObjectPropertyValue -Object $comparison -Name "comparison_reason" -Default ""))
+    $pairOperatorNote = [string](Get-ObjectPropertyValue -Object $PairSummary -Name "operator_note" -Default "")
     $controlSeconds = [double](Get-ObjectPropertyValue -Object $controlLane -Name "seconds_with_human_presence" -Default 0.0)
     $treatmentSeconds = [double](Get-ObjectPropertyValue -Object $treatmentLane -Name "seconds_with_human_presence" -Default 0.0)
 
@@ -647,6 +810,14 @@ function Get-HumanAttemptExplanation {
                 return "Sequential control-then-treatment participation was observed, but the run still missed grounded conservative criteria: {0}" -f ($MissingTargetDetails -join " ")
             }
 
+            if (-not [string]::IsNullOrWhiteSpace($comparisonExplanation)) {
+                return "Sequential control-then-treatment participation was observed, but the grounded pair still failed because: $comparisonExplanation"
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($pairOperatorNote)) {
+                return $pairOperatorNote
+            }
+
             return $missionExplanation
         }
         "manual-review-required" {
@@ -659,6 +830,14 @@ function Get-HumanAttemptExplanation {
         default {
             if ($MissingTargetDetails.Count -gt 0) {
                 return "The client-assisted attempt stayed non-grounded because it still missed: {0}" -f ($MissingTargetDetails -join " ")
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($comparisonExplanation)) {
+                return $comparisonExplanation
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($pairOperatorNote)) {
+                return $pairOperatorNote
             }
 
             if (-not [string]::IsNullOrWhiteSpace($missionExplanation)) {
@@ -690,6 +869,8 @@ function Get-HumanAttemptMarkdown {
         "- Overlapping participation: $($Report.participation.overlapping)",
         "- Control-first gate used: $($Report.participation.control_first_gate_used)",
         "- Control-first gate auto-switch enabled: $($Report.participation.auto_switch_when_control_ready)",
+        "- Treatment-hold gate used: $($Report.participation.treatment_hold_gate_used)",
+        "- Treatment-hold auto-finish enabled: $($Report.participation.auto_finish_when_treatment_grounded_ready)",
         "",
         "## Lane Participation",
         "",
@@ -714,6 +895,19 @@ function Get-HumanAttemptMarkdown {
         "- Control remaining snapshots at handoff: $($Report.control_switch_guidance.control_remaining_human_snapshots)",
         "- Control remaining seconds at handoff: $($Report.control_switch_guidance.control_remaining_human_presence_seconds)",
         "- Switch explanation: $($Report.control_switch_guidance.explanation)",
+        "",
+        "## Treatment-Hold Guidance",
+        "",
+        "- Helper command: $($Report.treatment_patch_guidance.helper_command)",
+        "- Verdict at release: $($Report.treatment_patch_guidance.verdict_at_release)",
+        "- Safe to leave treatment: $($Report.treatment_patch_guidance.safe_to_leave_treatment)",
+        "- Treatment remaining snapshots at release: $($Report.treatment_patch_guidance.treatment_remaining_human_snapshots)",
+        "- Treatment remaining seconds at release: $($Report.treatment_patch_guidance.treatment_remaining_human_presence_seconds)",
+        "- Treatment remaining patch events at release: $($Report.treatment_patch_guidance.treatment_remaining_patch_while_human_present_events)",
+        "- Treatment remaining post-patch seconds at release: $($Report.treatment_patch_guidance.treatment_remaining_post_patch_observation_seconds)",
+        "- First counted human-present patch timestamp: $($Report.treatment_patch_guidance.first_human_present_patch_timestamp_utc)",
+        "- First patch apply during human window timestamp: $($Report.treatment_patch_guidance.first_patch_apply_during_human_window_timestamp_utc)",
+        "- Treatment-hold explanation: $($Report.treatment_patch_guidance.explanation)",
         "",
         "## Evidence Result",
         "",
@@ -750,6 +944,7 @@ function Get-HumanAttemptMarkdown {
         "",
         "- Discovery JSON: $($Report.artifacts.local_client_discovery_json)",
         "- Control-first switch JSON: $($Report.artifacts.control_to_treatment_switch_json)",
+        "- Treatment patch window JSON: $($Report.artifacts.treatment_patch_window_json)",
         "- First grounded attempt JSON: $($Report.artifacts.first_grounded_conservative_attempt_json)",
         "- Pair summary JSON: $($Report.artifacts.pair_summary_json)",
         "- Grounded evidence certificate JSON: $($Report.artifacts.grounded_evidence_certificate_json)",
@@ -812,6 +1007,12 @@ $autoSwitchControlEnabled = if ($PSBoundParameters.ContainsKey("AutoSwitchWhenCo
 else {
     $JoinSequence -eq "ControlThenTreatment" -and $autoJoinControlEnabled -and $autoJoinTreatmentEnabled
 }
+$autoFinishTreatmentEnabled = if ($PSBoundParameters.ContainsKey("AutoFinishWhenTreatmentGroundedReady")) {
+    [bool]$AutoFinishWhenTreatmentGroundedReady
+}
+else {
+    $JoinSequence -eq "ControlThenTreatment" -and $autoJoinTreatmentEnabled
+}
 $resolvedControlStayMinimum = if ($ControlStaySecondsMinimum -gt 0) {
     $ControlStaySecondsMinimum
 }
@@ -820,6 +1021,21 @@ elseif ($ControlStaySeconds -gt 0) {
 }
 elseif (-not $autoSwitchControlEnabled) {
     [Math]::Max(15, $controlPresenceTarget + 10)
+}
+else {
+    0
+}
+$resolvedTreatmentStayMinimum = if ($TreatmentStaySecondsMinimum -gt 0) {
+    $TreatmentStaySecondsMinimum
+}
+elseif ($autoFinishTreatmentEnabled -and $TreatmentStaySeconds -gt 0) {
+    $TreatmentStaySeconds
+}
+elseif (-not $autoFinishTreatmentEnabled -and $TreatmentStaySeconds -gt 0) {
+    $TreatmentStaySeconds
+}
+elseif (-not $autoFinishTreatmentEnabled) {
+    [Math]::Max(15, $treatmentPresenceTarget + 10)
 }
 else {
     0
@@ -851,6 +1067,10 @@ $controlSwitchExecution = $null
 $controlSwitchReport = $null
 $controlSwitchReadyToLeave = $false
 $controlSwitchExplanation = ""
+$treatmentPatchExecution = $null
+$treatmentPatchReport = $null
+$treatmentPatchReadyToLeave = $false
+$treatmentPatchExplanation = ""
 $controlJoinExecution = $null
 $treatmentJoinExecution = $null
 $controlProcessId = 0
@@ -980,6 +1200,13 @@ if ($attemptProcess) {
         $treatmentPortWait = Wait-ForPortActive -Port $treatmentPort -Label "treatment" -AttemptProcess $attemptProcess -TimeoutSeconds 300
         Write-Host "  Treatment lane port wait: $($treatmentPortWait.Explanation)"
         if ($treatmentPortWait.Ready) {
+            $treatmentPatchPreview = Invoke-TreatmentPatchGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $TreatmentGatePollSeconds
+            $treatmentPatchExecution = $treatmentPatchPreview
+            $treatmentPatchReport = Get-ObjectPropertyValue -Object $treatmentPatchPreview -Name "Result" -Default $null
+            if ($treatmentPatchExecution.CommandText) {
+                Write-Host "  Treatment-hold helper: $($treatmentPatchExecution.CommandText)"
+            }
+
             $treatmentJoinExecution = Invoke-LaneJoinHelper -Lane "Treatment" -PairRoot $pairRoot -ResolvedClientExePath $resolvedClientExePath -Port $treatmentPort -Map $missionMap
             if ($treatmentJoinExecution.Result) {
                 $treatmentProcessId = [int](Get-ObjectPropertyValue -Object $treatmentJoinExecution.Result -Name "ProcessId" -Default 0)
@@ -990,9 +1217,31 @@ if ($attemptProcess) {
                 Write-Warning "Treatment lane join failed: $($treatmentJoinExecution.Error)"
             }
 
-            if ($treatmentProcessId -gt 0 -and $TreatmentStaySeconds -gt 0) {
-                Start-Sleep -Seconds $TreatmentStaySeconds
-                Stop-ClientProcessIfRunning -ProcessId $treatmentProcessId -Reason "treatment lane stay complete" | Out-Null
+            if ($treatmentProcessId -gt 0) {
+                if ($autoFinishTreatmentEnabled) {
+                    $treatmentPatchWait = Wait-ForTreatmentGroundedReady `
+                        -PairRoot $pairRoot `
+                        -MissionPath $missionArtifacts.JsonPath `
+                        -PollSeconds $TreatmentGatePollSeconds `
+                        -MinimumStaySeconds $resolvedTreatmentStayMinimum `
+                        -AttemptProcess $attemptProcess
+                    $treatmentPatchExecution = Get-ObjectPropertyValue -Object $treatmentPatchWait -Name "GuideExecution" -Default $treatmentPatchExecution
+                    $treatmentPatchReport = Get-ObjectPropertyValue -Object $treatmentPatchExecution -Name "Result" -Default $null
+                    $treatmentPatchReadyToLeave = [bool](Get-ObjectPropertyValue -Object $treatmentPatchWait -Name "ReadyToFinish" -Default $false)
+                    $treatmentPatchExplanation = [string](Get-ObjectPropertyValue -Object $treatmentPatchWait -Name "Explanation" -Default "")
+
+                    if ($treatmentPatchReadyToLeave) {
+                        Stop-ClientProcessIfRunning -ProcessId $treatmentProcessId -Reason "treatment-hold gate cleared" | Out-Null
+                    }
+                    else {
+                        Write-Warning "Treatment-hold gate did not clear before the treatment lane ended or timed out: $treatmentPatchExplanation"
+                        Stop-ClientProcessIfRunning -ProcessId $treatmentProcessId -Reason "treatment lane gate blocked" | Out-Null
+                    }
+                }
+                elseif ($resolvedTreatmentStayMinimum -gt 0) {
+                    Start-Sleep -Seconds $resolvedTreatmentStayMinimum
+                    Stop-ClientProcessIfRunning -ProcessId $treatmentProcessId -Reason "treatment lane stay complete" | Out-Null
+                }
             }
         }
         else {
@@ -1106,6 +1355,21 @@ else {
 $controlSwitchArtifacts = Get-ObjectPropertyValue -Object $controlSwitchReport -Name "artifacts" -Default $null
 $controlSwitchJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $controlSwitchArtifacts -Name "control_to_treatment_switch_json" -Default ""))
 $controlSwitchMarkdownPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $controlSwitchArtifacts -Name "control_to_treatment_switch_markdown" -Default ""))
+$treatmentPatchGuidanceExplanation = if (-not [string]::IsNullOrWhiteSpace($treatmentPatchExplanation)) {
+    $treatmentPatchExplanation
+}
+else {
+    [string](Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "explanation" -Default "")
+}
+$treatmentPatchArtifacts = Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "artifacts" -Default $null
+$treatmentPatchJsonFallback = if ($pairRoot) { Join-Path $pairRoot "treatment_patch_window.json" } else { "" }
+$treatmentPatchMarkdownFallback = if ($pairRoot) { Join-Path $pairRoot "treatment_patch_window.md" } else { "" }
+$treatmentPatchJsonPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $treatmentPatchArtifacts -Name "treatment_patch_window_json" -Default $treatmentPatchJsonFallback))
+$treatmentPatchMarkdownPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $treatmentPatchArtifacts -Name "treatment_patch_window_markdown" -Default $treatmentPatchMarkdownFallback))
+if (-not $treatmentPatchReport -and $treatmentPatchJsonPath) {
+    $treatmentPatchReport = Read-JsonFile -Path $treatmentPatchJsonPath
+    $treatmentPatchArtifacts = Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "artifacts" -Default $null
+}
 
 $report = [ordered]@{
     schema_version = 1
@@ -1135,6 +1399,8 @@ $report = [ordered]@{
         local_client_launch_bounded_test_only = $false
         control_first_gate_used = $autoSwitchControlEnabled
         auto_switch_when_control_ready = $autoSwitchControlEnabled
+        treatment_hold_gate_used = $autoFinishTreatmentEnabled
+        auto_finish_when_treatment_grounded_ready = $autoFinishTreatmentEnabled
     }
     control_lane_join = [ordered]@{
         attempted = [bool]($null -ne $controlJoinExecution)
@@ -1176,6 +1442,20 @@ $report = [ordered]@{
         minimum_stay_seconds = $resolvedControlStayMinimum
         poll_seconds = $ControlGatePollSeconds
     }
+    treatment_patch_guidance = [ordered]@{
+        helper_command = [string](Get-ObjectPropertyValue -Object $treatmentPatchExecution -Name "CommandText" -Default "")
+        verdict_at_release = [string](Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "current_verdict" -Default "")
+        safe_to_leave_treatment = [bool](Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_safe_to_leave" -Default $false)
+        treatment_remaining_human_snapshots = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_lane" -Default $null) -Name "remaining_human_snapshots" -Default 0)
+        treatment_remaining_human_presence_seconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_lane" -Default $null) -Name "remaining_human_presence_seconds" -Default 0.0)
+        treatment_remaining_patch_while_human_present_events = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_lane" -Default $null) -Name "remaining_patch_while_human_present_events" -Default 0)
+        treatment_remaining_post_patch_observation_seconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_lane" -Default $null) -Name "remaining_post_patch_observation_seconds" -Default 0.0)
+        first_human_present_patch_timestamp_utc = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_lane" -Default $null) -Name "first_human_present_patch_timestamp_utc" -Default "")
+        first_patch_apply_during_human_window_timestamp_utc = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_lane" -Default $null) -Name "first_patch_apply_during_human_window_timestamp_utc" -Default "")
+        explanation = $treatmentPatchGuidanceExplanation
+        minimum_stay_seconds = $resolvedTreatmentStayMinimum
+        poll_seconds = $TreatmentGatePollSeconds
+    }
     control_lane_verdict = [string](Get-ObjectPropertyValue -Object $controlLane -Name "lane_verdict" -Default "")
     treatment_lane_verdict = [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "lane_verdict" -Default "")
     pair_classification = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "operator_note_classification" -Default "")
@@ -1205,6 +1485,8 @@ $report = [ordered]@{
         local_client_discovery_markdown = $discoveryReportMarkdownPath
         control_to_treatment_switch_json = $controlSwitchJsonPath
         control_to_treatment_switch_markdown = $controlSwitchMarkdownPath
+        treatment_patch_window_json = $treatmentPatchJsonPath
+        treatment_patch_window_markdown = $treatmentPatchMarkdownPath
         first_grounded_conservative_attempt_json = $firstAttemptJsonPath
         first_grounded_conservative_attempt_markdown = $firstAttemptMarkdownPath
         pair_summary_json = $pairSummaryPath
@@ -1233,6 +1515,7 @@ Write-Host "  Pair root: $($report.pair_root)"
 Write-Host "  Control join succeeded: $($report.control_lane_join.join_succeeded)"
 Write-Host "  Control-first switch verdict: $($report.control_switch_guidance.verdict_at_handoff)"
 Write-Host "  Treatment join succeeded: $($report.treatment_lane_join.join_succeeded)"
+Write-Host "  Treatment-hold verdict: $($report.treatment_patch_guidance.verdict_at_release)"
 Write-Host "  Certification verdict: $($report.certification_verdict)"
 Write-Host "  Counts toward promotion: $($report.counts_toward_promotion)"
 Write-Host "  Attempt report JSON: $($outputPaths.JsonPath)"

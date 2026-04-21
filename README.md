@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-44
+HLDM-JKBOTTI-AI-STAND-20260415-45
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -32,6 +32,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_first_grounded_conservative_attempt.ps1` and `scripts/run_first_grounded_conservative_attempt.bat` for the milestone-oriented conservative live attempt wrapper that runs the current mission, reuses continuation if needed, and writes one concise answer about whether the first grounded conservative evidence pack was actually captured.
 - `scripts/run_human_participation_conservative_attempt.ps1` and `scripts/run_human_participation_conservative_attempt.bat` for the client-assisted conservative attempt wrapper that discovers `hl.exe`, drives sequential control-then-treatment joins when possible, and writes one human-participation audit report on top of the existing first-grounded attempt flow.
 - `scripts/guide_control_to_treatment_switch.ps1` and `scripts/guide_control_to_treatment_switch.bat` for control-first live guidance that reports the exact remaining control-side deficit and only recommends switching once the control lane has actually cleared the mission minimums.
+- `scripts/guide_treatment_patch_window.ps1` and `scripts/guide_treatment_patch_window.bat` for treatment-hold live guidance that reports the exact remaining treatment-side grounded patch deficit and only recommends leaving treatment once human-present patch evidence and the post-patch window are both real.
 - `scripts/run_next_grounded_conservative_cycle.ps1` and `scripts/run_next_grounded_conservative_cycle.bat` for the next milestone wrapper that reuses the client-assisted conservative path and writes one explicit answer about whether the latest live cycle became the second grounded conservative capture, only reduced the gap, or advanced the next objective.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
@@ -793,9 +794,9 @@ Use `scripts\run_human_participation_conservative_attempt.ps1` when `hl.exe` is 
 
 - it stays thin by reusing `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1` instead of creating a second mission or closeout engine
 - it launches the existing first-grounded conservative attempt in the background, waits for the pair root to appear, then auto-joins the control lane first and the treatment lane second when those ports become active
-- on the sequential auto-join path it now runs a control-first switch gate, so the helper keeps the local client in control until control really clears the mission thresholds instead of switching on a fixed timer
+- on the sequential auto-join path it now runs both a control-first switch gate and a treatment-hold gate, so the helper keeps the local client in control until control really clears the mission thresholds and then keeps the client in treatment until grounded patch evidence is actually ready
 - it writes `human_participation_conservative_attempt.json` and `human_participation_conservative_attempt.md` into the final pair root when a pair exists
-- it records exact control and treatment join helper commands, the control-first switch helper command and verdict, whether auto-launch was attempted, whether the saved pair evidence shows real human presence in each lane, and whether the run stayed sequential, interrupted, or non-grounded
+- it records exact control and treatment join helper commands, the control-first switch helper command and verdict, the treatment-hold helper command and verdict, whether auto-launch was attempted, whether the saved pair evidence shows real human presence in each lane, and whether the run stayed sequential, interrupted, or non-grounded
 - it never treats `hl.exe` launch by itself as proof of grounded evidence; the report only credits lane participation when the saved pair evidence shows human snapshots or human-presence time
 - it differs from `run_first_grounded_conservative_attempt.ps1`: the first-grounded helper summarizes the mission and closeout result, while the client-assisted helper adds local-client discovery, lane-join execution, and explicit human-participation tracking on top of that same result
 
@@ -826,18 +827,35 @@ powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -Pai
 powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -UseLatest
 ```
 
+## Treatment-Hold Patch Window Gate
+
+Use `scripts\guide_treatment_patch_window.ps1` when control is already good enough and the immediate question becomes "is treatment finally safe to leave, or what exact grounded patch evidence is still missing?"
+
+- it stays narrow: the broader live monitor answers whether the whole pair is sufficient, while this helper answers whether the treatment lane has actually captured grounded patch evidence yet
+- it reads the saved mission thresholds, reuses the control-first switch report, and then focuses on treatment-side grounded conditions only: human snapshots, human presence seconds, counted patch-while-human-present events, and the post-patch observation window
+- it reports the exact remaining treatment-side blocker such as "still short by 2 counted patch-while-human-present events" or "stay for another 20 post-patch seconds"
+- if a patch was merely applied during the human window from an earlier pre-human recommendation, it records that timestamp explicitly without pretending that it satisfied the grounded human-present patch event requirement
+- `treatment-grounded-ready` means treatment is safe to leave; anything else means the operator should stay in treatment or accept that the pair already timed out non-grounded
+
+Use it like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot <pair-root> -Once
+powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -UseLatest
+```
+
 ## Next Grounded Conservative Cycle
 
 Use `scripts\run_next_grounded_conservative_cycle.ps1` after the first grounded conservative capture already exists and the question is no longer "did we get the first one?" but "did this next live conservative cycle become the second grounded conservative capture, only reduce the gap, or advance the next objective?"
 
 - it stays thin by reusing `run_human_participation_conservative_attempt.ps1` and the same mission/client/monitor/closeout stack instead of creating another evaluation engine
-- because the client-assisted helper now uses the control-first gate on the sequential auto-join path, this cycle helper inherits the same "do not leave control early" policy automatically
+- because the client-assisted helper now uses both the control-first gate and the treatment-hold gate on the sequential auto-join path, this cycle helper inherits the same "do not leave control early and do not leave treatment before grounded patch evidence is real" policy automatically
 - it writes `grounded_conservative_cycle_report.json` and `grounded_conservative_cycle_report.md` into the resulting pair root
 - it records the before/after grounded conservative count, grounded-too-quiet count, strong-signal count, responsive gate, and next-live objective from the existing delta layer
 - `second-grounded-conservative-capture` means the live run counted toward promotion and moved grounded conservative sessions from `1` to `2`
 - `conservative-gap-reduced-but-objective-unchanged` means the live run counted and shrank the conservative gap, but the planner still points at the same next objective afterward
 - `conservative-objective-advanced` means the run counted and pushed the planner to a new target such as `collect-grounded-conservative-too-quiet-evidence`
-- if the run still fails, the honest next question is whether control remained the blocker or whether treatment-side human-present patch evidence regressed
+- if the run still fails, the honest next question is whether treatment-side human-present patch evidence or the post-patch observation window remained the blocker
 - it differs from `run_first_grounded_conservative_attempt.ps1`: the first helper answers whether the first grounded conservative pack exists at all, while this cycle helper measures the next milestone after that first capture
 - responsive still stays closed unless the existing gate logic actually changes; the cycle helper does not promote `responsive` by itself
 

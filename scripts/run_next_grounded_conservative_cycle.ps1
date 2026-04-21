@@ -10,8 +10,14 @@ param(
     [string]$JoinSequence = "ControlThenTreatment",
     [switch]$AutoJoinControl,
     [switch]$AutoJoinTreatment,
+    [switch]$AutoSwitchWhenControlReady,
+    [switch]$AutoFinishWhenTreatmentGroundedReady,
     [int]$ControlJoinDelaySeconds = 5,
     [int]$TreatmentJoinDelaySeconds = 5,
+    [int]$ControlGatePollSeconds = 5,
+    [int]$TreatmentGatePollSeconds = 5,
+    [int]$ControlStaySecondsMinimum = -1,
+    [int]$TreatmentStaySecondsMinimum = -1,
     [int]$ControlStaySeconds = -1,
     [int]$TreatmentStaySeconds = -1
 )
@@ -299,6 +305,10 @@ try {
         JoinSequence = $JoinSequence
         ControlJoinDelaySeconds = $ControlJoinDelaySeconds
         TreatmentJoinDelaySeconds = $TreatmentJoinDelaySeconds
+        ControlGatePollSeconds = $ControlGatePollSeconds
+        TreatmentGatePollSeconds = $TreatmentGatePollSeconds
+        ControlStaySecondsMinimum = $ControlStaySecondsMinimum
+        TreatmentStaySecondsMinimum = $TreatmentStaySecondsMinimum
         ControlStaySeconds = $ControlStaySeconds
         TreatmentStaySeconds = $TreatmentStaySeconds
     }
@@ -321,6 +331,14 @@ try {
 
     if ($PSBoundParameters.ContainsKey("AutoJoinTreatment")) {
         $humanAttemptParams["AutoJoinTreatment"] = [bool]$AutoJoinTreatment
+    }
+
+    if ($PSBoundParameters.ContainsKey("AutoSwitchWhenControlReady")) {
+        $humanAttemptParams["AutoSwitchWhenControlReady"] = [bool]$AutoSwitchWhenControlReady
+    }
+
+    if ($PSBoundParameters.ContainsKey("AutoFinishWhenTreatmentGroundedReady")) {
+        $humanAttemptParams["AutoFinishWhenTreatmentGroundedReady"] = [bool]$AutoFinishWhenTreatmentGroundedReady
     }
 
     $humanAttemptResult = & $humanAttemptScriptPath @humanAttemptParams

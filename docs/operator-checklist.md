@@ -19,6 +19,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_human_participation_conservative_attempt.ps1` is available so a launchable local client can be turned into a real control-then-treatment conservative participation attempt with explicit human-participation tracking
 - `scripts\run_next_grounded_conservative_cycle.ps1` is available so the next live conservative cycle can answer whether the latest run became the second grounded conservative capture, only reduced the gap, or advanced the next objective
 - `scripts\guide_control_to_treatment_switch.ps1` is available so the operator can see the exact remaining control-side deficit and wait to switch until control is genuinely safe to leave
+- `scripts\guide_treatment_patch_window.ps1` is available so the operator can see the exact remaining treatment-side grounded patch deficit and wait to leave treatment until human-present patch evidence is genuinely ready
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -133,9 +134,9 @@ Default ports and lanes:
 7. Start `powershell -NoProfile -File .\scripts\guide_control_to_treatment_switch.ps1 -PairRoot <pair-root> -UseLatest` in a second terminal or rely on the built-in control-first gate inside `scripts\run_human_participation_conservative_attempt.ps1`.
 8. Stay in the control lane until the switch helper says `control-ready-switch-to-treatment`. If it still says `stay-in-control`, do not leave yet; read the exact remaining snapshot and seconds deficit.
 9. Let the runner advance to the treatment lane, then join the treatment lane second with the corresponding join helper or the printed manual `connect` command.
-10. If the guided runner auto-started the monitor, let it keep polling. If not, run the printed monitor command manually.
-11. Stay in the treatment lane until the monitor reaches `sufficient-for-tuning-usable-review` or `sufficient-for-scorecard`.
-12. Keep the pair running longer when the monitor still says any `waiting-for-*` verdict.
+10. Start `powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot <pair-root> -UseLatest` in a second terminal or rely on the built-in treatment-hold gate inside `scripts\run_human_participation_conservative_attempt.ps1`.
+11. Stay in the treatment lane until the treatment helper says `treatment-grounded-ready`. If it still says `stay-in-treatment-waiting-for-patch-while-humans-present` or `stay-in-treatment-waiting-for-post-patch-window`, do not leave yet.
+12. If the guided runner auto-started the broader live monitor, let it keep polling as a parallel sanity check. If not, run the printed monitor command manually.
 13. Use auto-stop only when you want the workflow to request an early stop on the sufficient verdicts above and nowhere else.
 14. Use manual stop instead when you want more observation time, operator judgment, or a no-human validation run that should end honestly as insufficient-data.
 15. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
@@ -421,7 +422,7 @@ How to read grounded evidence certification:
 - run `powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1` when this machine can launch `hl.exe` and you want the helper to turn that into a real control-then-treatment participation attempt
 - it reuses `discover_hldm_client.ps1`, `join_live_pair_lane.ps1`, and `run_first_grounded_conservative_attempt.ps1` instead of creating a new mission or closeout path
 - it launches the control lane first, then the treatment lane second, and writes `human_participation_conservative_attempt.json` / `.md`
-- on the sequential auto-join path it now runs the control-first switch gate, so the helper will not leave control early just because a fixed dwell timer expired
+- on the sequential auto-join path it now runs both the control-first switch gate and the treatment-hold gate, so the helper will not leave control early or leave treatment before grounded patch evidence is real
 - the report records whether control join was attempted, whether treatment join was attempted, whether saved lane evidence actually showed human presence in each lane, and which grounded criteria were still missing
 - it must not treat `hl.exe` launch alone as grounded evidence; if the pair still misses human thresholds, treatment patch-while-human-present, or post-patch observation, the report must say so directly
 
@@ -433,11 +434,19 @@ How to read grounded evidence certification:
 - if the control lane is still the blocker, the helper says exactly how many control snapshots and seconds are still missing
 - if the pair already timed out non-grounded, the helper says that directly instead of pretending the operator can still rescue the same control handoff
 
+## Treatment-Hold Patch Window Gate
+
+- run `powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -PairRoot <pair-root> -Once` when you want an explicit answer about whether treatment is safe to leave yet
+- run `powershell -NoProfile -File .\scripts\guide_treatment_patch_window.ps1 -UseLatest` when you want the helper to keep watching the newest pair interactively
+- it differs from `monitor_live_pair_session.ps1`: the broader live monitor answers whether the whole pair is sufficient, while this helper answers whether treatment itself has the grounded patch evidence and post-patch window yet
+- if treatment is still the blocker, the helper says exactly how many counted patch-while-human-present events or post-patch seconds are still missing
+- if the pair already timed out non-grounded, the helper says that directly and records whether a patch was merely applied during the human window from a pre-human recommendation
+
 ## Next Grounded Conservative Cycle
 
 - run `powershell -NoProfile -File .\scripts\run_next_grounded_conservative_cycle.ps1` after the first grounded conservative capture already exists
 - it reuses the client-assisted conservative attempt path and writes `grounded_conservative_cycle_report.json` / `.md`
-- because the client-assisted helper now uses the control-first gate on the sequential auto-join path, this cycle helper inherits the same control-before-treatment discipline automatically
+- because the client-assisted helper now uses both the control-first gate and the treatment-hold gate on the sequential auto-join path, this cycle helper inherits the same control-before-treatment and treatment-before-exit discipline automatically
 - `second-grounded-conservative-capture` means the latest live run counted toward promotion and moved grounded conservative sessions from `1` to `2`
 - `conservative-gap-reduced-but-objective-unchanged` means the run counted and reduced the gap, but the planner still points at the same next objective afterward
 - `conservative-objective-advanced` means the run counted and the next objective moved beyond `collect-more-grounded-conservative-sessions`
