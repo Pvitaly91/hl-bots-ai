@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-46
+HLDM-JKBOTTI-AI-STAND-20260415-47
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -35,6 +35,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/guide_treatment_patch_window.ps1` and `scripts/guide_treatment_patch_window.bat` for treatment-hold live guidance that reports the exact remaining treatment-side grounded patch deficit and only recommends leaving treatment once human-present patch evidence and the post-patch window are both real.
 - `scripts/guide_conservative_phase_flow.ps1` and `scripts/guide_conservative_phase_flow.bat` for the single sequential phase-director that merges the control-first and treatment-hold gates into one authoritative current phase, next operator action, and pair-local phase-flow artifact.
 - `scripts/run_next_grounded_conservative_cycle.ps1` and `scripts/run_next_grounded_conservative_cycle.bat` for the next milestone wrapper that reuses the client-assisted conservative path and writes one explicit answer about whether the latest live cycle became the second grounded conservative capture, only reduced the gap, or advanced the next objective.
+- `scripts/review_counted_pair_evidence.ps1` and `scripts/review_counted_pair_evidence.bat` for counted-pair reconciliation when authoritative evidence and inherited narrative outputs disagree about whether a historically counted pair should still drive promotion math.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -888,6 +889,27 @@ Or with the thin wrapper:
 ```bat
 scripts\run_next_grounded_conservative_cycle.bat
 ```
+
+If the next-live objective becomes `manual-review-before-next-session`, stop spending live sessions and run the counted-pair reconciliation helper first:
+
+```powershell
+powershell -NoProfile -File .\scripts\review_counted_pair_evidence.ps1 -PairRoot .\lab\logs\eval\<pair-root>
+```
+
+That review keeps evidence precedence explicit:
+
+- authoritative: `pair_summary.json`, lane `summary.json`, raw patch histories, mission snapshot/execution, saved control/treatment/phase gate outputs, saved live-monitor state/history, and `grounded_evidence_certificate.json`
+- potentially stale narrative outputs: `mission_attainment.json`, wrapped milestone reports, older markdown summaries, and inherited explanation strings
+
+Use the verdict conservatively:
+
+- `counted-pair-confirmed-grounded`: the pair still counts and no correction is needed
+- `counted-pair-grounded-but-narrative-stale`: the pair still counts, but only safe derived artifacts should be refreshed
+- `counted-pair-needs-manual-review-label`: the pair still counts, but it should keep an explicit manual-review label because authoritative artifacts disagree
+- `counted-pair-needs-registry-correction`: authoritative evidence no longer supports the counted state, so the registry/planner need an explicit correction path
+- `counted-pair-non-grounded`: the pair should not be treated as promotion-counting evidence
+
+The helper writes `counted_pair_review.json` and `counted_pair_review.md` into the pair root by default. It may safely rebuild downstream dossier-style artifacts when the pair remains counted, but it must not fabricate evidence or silently rewrite promotion history.
 
 ## Local Client Discovery And Lane Join
 

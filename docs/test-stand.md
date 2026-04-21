@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-46
+HLDM-JKBOTTI-AI-STAND-20260415-47
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -309,6 +309,7 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - the mission-driven wrapper writes `guided_session\mission_execution.json` and `guided_session\mission_execution.md` so later closeout can compare the mission against the actual launch
 - it writes `guided_session\session_state.json`, `guided_session\final_session_docket.json`, and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the mission execution record, the post-run outcome dossier, and the mission-attainment closeout
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
+- if the planner later says `manual-review-before-next-session`, run `scripts\review_counted_pair_evidence.ps1` on the flagged pair root before another live conservative attempt
 
 Start the live monitor like this while the pair is running:
 
@@ -411,6 +412,7 @@ For the next real human-vs-bot session, prefer this sequence:
 9. Keep the session running when the monitor still says any `waiting-*` verdict, and never treat `insufficient-data-timeout` as tuning proof.
 10. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
 11. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
+12. If the dossier, mission-attainment closeout, or planner says `manual-review-before-next-session`, stop and run `powershell -NoProfile -File .\scripts\review_counted_pair_evidence.ps1 -PairRoot <pair-root>` before another live spend.
 
 Use rehearsal mode for workflow validation only:
 
@@ -420,6 +422,21 @@ Use rehearsal mode for workflow validation only:
 - the saved pair pack, scorecard, final docket, certificate, and rehearsal registry should all make the synthetic rehearsal labeling explicit
 - `grounded_evidence_certificate.json` and `.md` should say the rehearsal pack is excluded from promotion and counts only as workflow validation
 - rehearsal success proves the workflow branch works; it does not prove the live tuning is good
+
+## Counted Pair Review
+
+When a historically counted pair root contains contradictory monitor, gate, certification, or wrapper narratives, run:
+
+```powershell
+powershell -NoProfile -File .\scripts\review_counted_pair_evidence.ps1 -PairRoot .\lab\logs\eval\<pair-root>
+```
+
+The helper keeps evidence precedence explicit:
+
+- authoritative: `pair_summary.json`, lane `summary.json`, `patch_apply_history.ndjson`, `patch_history.ndjson`, mission snapshot/execution, saved gate outputs, saved monitor state/history, and `grounded_evidence_certificate.json`
+- potentially stale narrative outputs: `mission_attainment.json`, wrapped milestone reports, older markdown summaries, and inherited explanation strings
+
+If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 
 The guided runner still delegates the work to the individual helpers above. It does not replace them with a second scoring engine.
 
