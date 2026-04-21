@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-49
+HLDM-JKBOTTI-AI-STAND-20260415-50
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -465,6 +465,19 @@ That helper is narrower than reconciliation:
 - it writes `wrapper_refresh_report.json` / `.md` and `counted_pair_clearance.json` / `.md`
 - it may clear a pair-level manual-review label only when canonical evidence, refreshed wrappers, and the unchanged promotion/gate state all remain consistent
 - it must not silently change registry inclusion, grounded counting, responsive-gate state, or the next-live objective
+
+If the pair-level manual-review label is cleared but the global gate/planner still looks manual-review-oriented, run:
+
+```powershell
+powershell -NoProfile -File .\scripts\recompute_after_pair_clearance.ps1 -PairRoot .\lab\logs\eval\<pair-root>
+```
+
+Post-clearance recompute differs from the earlier helpers:
+
+- counted-pair review asks whether the pair should still count at all
+- metric reconciliation settles canonical counts and safe secondary refresh
+- wrapper refresh fixes stale wrapper narratives and may clear the pair-level manual-review label
+- post-clearance recompute reruns downstream decision artifacts from an additive clearance-aware overlay so you can compare before vs after responsive-gate and next-objective state without rewriting append-only registry history
 
 If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 

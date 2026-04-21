@@ -24,6 +24,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\review_counted_pair_evidence.ps1` is available so a historically counted pair can be reconciled against authoritative evidence before another live spend when the planner says `manual-review-before-next-session`
 - `scripts\reconcile_pair_metrics.ps1` is available so a counted pair with stale treatment-side or monitor-derived metrics can be reconciled and refreshed without casually changing registry or promotion state
 - `scripts\refresh_pair_wrapper_narratives.ps1` is available so the last stale wrapper narratives can be regenerated from canonical evidence and the pair-level manual-review label can be cleared, if safe, without changing registry or promotion state
+- `scripts\recompute_after_pair_clearance.ps1` is available so a cleared counted pair can drive an additive downstream recompute before you assume the global responsive gate or next-live plan really changed
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -163,6 +164,9 @@ Default ports and lanes:
 32. If the canonical metrics now agree and only wrapper narratives remain stale, run `powershell -NoProfile -File .\scripts\refresh_pair_wrapper_narratives.ps1 -PairRoot <pair-root>`.
 33. Read `wrapper_refresh_report.json` / `.md` to confirm which wrapper files were regenerated from canonical sources and which promotion/gate fields were intentionally left unchanged.
 34. Read `counted_pair_clearance.json` / `.md` to see whether the pair-level manual-review label can now be cleared. That clearance is separate from registry correction and must not be treated as a promotion-state rewrite by itself.
+35. If the pair-level label clears but the global responsive gate or next-live objective still looks stale, run `powershell -NoProfile -File .\scripts\recompute_after_pair_clearance.ps1 -PairRoot <pair-root>`.
+36. Read `post_clearance_recompute.json` / `.md` for the authoritative before-vs-after diff on the gate, next objective, grounded conservative counts, too-quiet counts, and strong-signal counts.
+37. Treat the recompute as additive and conservative: it may prove the stale-looking manual-review state was actually still correct, and it still must not rewrite append-only registry history.
 
 ## What Counts As Insufficient Data
 
