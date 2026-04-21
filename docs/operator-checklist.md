@@ -27,6 +27,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\recompute_after_pair_clearance.ps1` is available so a cleared counted pair can drive an additive downstream recompute before you assume the global responsive gate or next-live plan really changed
 - `scripts\review_grounded_evidence_matrix.ps1` is available so the currently counted grounded conservative sessions can be laid out in one explicit matrix before deciding whether the global manual-review state is actually still justified
 - `scripts\prepare_strong_signal_conservative_mission.ps1` is available so the mixed counted grounded conservative state can be turned into one stronger-signal conservative mission before spending another live run
+- `scripts\run_strong_signal_conservative_attempt.ps1` is available so the strong-signal mission can be spent through the existing client-assisted conservative workflow while recording whether the run actually added the first counted grounded strong-signal conservative session
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -174,7 +175,9 @@ Default ports and lanes:
 40. Read `promotion_state_review.json` / `.md` for the global explanation of whether the current responsive gate and next-live objective are actually consistent with that matrix.
 41. If the matrix confirms a genuinely mixed grounded conservative state and zero counted grounded strong-signal conservative sessions, run `powershell -NoProfile -File .\scripts\prepare_strong_signal_conservative_mission.ps1`.
 42. Read `strong_signal_conservative_mission.json` / `.md` before another live spend. That mission keeps the treatment profile conservative, raises the evidence targets above the grounded minimum, and explains how the next run could disambiguate "appropriately conservative" vs "too quiet".
-43. Launch that mission explicitly with `run_current_live_mission.ps1 -MissionPath <strong-signal-mission>` or the same `-MissionPath` pattern on the client-assisted conservative wrappers. Do not treat the strong-signal mission itself as responsive readiness; it only plans a more discriminating conservative run.
+43. Prefer `powershell -NoProfile -File .\scripts\run_strong_signal_conservative_attempt.ps1` when you want that stronger-signal mission spent through the existing client-assisted conservative path and summarized into one pair-local attempt report.
+44. Use `run_current_live_mission.ps1 -MissionPath <strong-signal-mission>` only when you intentionally want the lower-level mission runner without the strong-signal attempt wrapper.
+45. Do not treat the strong-signal mission or the strong-signal attempt wrapper as responsive readiness by itself; a successful run only matters if the saved pair actually counts and adds grounded strong-signal conservative evidence.
 
 ## What Counts As Insufficient Data
 

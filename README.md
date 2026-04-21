@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-52
+HLDM-JKBOTTI-AI-STAND-20260415-53
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -41,6 +41,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/recompute_after_pair_clearance.ps1` and `scripts/recompute_after_pair_clearance.bat` for the clearance-aware downstream recompute that builds an additive overlay registry view, reruns summary/gate/planner artifacts against it, and shows whether the cleared pair actually changes the current responsive gate or next-live objective.
 - `scripts/review_grounded_evidence_matrix.ps1` and `scripts/review_grounded_evidence_matrix.bat` for the global grounded-evidence matrix and promotion-state review that explain why the current gate/objective remain what they are after pair-level cleanup is finished.
 - `scripts/prepare_strong_signal_conservative_mission.ps1` and `scripts/prepare_strong_signal_conservative_mission.bat` for the specialized conservative mission brief that raises the evidence targets above the grounded minimum when the counted grounded evidence is mixed and the next run needs to be more discriminating than another generic grounded session.
+- `scripts/run_strong_signal_conservative_attempt.ps1` and `scripts/run_strong_signal_conservative_attempt.bat` for the strong-signal conservative live attempt wrapper that consumes the specialized strong-signal mission, reuses the client-assisted conservative path, and writes one explicit answer about whether the run became the first counted grounded strong-signal conservative session or left the evidence state mixed.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -991,6 +992,20 @@ Use that mission when the matrix says:
 - the counted grounded conservative evidence is mixed
 - zero counted grounded strong-signal conservative sessions exist
 - the next useful answer is "does richer conservative evidence repeat appropriately-conservative behavior or repeat too-quiet behavior?"
+
+When you are ready to spend that live run, use the strong-signal conservative attempt wrapper:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_strong_signal_conservative_attempt.ps1
+```
+
+Use it differently from the earlier generic conservative wrappers:
+
+- it reads `strong_signal_conservative_mission.json` by default, so the stronger control/treatment human-signal, patch-window, and post-patch observation targets stay explicit for the run
+- it still reuses `run_human_participation_conservative_attempt.ps1`, the local client discovery/join helpers, the sequential phase guidance, the live monitor, certification, mission attainment, outcome dossier, registry summary, responsive gate, next-live planner, and grounded-evidence matrix
+- it writes `strong_signal_conservative_attempt.json` and `strong_signal_conservative_attempt.md` into the pair root so the operator can see the mission used, whether the run drifted, the before/after strong-signal counts, the before/after evidence mix, and whether the mixed state actually narrowed
+- `first-strong-signal-conservative-capture` means the pair both counted toward promotion and added a grounded strong-signal conservative row to the matrix; anything below that must stay explicit as non-strong-signal, still-mixed, insufficient-human-signal, interrupted-and-recovered, or manual-review-required
+- even a successful strong-signal conservative attempt does not open `responsive` automatically; it only strengthens the keep-conservative or future-responsive case depending on the saved treatment-behavior assessment
 
 Use the verdict conservatively:
 
