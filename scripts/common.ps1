@@ -596,6 +596,16 @@ function Get-HalfLifeClientLaunchPlan {
 
     $discovery = Get-HalfLifeClientDiscovery -PreferredPath $PreferredClientPath
     $joinInfo = Get-HldsJoinInfo -Port $Port -ServerHost $ServerHost
+    $clientWorkingDirectory = ""
+    $qconsolePath = ""
+    $debugLogPath = ""
+    if (-not [string]::IsNullOrWhiteSpace([string]$discovery.client_path)) {
+        $clientWorkingDirectory = Split-Path -Path ([string]$discovery.client_path) -Parent
+        if (-not [string]::IsNullOrWhiteSpace($clientWorkingDirectory)) {
+            $qconsolePath = Join-Path $clientWorkingDirectory "qconsole.log"
+            $debugLogPath = Join-Path $clientWorkingDirectory "debug.log"
+        }
+    }
     $arguments = @(
         "-game", $Game,
         "+connect", $joinInfo.LoopbackAddress
@@ -611,6 +621,9 @@ function Get-HalfLifeClientLaunchPlan {
     return [pscustomobject]@{
         client_discovery = $discovery
         client_exe_path = [string]$discovery.client_path
+        client_working_directory = $clientWorkingDirectory
+        qconsole_path = $qconsolePath
+        debug_log_path = $debugLogPath
         join_info = $joinInfo
         arguments = $arguments
         command_text = $commandText

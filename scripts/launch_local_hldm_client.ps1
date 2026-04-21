@@ -19,24 +19,43 @@ if (-not $launchPlan.launchable) {
 
 Write-Host "Half-Life client target:"
 Write-Host "  Executable: $clientExe"
+Write-Host "  Working directory: $($launchPlan.client_working_directory)"
 Write-Host "  Join target: $($joinInfo.LoopbackAddress)"
 Write-Host "  Console command: $($joinInfo.ConsoleCommand)"
 Write-Host "  Discovery verdict: $($launchPlan.client_discovery.discovery_verdict)"
+if ($launchPlan.qconsole_path) {
+    Write-Host "  qconsole.log: $($launchPlan.qconsole_path)"
+}
+if ($launchPlan.debug_log_path) {
+    Write-Host "  debug.log: $($launchPlan.debug_log_path)"
+}
 
 if ($DryRun) {
     [pscustomobject]@{
         ClientExePath = $clientExe
+        ClientWorkingDirectory = [string]$launchPlan.client_working_directory
         ClientDiscoveryVerdict = [string]$launchPlan.client_discovery.discovery_verdict
         JoinTarget = $joinInfo.LoopbackAddress
         ConsoleCommand = $joinInfo.ConsoleCommand
         Arguments = $arguments
         LaunchCommand = [string]$launchPlan.command_text
+        QConsolePath = [string]$launchPlan.qconsole_path
+        DebugLogPath = [string]$launchPlan.debug_log_path
         DryRun = $true
     }
     return
 }
 
-$process = Start-Process -FilePath $clientExe -ArgumentList $arguments -PassThru
+$startProcessParams = @{
+    FilePath = $clientExe
+    ArgumentList = $arguments
+    PassThru = $true
+}
+if (-not [string]::IsNullOrWhiteSpace($launchPlan.client_working_directory)) {
+    $startProcessParams["WorkingDirectory"] = $launchPlan.client_working_directory
+}
+
+$process = Start-Process @startProcessParams
 
 if ($PassThru) {
     $process

@@ -123,10 +123,17 @@ if ($joinInstructionsPath) {
 }
 Write-Host "  Client discovery verdict: $($launchPlan.client_discovery.discovery_verdict)"
 Write-Host "  Client path: $($launchPlan.client_exe_path)"
+Write-Host "  Client working directory: $($launchPlan.client_working_directory)"
 Write-Host "  Launch allowed: $launchAllowed"
 Write-Host "  Explanation: $explanation"
 if ($launchPlan.command_text) {
     Write-Host "  Launch command: $($launchPlan.command_text)"
+}
+if ($launchPlan.qconsole_path) {
+    Write-Host "  Client qconsole log: $($launchPlan.qconsole_path)"
+}
+if ($launchPlan.debug_log_path) {
+    Write-Host "  Client debug log: $($launchPlan.debug_log_path)"
 }
 
 $processId = 0
@@ -137,7 +144,15 @@ if (-not ($DryRun -or $PrintOnly)) {
     }
 
     $launchStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    $process = Start-Process -FilePath $launchPlan.client_exe_path -ArgumentList $launchPlan.arguments -PassThru
+    $startProcessParams = @{
+        FilePath = $launchPlan.client_exe_path
+        ArgumentList = $launchPlan.arguments
+        PassThru = $true
+    }
+    if (-not [string]::IsNullOrWhiteSpace($launchPlan.client_working_directory)) {
+        $startProcessParams["WorkingDirectory"] = $launchPlan.client_working_directory
+    }
+    $process = Start-Process @startProcessParams
     $processId = $process.Id
     Write-Host "  Half-Life client started with PID $processId"
 }
@@ -155,6 +170,9 @@ if (-not ($DryRun -or $PrintOnly)) {
     JoinInstructionsPath = $joinInstructionsPath
     ClientDiscoveryVerdict = [string]$launchPlan.client_discovery.discovery_verdict
     ClientExePath = [string]$launchPlan.client_exe_path
+    ClientWorkingDirectory = [string]$launchPlan.client_working_directory
+    QConsolePath = [string]$launchPlan.qconsole_path
+    DebugLogPath = [string]$launchPlan.debug_log_path
     LaunchAllowed = $launchAllowed
     LaunchCommand = [string]$launchPlan.command_text
     LaunchStartedAtUtc = $launchStartedAtUtc

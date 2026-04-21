@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-54
+HLDM-JKBOTTI-AI-STAND-20260415-55
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -43,6 +43,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/prepare_strong_signal_conservative_mission.ps1` and `scripts/prepare_strong_signal_conservative_mission.bat` for the specialized conservative mission brief that raises the evidence targets above the grounded minimum when the counted grounded evidence is mixed and the next run needs to be more discriminating than another generic grounded session.
 - `scripts/run_strong_signal_conservative_attempt.ps1` and `scripts/run_strong_signal_conservative_attempt.bat` for the strong-signal conservative live attempt wrapper that consumes the specialized strong-signal mission, reuses the client-assisted conservative path, and writes one explicit answer about whether the run became the first counted grounded strong-signal conservative session or left the evidence state mixed.
 - `scripts/audit_client_presence.ps1` and `scripts/audit_client_presence.bat` for stage-by-stage diagnosis of local-client participation, including launch, server connection, lane attribution, human snapshot accumulation, and final pair-summary reflection.
+- `scripts/run_client_join_completion_probe.ps1` and `scripts/run_client_join_completion_probe.bat` for the bounded control-lane probe that proves or disproves the missing transition from launched client to entered-the-game, first counted human snapshot, and accumulating saved human presence before another full strong-signal conservative run is spent.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1062,6 +1063,23 @@ Use that audit differently from certification or the scorecard:
 - `client-connected-but-no-lane-attribution` means a connection exists but the saved pair artifacts do not tie it to a lane cleanly
 - `lane-attribution-present-but-no-human-snapshots` means the pair already preserved lane-local connection evidence, but telemetry and summaries never counted a human player
 - if the audit stays `inconclusive-manual-review`, the logs are too weak to name a narrower break point honestly
+
+When the audit narrows the problem to the join-completion boundary, run the bounded control-lane probe before another full live conservative session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1
+```
+
+Use that probe differently from the broader audit:
+
+- it is a bounded reproduction, not a pair-session scorecard or certification path
+- it reuses the existing no-AI control lane, local client discovery, and lane-join helper instead of inventing a new launcher
+- it records the exact completion chain stage-by-stage: `client-discovered`, `launch-command-prepared`, `client-process-launched`, `server-connection-seen`, `entered-the-game-seen`, `first-human-snapshot-seen`, `human-presence-accumulating`, and `control-lane-human-usable`
+- `connected-but-not-entered-game` means the server saw the socket connect, but there is still no trusted in-game join state
+- `entered-game-but-no-human-snapshot` means the join completed far enough to enter the game, but saved telemetry still never counted a human player
+- `human-snapshot-seen-but-presence-does-not-accumulate` means the first snapshot appeared, but saved human-presence time still failed to build into usable evidence
+- the system is ready to spend another full strong-signal conservative session only after the probe shows `entered-the-game-seen` or equivalent, at least one counted human snapshot, and human presence beginning to accumulate in saved control-lane evidence
+- this probe comes before another full evidence-collection run because it isolates join completion without wasting a treatment lane or a full strong-signal mission on a launch-path problem
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 

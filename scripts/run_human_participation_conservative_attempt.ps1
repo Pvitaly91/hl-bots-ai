@@ -944,12 +944,18 @@ function Get-HumanAttemptMarkdown {
         "- Control attempted: $($Report.control_lane_join.attempted)",
         "- Control helper command: $($Report.control_lane_join.helper_command)",
         "- Control launch command: $($Report.control_lane_join.launch_command)",
+        "- Control client working directory: $($Report.control_lane_join.client_working_directory)",
+        "- Control qconsole path: $($Report.control_lane_join.qconsole_path)",
+        "- Control debug log path: $($Report.control_lane_join.debug_log_path)",
         "- Control join succeeded: $($Report.control_lane_join.join_succeeded)",
         "- Control human snapshots: $($Report.control_lane_join.human_snapshots_count)",
         "- Control human seconds: $($Report.control_lane_join.seconds_with_human_presence)",
         "- Treatment attempted: $($Report.treatment_lane_join.attempted)",
         "- Treatment helper command: $($Report.treatment_lane_join.helper_command)",
         "- Treatment launch command: $($Report.treatment_lane_join.launch_command)",
+        "- Treatment client working directory: $($Report.treatment_lane_join.client_working_directory)",
+        "- Treatment qconsole path: $($Report.treatment_lane_join.qconsole_path)",
+        "- Treatment debug log path: $($Report.treatment_lane_join.debug_log_path)",
         "- Treatment join succeeded: $($Report.treatment_lane_join.join_succeeded)",
         "- Treatment human snapshots: $($Report.treatment_lane_join.human_snapshots_count)",
         "- Treatment human seconds: $($Report.treatment_lane_join.seconds_with_human_presence)",
@@ -1508,6 +1514,9 @@ $report = [ordered]@{
         client_path_used = $resolvedClientExePath
         client_path_source = $clientPathSource
         launchable_for_local_lane_join = $clientLaunchable
+        client_working_directory = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "ClientWorkingDirectory" -Default "")
+        qconsole_path = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "QConsolePath" -Default "")
+        debug_log_path = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "DebugLogPath" -Default "")
         explanation = [string](Get-ObjectPropertyValue -Object $discoveryReport -Name "explanation" -Default "")
         discovery_json = $discoveryReportJsonPath
         discovery_markdown = $discoveryReportMarkdownPath
@@ -1539,6 +1548,9 @@ $report = [ordered]@{
         helper_result_verdict = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "ResultVerdict" -Default "")
         launch_command = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "LaunchCommand" -Default "")
         launch_started_at_utc = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "LaunchStartedAtUtc" -Default "")
+        client_working_directory = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "ClientWorkingDirectory" -Default "")
+        qconsole_path = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "QConsolePath" -Default "")
+        debug_log_path = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "DebugLogPath" -Default "")
         launch_started = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "ProcessId" -Default 0) -gt 0
         join_succeeded = $controlHumanSignal
         join_target = [string](Get-ObjectPropertyValue -Object $controlLane -Name "join_target" -Default ("127.0.0.1:{0}" -f $controlPort))
@@ -1555,6 +1567,9 @@ $report = [ordered]@{
         helper_result_verdict = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "ResultVerdict" -Default "")
         launch_command = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "LaunchCommand" -Default "")
         launch_started_at_utc = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "LaunchStartedAtUtc" -Default "")
+        client_working_directory = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "ClientWorkingDirectory" -Default "")
+        qconsole_path = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "QConsolePath" -Default "")
+        debug_log_path = [string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "DebugLogPath" -Default "")
         launch_started = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "ProcessId" -Default 0) -gt 0
         join_succeeded = $treatmentHumanSignal
         join_target = [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "join_target" -Default ("127.0.0.1:{0}" -f $treatmentPort))

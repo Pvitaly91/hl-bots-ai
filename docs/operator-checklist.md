@@ -31,6 +31,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\audit_client_presence.ps1` is available so a failed live pair with a launched local client can be diagnosed stage-by-stage before another real attempt is spent
+- `scripts\run_client_join_completion_probe.ps1` is available so the launch-to-snapshot chain can be reproduced in one bounded control-lane probe before another full strong-signal conservative session is spent
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -183,7 +184,12 @@ Default ports and lanes:
 47. Read `client_presence_audit.json` / `.md` as a chain diagnosis rather than a scorecard: launch, server connect, lane attribution, human snapshot accumulation, and final pair-summary reflection.
 48. Treat `lane-attribution-present-but-no-human-snapshots` as a very specific break: the lane-local HLDS log saw the client connect, but telemetry and summaries never counted that client as an in-game human participant.
 49. Treat `client-launched-but-no-server-connect` differently: that means the launch path worked, but the server never logged a real connection at all.
-50. Only return to another live conservative attempt after the audit either identifies a fixable observability gap or proves the prior run was simply missing real client participation.
+50. When the audit still points at the join-completion boundary, run `powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1` before another full strong-signal conservative session.
+51. Read `client_join_completion_probe.json` / `.md` as the bounded control-lane answer to whether the chain reached `entered-the-game-seen`, `first-human-snapshot-seen`, `human-presence-accumulating`, and `control-lane-human-usable`.
+52. Treat `connected-but-not-entered-game` as a launch/join completion problem, not as a tuning or certification problem.
+53. Treat `entered-game-but-no-human-snapshot` as a telemetry-ingestion problem: the client got in, but saved control-lane evidence still never counted a human.
+54. Treat `human-snapshot-seen-but-presence-does-not-accumulate` as a narrower accumulation problem: the first saved human snapshot appeared, but the saved presence window still stayed too weak.
+55. Only return to another full strong-signal conservative attempt after the audit or bounded probe identifies a trustworthy entered-the-game to first-human-snapshot path and human presence starts accumulating in saved control-lane evidence.
 
 ## What Counts As Insufficient Data
 
@@ -495,6 +501,10 @@ How to read grounded evidence certification:
 - the pair runner now writes the helper commands into `control_join_instructions.txt`, `treatment_join_instructions.txt`, and `pair_join_instructions.txt`
 - if automatic local launch is unavailable, proceed manually with the printed loopback or LAN `connect` command instead of pretending the machine is fully join-ready
 - when you want the supported sequential control-then-treatment path on top of the first grounded conservative wrapper, run `powershell -NoProfile -File .\scripts\run_human_participation_conservative_attempt.ps1`
+- when launch succeeded but saved human signal still stayed at zero, run `powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1` before another full live conservative session
+- `connected-but-not-entered-game` means the server saw the connection, but the saved control-lane evidence still has no trusted in-game join state
+- `entered-game-but-no-human-snapshot` means the join completed, but saved control-lane telemetry still never counted a human player
+- the system is only ready for another full strong-signal conservative session after the bounded probe shows `entered-the-game-seen` or equivalent, at least one counted human snapshot, and accumulating saved human presence
 
 ## Latest-Session Delta
 

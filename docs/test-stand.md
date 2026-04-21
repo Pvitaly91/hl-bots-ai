@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-54
+HLDM-JKBOTTI-AI-STAND-20260415-55
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1060,6 +1060,22 @@ Read the audit stage-by-stage:
 - `human-snapshots-present-control-only`, `human-snapshots-present-treatment-only`, or `human-snapshots-present-both-lanes`: the signal chain progressed into saved telemetry and summaries
 
 This audit is narrower than certification or the scorecard. It does not decide promotion or behavior quality. It only names where a launched local client stops becoming reflected in saved evidence.
+
+When the audit already narrows the issue to join completion, run the bounded control-lane probe before another full conservative session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1
+```
+
+Read that probe as a smaller reproduction, not as another evidence-collection run:
+
+- it reuses the no-AI control lane, the same local client discovery path, and the same lane-join helper
+- it reports the exact completion chain stage-by-stage: `client-discovered`, `launch-command-prepared`, `client-process-launched`, `server-connection-seen`, `entered-the-game-seen`, `first-human-snapshot-seen`, `human-presence-accumulating`, and `control-lane-human-usable`
+- `connected-but-not-entered-game` means the server saw the connection, but the saved control-lane evidence still has no trusted in-game join state
+- `entered-game-but-no-human-snapshot` means the client joined the game, but the saved control-lane telemetry still never counted a human player
+- `human-snapshot-seen-but-presence-does-not-accumulate` means the first counted human snapshot exists, but the saved human-presence window still fails to build into usable evidence
+- the system is ready to spend another full strong-signal conservative session only after this probe shows the entered-the-game boundary, at least one counted human snapshot, and human presence starting to accumulate in saved control-lane evidence
+- the bounded probe comes first because it isolates the join/signal chain without wasting a treatment lane or another full strong-signal mission on a launch-path defect
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 
