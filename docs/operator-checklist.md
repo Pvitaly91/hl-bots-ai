@@ -32,6 +32,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\audit_client_presence.ps1` is available so a failed live pair with a launched local client can be diagnosed stage-by-stage before another real attempt is spent
 - `scripts\run_client_join_completion_probe.ps1` is available so the launch-to-snapshot chain can be reproduced in one bounded control-lane probe before another full strong-signal conservative session is spent
+- `scripts\run_client_join_reliability_matrix.ps1` is available so repeated bounded control-lane probes can be summarized into one reliability matrix and one conservative readiness certificate before another full strong-signal conservative session is spent
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -190,6 +191,10 @@ Default ports and lanes:
 53. Treat `entered-game-but-no-human-snapshot` as a telemetry-ingestion problem: the client got in, but saved control-lane evidence still never counted a human.
 54. Treat `human-snapshot-seen-but-presence-does-not-accumulate` as a narrower accumulation problem: the first saved human snapshot appeared, but the saved presence window still stayed too weak.
 55. Only return to another full strong-signal conservative attempt after the audit or bounded probe identifies a trustworthy entered-the-game to first-human-snapshot path and human presence starts accumulating in saved control-lane evidence.
+56. When one bounded probe succeeds but another still fails earlier in the chain, run `powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -Attempts 3 -UseLatestMissionContext`.
+57. Read `client_join_reliability_matrix.json` / `.md` for the per-attempt matrix: launched process, server connection, entered-the-game, first human snapshot, human presence accumulation, final attempt verdict, and the exact break point when an attempt fails.
+58. Read `client_join_reliability_certificate.json` / `.md` as the one-line spend decision: `not-ready-repeat-join-hardening`, `partially-reliable-repeat-bounded-probes`, or `ready-for-next-strong-signal-attempt`.
+59. Treat `partially-reliable` as a real improvement, not as readiness. The current readiness policy is intentionally strict: every repeated bounded attempt in the suite must reach entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget before another full strong-signal conservative session is justified.
 
 ## What Counts As Insufficient Data
 
@@ -505,6 +510,9 @@ How to read grounded evidence certification:
 - `connected-but-not-entered-game` means the server saw the connection, but the saved control-lane evidence still has no trusted in-game join state
 - `entered-game-but-no-human-snapshot` means the join completed, but saved control-lane telemetry still never counted a human player
 - the system is only ready for another full strong-signal conservative session after the bounded probe shows `entered-the-game-seen` or equivalent, at least one counted human snapshot, and accumulating saved human presence
+- when one bounded probe succeeds but reliability still looks mixed, run `powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -Attempts 3 -UseLatestMissionContext`
+- `partially-reliable-repeat-bounded-probes` means the repaired path is improving but still too mixed for another full strong-signal spend
+- `ready-for-next-strong-signal-attempt` means the repeated bounded probe suite cleared the join path end to end on every attempt under the current conservative policy
 
 ## Latest-Session Delta
 

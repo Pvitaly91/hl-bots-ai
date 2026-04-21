@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-55
+HLDM-JKBOTTI-AI-STAND-20260415-56
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1076,6 +1076,19 @@ Read that probe as a smaller reproduction, not as another evidence-collection ru
 - `human-snapshot-seen-but-presence-does-not-accumulate` means the first counted human snapshot exists, but the saved human-presence window still fails to build into usable evidence
 - the system is ready to spend another full strong-signal conservative session only after this probe shows the entered-the-game boundary, at least one counted human snapshot, and human presence starting to accumulate in saved control-lane evidence
 - the bounded probe comes first because it isolates the join/signal chain without wasting a treatment lane or another full strong-signal mission on a launch-path defect
+
+When one bounded probe succeeds but reliability is still uncertain, run the repeated join reliability matrix:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -Attempts 3 -UseLatestMissionContext
+```
+
+- it reuses `run_client_join_completion_probe.ps1` in a bounded loop and records one row per attempt
+- it writes `client_join_reliability_matrix.json` / `.md` plus `client_join_reliability_certificate.json` / `.md`
+- `not-ready-repeat-join-hardening` means repeated bounded probes still failed before saved human presence began accumulating, so another full strong-signal conservative session would be premature
+- `partially-reliable-repeat-bounded-probes` means the repaired path is no longer totally blocked, but the repeated suite is still mixed and should stay in bounded-probe mode
+- `ready-for-next-strong-signal-attempt` is intentionally strict: the current helper only certifies ready after every repeated bounded attempt reaches entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without exceeding the matrix time budget
+- this matrix is narrower than the broader scorecard or certification flow: it studies join reliability only and does not fabricate grounded promotion evidence by itself
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 
