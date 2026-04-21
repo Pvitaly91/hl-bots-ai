@@ -150,6 +150,118 @@ function Read-LaneSummaryFile {
     return $payload
 }
 
+function Test-HumanPresentInTelemetry {
+    param([object]$Record)
+
+    if ($null -eq $Record) {
+        return $false
+    }
+
+    $latestTelemetry = Get-ObjectPropertyValue -Object $Record -Name "latest_telemetry" -Default $null
+    if ($null -ne $latestTelemetry) {
+        $latestHumanCount = [int](Get-ObjectPropertyValue -Object $latestTelemetry -Name "current_human_player_count" -Default (Get-ObjectPropertyValue -Object $latestTelemetry -Name "human_player_count" -Default 0))
+        return $latestHumanCount -gt 0
+    }
+
+    $recordHumanCount = [int](Get-ObjectPropertyValue -Object $Record -Name "current_human_player_count" -Default (Get-ObjectPropertyValue -Object $Record -Name "human_player_count" -Default 0))
+    return $recordHumanCount -gt 0
+}
+
+function Get-TelemetryRecordSpanSeconds {
+    param(
+        [object[]]$TelemetryRecords,
+        [int]$Index
+    )
+
+    $record = $TelemetryRecords[$Index]
+    $intervalSeconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $record -Name "active_balance" -Default $null) -Name "interval_seconds" -Default 20.0)
+    if ($intervalSeconds -lt 1.0) {
+        $intervalSeconds = 1.0
+    }
+
+    $currentTime = [double](Get-ObjectPropertyValue -Object $record -Name "server_time_seconds" -Default 0.0)
+    if (($Index + 1) -ge $TelemetryRecords.Count) {
+        return $intervalSeconds
+    }
+
+    $nextTime = [double](Get-ObjectPropertyValue -Object $TelemetryRecords[$Index + 1] -Name "server_time_seconds" -Default ($currentTime + $intervalSeconds))
+    $delta = $nextTime - $currentTime
+    if ($delta -le 0.0) {
+        return $intervalSeconds
+    }
+
+    return [Math]::Min($intervalSeconds, $delta)
+}
+
+function Get-LatestTelemetryAtOrBefore {
+    param(
+        [object[]]$TelemetryRecords,
+        [double]$ServerTimeSeconds
+    )
+
+    $latestRecord = $null
+    foreach ($record in @($TelemetryRecords)) {
+        $recordTime = [double](Get-ObjectPropertyValue -Object $record -Name "server_time_seconds" -Default 0.0)
+        if ($recordTime -le ($ServerTimeSeconds + 0.0001)) {
+            $latestRecord = $record
+            continue
+        }
+
+        break
+    }
+
+    return $latestRecord
+}
+
+function Get-PostPatchObservationSeconds {
+    param(
+        [object[]]$TelemetryRecords,
+        [object[]]$ApplyRecords,
+        [double]$FallbackSeconds = 0.0
+    )
+
+    if (@($TelemetryRecords).Count -eq 0 -or @($ApplyRecords).Count -eq 0) {
+        return [Math]::Round([Math]::Max(0.0, $FallbackSeconds), 2)
+    }
+
+    $firstHumanPresentApplyTime = $null
+    foreach ($record in @($ApplyRecords)) {
+        $applyTime = [double](Get-ObjectPropertyValue -Object $record -Name "server_time_seconds" -Default 0.0)
+        $currentState = Get-LatestTelemetryAtOrBefore -TelemetryRecords $TelemetryRecords -ServerTimeSeconds $applyTime
+        if (-not (Test-HumanPresentInTelemetry -Record $currentState)) {
+            continue
+        }
+
+        $firstHumanPresentApplyTime = $applyTime
+        break
+    }
+
+    if ($null -eq $firstHumanPresentApplyTime) {
+        return [Math]::Round([Math]::Max(0.0, $FallbackSeconds), 2)
+    }
+
+    $totalSeconds = 0.0
+    for ($index = 0; $index -lt $TelemetryRecords.Count; $index++) {
+        $record = $TelemetryRecords[$index]
+        $recordTime = [double](Get-ObjectPropertyValue -Object $record -Name "server_time_seconds" -Default 0.0)
+        if ($recordTime -le ($firstHumanPresentApplyTime + 0.0001)) {
+            continue
+        }
+
+        if (-not (Test-HumanPresentInTelemetry -Record $record)) {
+            continue
+        }
+
+        $totalSeconds += Get-TelemetryRecordSpanSeconds -TelemetryRecords $TelemetryRecords -Index $index
+    }
+
+    if ($totalSeconds -le 0.01 -and $FallbackSeconds -gt 0.0) {
+        return [Math]::Round($FallbackSeconds, 2)
+    }
+
+    return [Math]::Round($totalSeconds, 2)
+}
+
 function Get-ResolvedEvalRoot {
     param(
         [string]$ExplicitLabRoot,
@@ -718,6 +830,7 @@ function Get-SwitchStatus {
     $missionExecutionPath = Resolve-ExistingPath -Path (Join-Path $ResolvedPairRoot "guided_session\mission_execution.json")
     $missionExecution = Read-JsonFile -Path $missionExecutionPath
     $liveMonitorStatusPath = Resolve-ExistingPath -Path (Join-Path $ResolvedPairRoot "live_monitor_status.json")
+    $liveMonitorStatus = Read-JsonFile -Path $liveMonitorStatusPath
     $monitorHistoryPath = Resolve-ExistingPath -Path (Join-Path $ResolvedPairRoot "guided_session\monitor_verdict_history.ndjson")
     $monitorHistory = Read-NdjsonFile -Path $monitorHistoryPath
 
@@ -741,12 +854,35 @@ function Get-SwitchStatus {
         $controlActualSeconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "control_lane" -Default $null) -Name "seconds_with_human_presence" -Default (Get-ObjectPropertyValue -Object $controlSummary -Name "seconds_with_human_presence" -Default 0.0))
         $treatmentActualSnapshots = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "human_snapshots_count" -Default (Get-ObjectPropertyValue -Object $treatmentSummary -Name "human_snapshots_count" -Default 0))
         $treatmentActualSeconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "seconds_with_human_presence" -Default (Get-ObjectPropertyValue -Object $treatmentSummary -Name "seconds_with_human_presence" -Default 0.0))
-        $patchActual = [int](Get-ObjectPropertyValue -Object $treatmentSummary -Name "patch_events_while_humans_present_count" -Default (Get-ObjectPropertyValue -Object $historyProgress -Name "PatchEventsMax" -Default 0))
+        $patchActual = [int](Get-ObjectPropertyValue -Object $treatmentSummary -Name "patch_apply_count_while_humans_present" -Default -1)
+        if ($patchActual -lt 0) {
+            $patchActual = [int](Get-ObjectPropertyValue -Object $treatmentSummary -Name "patch_events_while_humans_present_count" -Default (Get-ObjectPropertyValue -Object $historyProgress -Name "PatchEventsMax" -Default 0))
+        }
         if ($patchActual -lt 1 -and [bool](Get-ObjectPropertyValue -Object $comparison -Name "treatment_patched_while_humans_present" -Default $false)) {
             $patchActual = 1
         }
 
-        $postPatchActual = [double](Get-ObjectPropertyValue -Object $historyProgress -Name "PostPatchSecondsMax" -Default 0.0)
+        $treatmentLaneRoot = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "lane_root" -Default ""))
+        if (-not $treatmentLaneRoot -and $treatmentSummaryPath) {
+            $treatmentLaneRoot = Resolve-ExistingPath -Path (Split-Path -Path $treatmentSummaryPath -Parent)
+        }
+
+        $treatmentTelemetryHistory = if ($treatmentLaneRoot) { Read-NdjsonFile -Path (Resolve-ExistingPath -Path (Join-Path $treatmentLaneRoot "telemetry_history.ndjson")) } else { @() }
+        $treatmentPatchApplyHistory = if ($treatmentLaneRoot) { Read-NdjsonFile -Path (Resolve-ExistingPath -Path (Join-Path $treatmentLaneRoot "patch_apply_history.ndjson")) } else { @() }
+        $fallbackPostPatchSeconds = if ([bool](Get-ObjectPropertyValue -Object $treatmentSummary -Name "meaningful_post_patch_observation_window_exists" -Default $false)) {
+            $thresholds.PostPatchObservationSeconds
+        }
+        else {
+            0.0
+        }
+
+        $postPatchActual = Get-PostPatchObservationSeconds -TelemetryRecords $treatmentTelemetryHistory -ApplyRecords $treatmentPatchApplyHistory -FallbackSeconds $fallbackPostPatchSeconds
+        if ($postPatchActual -lt 0.01) {
+            $postPatchActual = [double](Get-ObjectPropertyValue -Object $liveMonitorStatus -Name "meaningful_post_patch_observation_seconds" -Default 0.0)
+        }
+        if ($postPatchActual -lt 0.01) {
+            $postPatchActual = [double](Get-ObjectPropertyValue -Object $historyProgress -Name "PostPatchSecondsMax" -Default 0.0)
+        }
         if ($postPatchActual -lt 0.01 -and [bool](Get-ObjectPropertyValue -Object $treatmentSummary -Name "meaningful_post_patch_observation_window_exists" -Default $false)) {
             $postPatchActual = $thresholds.PostPatchObservationSeconds
         }

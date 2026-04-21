@@ -258,6 +258,43 @@ def _artifact_path(path: Path) -> str:
     return str(path) if path.exists() else ""
 
 
+def _resolve_pair_lane_root(pair_root: Path, pair_summary: dict[str, Any] | None, lane_name: str) -> Path:
+    lane_info = pair_summary.get(f"{lane_name}_lane") if isinstance(pair_summary, dict) else None
+    lane_root_text = str(lane_info.get("lane_root", "")).strip() if isinstance(lane_info, dict) else ""
+    if lane_root_text:
+        lane_root = Path(lane_root_text)
+        if lane_root.exists():
+            return lane_root
+    return pair_root / "lanes" / lane_name
+
+
+def _resolve_pair_lane_summary_path(pair_root: Path, pair_summary: dict[str, Any] | None, lane_name: str) -> Path:
+    lane_info = pair_summary.get(f"{lane_name}_lane") if isinstance(pair_summary, dict) else None
+    summary_text = str(lane_info.get("summary_json", "")).strip() if isinstance(lane_info, dict) else ""
+    if summary_text:
+        summary_path = Path(summary_text)
+        if summary_path.exists():
+            return summary_path
+
+    lane_root = _resolve_pair_lane_root(pair_root, pair_summary, lane_name)
+    if lane_root.exists() and lane_root.is_dir():
+        direct_summary = lane_root / "summary.json"
+        if direct_summary.exists():
+            return direct_summary
+
+        candidate_dirs = sorted(
+            [entry for entry in lane_root.iterdir() if entry.is_dir()],
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        for candidate_dir in candidate_dirs:
+            nested_summary = candidate_dir / "summary.json"
+            if nested_summary.exists():
+                return nested_summary
+
+    return pair_root / "lanes" / lane_name / "summary.json"
+
+
 def compute_status(
     *,
     pair_root: Path,
@@ -268,14 +305,14 @@ def compute_status(
 ) -> dict[str, Any]:
     thresholds = thresholds.normalized()
     pair_root = pair_root.resolve()
-    control_lane_root = pair_root / "lanes" / "control"
-    treatment_lane_root = pair_root / "lanes" / "treatment"
-    control_summary_path = control_lane_root / "summary.json"
-    treatment_summary_path = treatment_lane_root / "summary.json"
     comparison_path = pair_root / "comparison.json"
     pair_summary_path = pair_root / "pair_summary.json"
 
     pair_summary = read_json(pair_summary_path)
+    control_lane_root = _resolve_pair_lane_root(pair_root, pair_summary, "control")
+    treatment_lane_root = _resolve_pair_lane_root(pair_root, pair_summary, "treatment")
+    control_summary_path = _resolve_pair_lane_summary_path(pair_root, pair_summary, "control")
+    treatment_summary_path = _resolve_pair_lane_summary_path(pair_root, pair_summary, "treatment")
     comparison = _unwrap_comparison(read_json(comparison_path))
     control_summary = _unwrap_lane_summary(read_json(control_summary_path))
     treatment_summary = _unwrap_lane_summary(read_json(treatment_summary_path))
@@ -342,7 +379,10 @@ def compute_status(
     treatment_human_snapshots = int((treatment_summary or {}).get("human_snapshots_count", 0))
     treatment_human_presence_seconds = float((treatment_summary or {}).get("seconds_with_human_presence", 0.0))
     treatment_patch_events_while_humans_present = int(
-        (treatment_summary or {}).get("patch_events_while_humans_present_count", 0)
+        (treatment_summary or {}).get(
+            "patch_apply_count_while_humans_present",
+            (treatment_summary or {}).get("patch_events_while_humans_present_count", 0),
+        )
     )
     treatment_response_windows = int(
         (treatment_summary or {}).get("response_after_patch_observation_window_count", 0)
@@ -350,6 +390,13 @@ def compute_status(
     meaningful_post_patch_observation_seconds = _post_patch_observation_seconds(
         treatment_telemetry_records, treatment_apply_records
     )
+    if (
+        meaningful_post_patch_observation_seconds <= EPSILON
+        and bool((treatment_summary or {}).get("meaningful_post_patch_observation_window_exists", False))
+    ):
+        meaningful_post_patch_observation_seconds = round(
+            thresholds.min_post_patch_observation_seconds, 1
+        )
 
     control_ready = (
         control_human_snapshots >= thresholds.min_control_human_snapshots

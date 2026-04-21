@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-47
+HLDM-JKBOTTI-AI-STAND-20260415-48
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -36,6 +36,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/guide_conservative_phase_flow.ps1` and `scripts/guide_conservative_phase_flow.bat` for the single sequential phase-director that merges the control-first and treatment-hold gates into one authoritative current phase, next operator action, and pair-local phase-flow artifact.
 - `scripts/run_next_grounded_conservative_cycle.ps1` and `scripts/run_next_grounded_conservative_cycle.bat` for the next milestone wrapper that reuses the client-assisted conservative path and writes one explicit answer about whether the latest live cycle became the second grounded conservative capture, only reduced the gap, or advanced the next objective.
 - `scripts/review_counted_pair_evidence.ps1` and `scripts/review_counted_pair_evidence.bat` for counted-pair reconciliation when authoritative evidence and inherited narrative outputs disagree about whether a historically counted pair should still drive promotion math.
+- `scripts/reconcile_pair_metrics.ps1` and `scripts/reconcile_pair_metrics.bat` for canonical metric reconciliation and safe derived-artifact refresh when a counted pair still counts but secondary treatment-side or monitor-derived metrics disagree with the authoritative pair and lane evidence.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -215,6 +216,7 @@ The paired live-session runner is the recommended next human workflow:
 - `scripts\run_guided_live_pair_session.ps1` is the operator-facing wrapper over preflight, the pre-run mission brief, the pair runner, the live monitor, review, shadow review, scoring, registration, registry summary, responsive-trial gate, the next-live planner, the outcome dossier, and the final session docket.
 - `scripts\run_current_live_mission.ps1` is the mission-driven launcher. It reads the latest mission brief by default, enforces conservative drift policy before launch, and records `guided_session\mission_execution.json` / `.md` so later closeout can tell whether the operator actually launched the current mission.
 - `scripts\assess_latest_session_recovery.ps1` is the interruption and recovery classifier. It inspects the latest pair pack or an explicit pair root, writes `session_recovery_report.json` / `.md`, says whether the session is complete, interrupted, salvageable, or rerun-only, and emits an exact salvage command when the session is recoverable.
+- `scripts\reconcile_pair_metrics.ps1` is narrower than the counted-pair review helper. The review helper answers whether a counted pair should still count at all; the reconciliation helper assumes that counted/manual-review result, recomputes canonical control/treatment metrics from the saved pair and lane evidence, and only refreshes secondary artifacts when that is safe and auditable.
 - `scripts\finalize_interrupted_session.ps1` is the conservative salvage helper. It reads the recovery assessment first, refuses pre-sufficiency and manual-review branches, reruns only the recoverable closeout steps, writes `session_salvage_report.json` / `.md`, and keeps rehearsals or other non-grounded sessions excluded from promotion even when salvage completes structurally.
 - `scripts\plan_next_live_session.ps1` is the read-only promotion-gap planner. It reuses the certified registry summary and responsive gate outputs to produce `next_live_plan.json` and `next_live_plan.md` with the exact deficits still blocking responsive and the concrete objective for the next live session.
 - `scripts\prepare_next_live_session_mission.ps1` is the pre-run operator brief. It reuses the current responsive gate, the next-live planner, and the latest outcome dossier context to produce `next_live_session_mission.json` and `next_live_session_mission.md` with the exact thresholds, stop condition, failure conditions, and mission statement for the very next live run.
@@ -900,6 +902,24 @@ That review keeps evidence precedence explicit:
 
 - authoritative: `pair_summary.json`, lane `summary.json`, raw patch histories, mission snapshot/execution, saved control/treatment/phase gate outputs, saved live-monitor state/history, and `grounded_evidence_certificate.json`
 - potentially stale narrative outputs: `mission_attainment.json`, wrapped milestone reports, older markdown summaries, and inherited explanation strings
+
+If that review keeps the pair counted but exact treatment-side metrics still disagree across artifacts, run the metric-reconciliation helper next:
+
+```powershell
+powershell -NoProfile -File .\scripts\reconcile_pair_metrics.ps1 -PairRoot .\lab\logs\eval\<pair-root> -DryRun
+```
+
+Then execute the safe refresh only when the report says promotion state remains unchanged and the plan is limited to secondary artifacts:
+
+```powershell
+powershell -NoProfile -File .\scripts\reconcile_pair_metrics.ps1 -PairRoot .\lab\logs\eval\<pair-root> -ExecuteRefresh
+```
+
+Metric reconciliation keeps precedence explicit too:
+
+- canonical evidence: `pair_summary.json`, lane `summary.json`, raw patch history, raw patch-apply history, telemetry history, mission snapshot/execution, and `grounded_evidence_certificate.json`
+- secondary or potentially stale artifacts: `treatment_patch_window.json`, `control_to_treatment_switch.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, the outcome dossier, and wrapped milestone reports
+- safe refresh may rebuild secondary artifacts, but it must not silently rewrite raw evidence, the append-only registry, certification thresholds, or promotion history
 
 Use the verdict conservatively:
 

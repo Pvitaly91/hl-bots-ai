@@ -349,6 +349,7 @@ function Ensure-LiveMonitorStatus {
     $monitorStatusMarkdownPath = Join-Path $ResolvedPairRoot "live_monitor_status.md"
     $monitorStatus = Read-JsonFile -Path $monitorStatusJsonPath
     $reranMonitor = $false
+    $pairSummaryAvailable = Test-Path -LiteralPath (Join-Path $ResolvedPairRoot "pair_summary.json")
 
     $missionThresholds = [ordered]@{
         min_control_human_snapshots = [int](Get-ObjectPropertyValue -Object $Mission -Name "target_minimum_control_human_snapshots" -Default 0)
@@ -376,7 +377,7 @@ function Ensure-LiveMonitorStatus {
         }
     }
 
-    if ($null -eq $monitorStatus -or $thresholdMismatch) {
+    if ($null -eq $monitorStatus -or $thresholdMismatch -or $pairSummaryAvailable) {
         $monitorScriptPath = Join-Path $PSScriptRoot "monitor_live_pair_session.ps1"
         $monitorArgs = @{
             PairRoot = $ResolvedPairRoot

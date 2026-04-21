@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-47
+HLDM-JKBOTTI-AI-STAND-20260415-48
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -310,6 +310,7 @@ The guided runner remains a thin orchestrator over the existing helpers:
 - it writes `guided_session\session_state.json`, `guided_session\final_session_docket.json`, and `guided_session\final_session_docket.md` under the pair root after the run, and that docket points to the pre-run mission brief, the mission execution record, the post-run outcome dossier, and the mission-attainment closeout
 - in rehearsal mode it writes an isolated validation-only registry under `guided_session\registry\` so real live ledgers stay untouched
 - if the planner later says `manual-review-before-next-session`, run `scripts\review_counted_pair_evidence.ps1` on the flagged pair root before another live conservative attempt
+- if that counted-pair review keeps the pair counted but exact treatment-side or monitor-derived metrics still disagree, run `scripts\reconcile_pair_metrics.ps1 -PairRoot <pair-root> -DryRun` first and rerun with `-ExecuteRefresh` only when the report says promotion state stays unchanged and the refresh is limited to secondary artifacts
 
 Start the live monitor like this while the pair is running:
 
@@ -413,6 +414,8 @@ For the next real human-vs-bot session, prefer this sequence:
 10. Use manual stop instead of auto-stop when you want extra observation time, when an operator wants direct control, or when validating the no-human path.
 11. Read `session_outcome_dossier.md` first after the run. Use `guided_session\final_session_docket.md` as the quick pointer to it.
 12. If the dossier, mission-attainment closeout, or planner says `manual-review-before-next-session`, stop and run `powershell -NoProfile -File .\scripts\review_counted_pair_evidence.ps1 -PairRoot <pair-root>` before another live spend.
+13. If that review keeps the pair counted but exact treatment-side or monitor-derived metrics still disagree, run `powershell -NoProfile -File .\scripts\reconcile_pair_metrics.ps1 -PairRoot <pair-root> -DryRun`.
+14. Use `-ExecuteRefresh` only when the reconciliation report says the refresh is safe, auditable, and limited to secondary artifacts such as the switch gate, treatment gate, phase flow, live monitor snapshot, mission closeout, or outcome dossier.
 
 Use rehearsal mode for workflow validation only:
 
@@ -435,6 +438,19 @@ The helper keeps evidence precedence explicit:
 
 - authoritative: `pair_summary.json`, lane `summary.json`, `patch_apply_history.ndjson`, `patch_history.ndjson`, mission snapshot/execution, saved gate outputs, saved monitor state/history, and `grounded_evidence_certificate.json`
 - potentially stale narrative outputs: `mission_attainment.json`, wrapped milestone reports, older markdown summaries, and inherited explanation strings
+
+If the counted status stays true but exact treatment-side or monitor-derived metrics still disagree, run:
+
+```powershell
+powershell -NoProfile -File .\scripts\reconcile_pair_metrics.ps1 -PairRoot .\lab\logs\eval\<pair-root> -DryRun
+powershell -NoProfile -File .\scripts\reconcile_pair_metrics.ps1 -PairRoot .\lab\logs\eval\<pair-root> -ExecuteRefresh
+```
+
+Metric reconciliation is narrower than counted-pair review:
+
+- canonical evidence: `pair_summary.json`, lane `summary.json`, `patch_history.ndjson`, `patch_apply_history.ndjson`, telemetry history, mission snapshot/execution, and `grounded_evidence_certificate.json`
+- secondary artifacts: `treatment_patch_window.json`, `control_to_treatment_switch.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, the outcome dossier, and wrapped milestone reports
+- safe refresh may rebuild only those secondary artifacts; it must not silently rewrite raw evidence, append-only registry history, or promotion thresholds
 
 If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 
