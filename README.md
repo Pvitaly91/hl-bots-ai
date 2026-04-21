@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-48
+HLDM-JKBOTTI-AI-STAND-20260415-49
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -37,6 +37,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_next_grounded_conservative_cycle.ps1` and `scripts/run_next_grounded_conservative_cycle.bat` for the next milestone wrapper that reuses the client-assisted conservative path and writes one explicit answer about whether the latest live cycle became the second grounded conservative capture, only reduced the gap, or advanced the next objective.
 - `scripts/review_counted_pair_evidence.ps1` and `scripts/review_counted_pair_evidence.bat` for counted-pair reconciliation when authoritative evidence and inherited narrative outputs disagree about whether a historically counted pair should still drive promotion math.
 - `scripts/reconcile_pair_metrics.ps1` and `scripts/reconcile_pair_metrics.bat` for canonical metric reconciliation and safe derived-artifact refresh when a counted pair still counts but secondary treatment-side or monitor-derived metrics disagree with the authoritative pair and lane evidence.
+- `scripts/refresh_pair_wrapper_narratives.ps1` and `scripts/refresh_pair_wrapper_narratives.bat` for the final wrapper cleanup pass that regenerates stale secondary narratives from canonical pair evidence and writes a separate counted-pair clearance decision without changing registry or promotion state by itself.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -920,6 +921,19 @@ Metric reconciliation keeps precedence explicit too:
 - canonical evidence: `pair_summary.json`, lane `summary.json`, raw patch history, raw patch-apply history, telemetry history, mission snapshot/execution, and `grounded_evidence_certificate.json`
 - secondary or potentially stale artifacts: `treatment_patch_window.json`, `control_to_treatment_switch.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, the outcome dossier, and wrapped milestone reports
 - safe refresh may rebuild secondary artifacts, but it must not silently rewrite raw evidence, the append-only registry, certification thresholds, or promotion history
+
+If the canonical metrics now agree and the only remaining contradiction is stale wrapper wording such as `human_participation_conservative_attempt.json` or `guided_session\final_session_docket.json`, run the wrapper refresh helper:
+
+```powershell
+powershell -NoProfile -File .\scripts\refresh_pair_wrapper_narratives.ps1 -PairRoot .\lab\logs\eval\<pair-root>
+```
+
+Wrapper refresh is narrower than metric reconciliation:
+
+- reconciliation settles the canonical counts and says whether any safe derived refresh is allowed
+- wrapper refresh regenerates only clearly secondary wrapper narratives from canonical sources plus the accepted reconciliation output
+- counted-pair clearance is separate from registry correction: it can clear a pair-level manual-review label only when canonical evidence, refreshed wrappers, and the unchanged promotion/gate state all remain consistent
+- wrapper cleanup must not silently change registry inclusion, grounded counting, responsive-gate state, or the next-live objective
 
 Use the verdict conservatively:
 

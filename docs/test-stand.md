@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-48
+HLDM-JKBOTTI-AI-STAND-20260415-49
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -451,6 +451,20 @@ Metric reconciliation is narrower than counted-pair review:
 - canonical evidence: `pair_summary.json`, lane `summary.json`, `patch_history.ndjson`, `patch_apply_history.ndjson`, telemetry history, mission snapshot/execution, and `grounded_evidence_certificate.json`
 - secondary artifacts: `treatment_patch_window.json`, `control_to_treatment_switch.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, the outcome dossier, and wrapped milestone reports
 - safe refresh may rebuild only those secondary artifacts; it must not silently rewrite raw evidence, append-only registry history, or promotion thresholds
+
+If reconciliation succeeds and only stale wrapper wording remains, run:
+
+```powershell
+powershell -NoProfile -File .\scripts\refresh_pair_wrapper_narratives.ps1 -PairRoot .\lab\logs\eval\<pair-root>
+```
+
+That helper is narrower than reconciliation:
+
+- it regenerates only secondary wrappers such as `human_participation_conservative_attempt.json` and `guided_session\final_session_docket.json`
+- it reuses canonical pair evidence plus the accepted reconciliation output instead of rereading stale wrapper narratives
+- it writes `wrapper_refresh_report.json` / `.md` and `counted_pair_clearance.json` / `.md`
+- it may clear a pair-level manual-review label only when canonical evidence, refreshed wrappers, and the unchanged promotion/gate state all remain consistent
+- it must not silently change registry inclusion, grounded counting, responsive-gate state, or the next-live objective
 
 If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 

@@ -23,6 +23,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\guide_conservative_phase_flow.ps1` is available so the live sequence can be watched through one current phase and one next action instead of juggling separate phase helpers manually
 - `scripts\review_counted_pair_evidence.ps1` is available so a historically counted pair can be reconciled against authoritative evidence before another live spend when the planner says `manual-review-before-next-session`
 - `scripts\reconcile_pair_metrics.ps1` is available so a counted pair with stale treatment-side or monitor-derived metrics can be reconciled and refreshed without casually changing registry or promotion state
+- `scripts\refresh_pair_wrapper_narratives.ps1` is available so the last stale wrapper narratives can be regenerated from canonical evidence and the pair-level manual-review label can be cleared, if safe, without changing registry or promotion state
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -159,6 +160,9 @@ Default ports and lanes:
 29. If the counted status stays true but exact treatment-side or monitor-derived metrics still disagree, run `powershell -NoProfile -File .\scripts\reconcile_pair_metrics.ps1 -PairRoot <pair-root> -DryRun`.
 30. Read `pair_metric_reconciliation.json` / `.md` as the canonical metric diff: it should show which sources were treated as canonical, which were secondary, which fields disagreed, and whether a safe refresh is allowed.
 31. Use `-ExecuteRefresh` only when the reconciliation helper says the refresh is safe and auditable. That path is for secondary artifacts only; it must not silently rewrite the append-only registry or promotion history.
+32. If the canonical metrics now agree and only wrapper narratives remain stale, run `powershell -NoProfile -File .\scripts\refresh_pair_wrapper_narratives.ps1 -PairRoot <pair-root>`.
+33. Read `wrapper_refresh_report.json` / `.md` to confirm which wrapper files were regenerated from canonical sources and which promotion/gate fields were intentionally left unchanged.
+34. Read `counted_pair_clearance.json` / `.md` to see whether the pair-level manual-review label can now be cleared. That clearance is separate from registry correction and must not be treated as a promotion-state rewrite by itself.
 
 ## What Counts As Insufficient Data
 
