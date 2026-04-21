@@ -26,6 +26,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\refresh_pair_wrapper_narratives.ps1` is available so the last stale wrapper narratives can be regenerated from canonical evidence and the pair-level manual-review label can be cleared, if safe, without changing registry or promotion state
 - `scripts\recompute_after_pair_clearance.ps1` is available so a cleared counted pair can drive an additive downstream recompute before you assume the global responsive gate or next-live plan really changed
 - `scripts\review_grounded_evidence_matrix.ps1` is available so the currently counted grounded conservative sessions can be laid out in one explicit matrix before deciding whether the global manual-review state is actually still justified
+- `scripts\prepare_strong_signal_conservative_mission.ps1` is available so the mixed counted grounded conservative state can be turned into one stronger-signal conservative mission before spending another live run
 - `scripts\discover_hldm_client.ps1` is available so local `hl.exe` readiness can be checked explicitly before the live session starts
 - `scripts\join_live_pair_lane.ps1` is available so the operator can launch or preview the local client for the control or treatment lane without hand-copying the port
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
@@ -171,6 +172,9 @@ Default ports and lanes:
 38. If you still need one explicit explanation of why the global state remains `manual-review-needed`, run `powershell -NoProfile -File .\scripts\review_grounded_evidence_matrix.ps1`.
 39. Read `grounded_evidence_matrix.json` / `.md` for one row per counted grounded conservative session, including whether each row is appropriately conservative, too quiet, strong-signal, or merely tuning-usable.
 40. Read `promotion_state_review.json` / `.md` for the global explanation of whether the current responsive gate and next-live objective are actually consistent with that matrix.
+41. If the matrix confirms a genuinely mixed grounded conservative state and zero counted grounded strong-signal conservative sessions, run `powershell -NoProfile -File .\scripts\prepare_strong_signal_conservative_mission.ps1`.
+42. Read `strong_signal_conservative_mission.json` / `.md` before another live spend. That mission keeps the treatment profile conservative, raises the evidence targets above the grounded minimum, and explains how the next run could disambiguate "appropriately conservative" vs "too quiet".
+43. Launch that mission explicitly with `run_current_live_mission.ps1 -MissionPath <strong-signal-mission>` or the same `-MissionPath` pattern on the client-assisted conservative wrappers. Do not treat the strong-signal mission itself as responsive readiness; it only plans a more discriminating conservative run.
 
 ## What Counts As Insufficient Data
 

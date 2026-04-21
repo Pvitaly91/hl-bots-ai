@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-51
+HLDM-JKBOTTI-AI-STAND-20260415-52
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -40,6 +40,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/refresh_pair_wrapper_narratives.ps1` and `scripts/refresh_pair_wrapper_narratives.bat` for the final wrapper cleanup pass that regenerates stale secondary narratives from canonical pair evidence and writes a separate counted-pair clearance decision without changing registry or promotion state by itself.
 - `scripts/recompute_after_pair_clearance.ps1` and `scripts/recompute_after_pair_clearance.bat` for the clearance-aware downstream recompute that builds an additive overlay registry view, reruns summary/gate/planner artifacts against it, and shows whether the cleared pair actually changes the current responsive gate or next-live objective.
 - `scripts/review_grounded_evidence_matrix.ps1` and `scripts/review_grounded_evidence_matrix.bat` for the global grounded-evidence matrix and promotion-state review that explain why the current gate/objective remain what they are after pair-level cleanup is finished.
+- `scripts/prepare_strong_signal_conservative_mission.ps1` and `scripts/prepare_strong_signal_conservative_mission.bat` for the specialized conservative mission brief that raises the evidence targets above the grounded minimum when the counted grounded evidence is mixed and the next run needs to be more discriminating than another generic grounded session.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -971,6 +972,26 @@ When the matrix shows a mixed grounded state, treat that as a real evidence patt
 - responsive should stay blocked until that mix is resolved or repeated evidence pushes the system toward one clear direction
 - manual review can still be the correct answer even after pair-level cleanup if the counted grounded evidence itself is genuinely split
 
+When that mixed state is real and the next run needs to be more discriminating instead of merely counted again, prepare the strong-signal conservative mission:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_strong_signal_conservative_mission.ps1
+```
+
+Use it differently from the normal next-live mission:
+
+- `prepare_next_live_session_mission.ps1` reflects the current planner and gate state as-is, even when the answer is still manual review
+- `prepare_strong_signal_conservative_mission.ps1` is an explicit operator choice for the mixed-evidence case where `conservative` remains the treatment profile but the next session should exceed the grounded minimum and aim for stronger disambiguating evidence
+- it raises the targets for human snapshots, human presence, treatment patch-while-human-present events, and post-patch observation window without changing the responsive gate thresholds
+- it writes `strong_signal_conservative_mission.json` and `strong_signal_conservative_mission.md`, then prints the exact `run_current_live_mission.ps1`, `run_human_participation_conservative_attempt.ps1`, and `run_next_grounded_conservative_cycle.ps1` commands that can consume that mission through `-MissionPath`
+- it still does not open `responsive` automatically; it only defines a stronger conservative evidence-collection goal
+
+Use that mission when the matrix says:
+
+- the counted grounded conservative evidence is mixed
+- zero counted grounded strong-signal conservative sessions exist
+- the next useful answer is "does richer conservative evidence repeat appropriately-conservative behavior or repeat too-quiet behavior?"
+
 Use the verdict conservatively:
 
 - `counted-pair-confirmed-grounded`: the pair still counts and no correction is needed
@@ -1297,6 +1318,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/plan_next_live_session.bat`: `cmd.exe` wrapper for the next-live session planner.
 - `scripts/prepare_next_live_session_mission.ps1`: turns the current gate, planner, and latest outcome context into `next_live_session_mission.json` plus `next_live_session_mission.md` for the very next live run.
 - `scripts/prepare_next_live_session_mission.bat`: `cmd.exe` wrapper for the mission-brief helper.
+- `scripts/prepare_strong_signal_conservative_mission.ps1`: writes `strong_signal_conservative_mission.json` plus `strong_signal_conservative_mission.md` when the next useful conservative run needs stronger-signal disambiguation rather than another generic grounded session.
+- `scripts/prepare_strong_signal_conservative_mission.bat`: `cmd.exe` wrapper for the strong-signal conservative mission helper.
 - `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.

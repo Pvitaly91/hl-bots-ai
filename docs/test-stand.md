@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-51
+HLDM-JKBOTTI-AI-STAND-20260415-52
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -492,6 +492,26 @@ This helper is global rather than pair-local:
 - it shows which grounded sessions look appropriately conservative and which look too quiet
 - it compares that matrix with the current responsive gate and next-live objective
 - it explains whether the manual-review state is genuinely warranted or only appears stale
+
+If that matrix says the global state is genuinely mixed and there are still zero counted grounded strong-signal conservative sessions, prepare the stronger disambiguation mission instead of spending another generic grounded run:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_strong_signal_conservative_mission.ps1
+```
+
+Use it like this:
+
+- it keeps `conservative` as the treatment profile and keeps the no-AI control lane unchanged
+- it differs from `prepare_next_live_session_mission.ps1`: the normal mission helper mirrors the current planner as-is, while the strong-signal mission helper is an explicit operator choice for the mixed-evidence case
+- it raises the control/treatment human-signal targets, treatment patch-while-human-present target, and post-patch observation window above the grounded minimum so the next run is more discriminating
+- it writes `strong_signal_conservative_mission.json` / `.md` and prints the exact `run_current_live_mission.ps1`, `run_human_participation_conservative_attempt.ps1`, and `run_next_grounded_conservative_cycle.ps1` commands that can consume that mission through `-MissionPath`
+- it still does not open `responsive` automatically and does not change the responsive-gate thresholds
+
+Use the strong-signal conservative mission when the next useful answer is:
+
+- does richer grounded conservative evidence repeat "appropriately conservative" and strengthen the keep-conservative case?
+- does richer grounded conservative evidence repeat "too quiet" and strengthen the future responsive case?
+- or does the next run still stay ambiguous enough that manual review remains the correct answer?
 
 If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 
