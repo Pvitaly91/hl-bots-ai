@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-50
+HLDM-JKBOTTI-AI-STAND-20260415-51
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -39,6 +39,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/reconcile_pair_metrics.ps1` and `scripts/reconcile_pair_metrics.bat` for canonical metric reconciliation and safe derived-artifact refresh when a counted pair still counts but secondary treatment-side or monitor-derived metrics disagree with the authoritative pair and lane evidence.
 - `scripts/refresh_pair_wrapper_narratives.ps1` and `scripts/refresh_pair_wrapper_narratives.bat` for the final wrapper cleanup pass that regenerates stale secondary narratives from canonical pair evidence and writes a separate counted-pair clearance decision without changing registry or promotion state by itself.
 - `scripts/recompute_after_pair_clearance.ps1` and `scripts/recompute_after_pair_clearance.bat` for the clearance-aware downstream recompute that builds an additive overlay registry view, reruns summary/gate/planner artifacts against it, and shows whether the cleared pair actually changes the current responsive gate or next-live objective.
+- `scripts/review_grounded_evidence_matrix.ps1` and `scripts/review_grounded_evidence_matrix.bat` for the global grounded-evidence matrix and promotion-state review that explain why the current gate/objective remain what they are after pair-level cleanup is finished.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -948,6 +949,27 @@ This step is narrower than registry correction and broader than wrapper refresh:
 - it builds an additive overlay interpretation for the cleared pair
 - it recomputes downstream decision artifacts such as `registry_summary.json`, `responsive_trial_gate.json`, `next_live_plan.json`, and `next_live_session_mission.json` under the recompute output root
 - it compares before vs after gate/objective/count totals so you can tell whether the stale-looking manual-review state was actually still correct
+
+If pair-level cleanup is complete and you still need one authoritative explanation of the global manual-review state, run the grounded-evidence matrix helper:
+
+```powershell
+powershell -NoProfile -File .\scripts\review_grounded_evidence_matrix.ps1
+```
+
+Use it differently from the earlier helpers:
+
+- counted-pair review asks whether one historically counted pair should still count
+- metric reconciliation settles canonical per-pair counts and safe secondary refresh
+- wrapper refresh regenerates stale wrapper narratives for one reviewed pair
+- post-clearance recompute checks whether clearing that pair changes downstream decision artifacts
+- grounded-evidence matrix review is global: it lists the currently counted grounded conservative sessions, shows which are appropriately conservative vs too quiet, and explains why the current responsive gate and next-live objective are or are not still justified
+
+When the matrix shows a mixed grounded state, treat that as a real evidence pattern rather than as stale wording:
+
+- one or more counted grounded conservative sessions say conservative looks appropriately bounded
+- one or more counted grounded conservative sessions say conservative looks too quiet
+- responsive should stay blocked until that mix is resolved or repeated evidence pushes the system toward one clear direction
+- manual review can still be the correct answer even after pair-level cleanup if the counted grounded evidence itself is genuinely split
 
 Use the verdict conservatively:
 

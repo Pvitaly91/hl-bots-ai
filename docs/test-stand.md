@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-50
+HLDM-JKBOTTI-AI-STAND-20260415-51
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -478,6 +478,20 @@ Post-clearance recompute differs from the earlier helpers:
 - metric reconciliation settles canonical counts and safe secondary refresh
 - wrapper refresh fixes stale wrapper narratives and may clear the pair-level manual-review label
 - post-clearance recompute reruns downstream decision artifacts from an additive clearance-aware overlay so you can compare before vs after responsive-gate and next-objective state without rewriting append-only registry history
+
+If pair-level cleanup is done but the global state still says `manual-review-needed` or `manual-review-before-next-session`, run:
+
+```powershell
+powershell -NoProfile -File .\scripts\review_grounded_evidence_matrix.ps1
+```
+
+This helper is global rather than pair-local:
+
+- it reads the counted grounded conservative sessions from the registry
+- it builds one explicit matrix of the sessions that currently count toward promotion
+- it shows which grounded sessions look appropriately conservative and which look too quiet
+- it compares that matrix with the current responsive gate and next-live objective
+- it explains whether the manual-review state is genuinely warranted or only appears stale
 
 If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 
