@@ -432,6 +432,8 @@ function Wait-ForControlReadySwitch {
     $deadlineUtc = $startedAtUtc.AddSeconds([Math]::Max(60, $TimeoutSeconds))
     $lastPrintKey = ""
     $lastExecution = $null
+    $observedReadyAtUtc = ""
+    $minimumStaySatisfiedBy = ""
 
     while ((Get-Date).ToUniversalTime() -lt $deadlineUtc) {
         $execution = Invoke-ControlSwitchGuide -PairRoot $PairRoot -MissionPath $MissionPath -PollSeconds $PollSeconds
@@ -452,7 +454,19 @@ function Wait-ForControlReadySwitch {
         $treatmentLane = Get-ObjectPropertyValue -Object $guideResult -Name "treatment_lane" -Default $null
         $verdict = [string](Get-ObjectPropertyValue -Object $guideResult -Name "current_switch_verdict" -Default "")
         $controlSafeToLeave = [bool](Get-ObjectPropertyValue -Object $controlLane -Name "safe_to_leave" -Default $false)
-        $minimumStaySatisfied = (Get-Date).ToUniversalTime() -ge $minimumStayMetAtUtc
+        $controlActualHumanPresenceSeconds = [double](Get-ObjectPropertyValue -Object $controlLane -Name "actual_human_presence_seconds" -Default 0.0)
+        $minimumStaySatisfiedByPresence = $MinimumStaySeconds -le 0 -or $controlActualHumanPresenceSeconds -ge $MinimumStaySeconds
+        $minimumStaySatisfiedByWallClock = (Get-Date).ToUniversalTime() -ge $minimumStayMetAtUtc
+        $minimumStaySatisfied = $minimumStaySatisfiedByPresence -or $minimumStaySatisfiedByWallClock
+        if ($minimumStaySatisfiedByPresence) {
+            $minimumStaySatisfiedBy = "human-presence-seconds"
+        }
+        elseif ($minimumStaySatisfiedByWallClock) {
+            $minimumStaySatisfiedBy = "wall-clock"
+        }
+        else {
+            $minimumStaySatisfiedBy = ""
+        }
 
         $printKey = @(
             $verdict
@@ -476,11 +490,17 @@ function Wait-ForControlReadySwitch {
         }
 
         if ($controlSafeToLeave -and $minimumStaySatisfied) {
+            if (-not $observedReadyAtUtc) {
+                $observedReadyAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            }
             return [pscustomobject]@{
                 ReadyToSwitch = $true
                 GuideExecution = $execution
                 Terminal = $false
                 Explanation = [string](Get-ObjectPropertyValue -Object $guideResult -Name "explanation" -Default "")
+                ObservedReadyAtUtc = $observedReadyAtUtc
+                MinimumStaySatisfiedBy = $minimumStaySatisfiedBy
+                ControlActualHumanPresenceSeconds = $controlActualHumanPresenceSeconds
             }
         }
 
@@ -1295,6 +1315,7 @@ function Get-HumanAttemptMarkdown {
         "- Treatment debug log path: $($Report.treatment_lane_join.debug_log_path)",
         "- Treatment join attempts: $($Report.treatment_lane_join.join_attempt_count)",
         "- Treatment join retry used: $($Report.treatment_lane_join.join_retry_used)",
+        "- Treatment join requested at: $($Report.treatment_lane_join.join_requested_at_utc)",
         "- Treatment port ready: $($Report.treatment_lane_join.port_ready)",
         "- Treatment server connection seen: $($Report.treatment_lane_join.server_connection_seen)",
         "- Treatment entered the game seen: $($Report.treatment_lane_join.entered_the_game_seen)",
@@ -1305,11 +1326,23 @@ function Get-HumanAttemptMarkdown {
         "## Control-First Switch Guidance",
         "",
         "- Switch helper command: $($Report.control_switch_guidance.helper_command)",
+        "- Switch wait started at: $($Report.control_switch_guidance.wait_started_at_utc)",
         "- Switch verdict at handoff: $($Report.control_switch_guidance.verdict_at_handoff)",
         "- Safe to leave control at handoff: $($Report.control_switch_guidance.safe_to_leave_control)",
+        "- Runner observed control-ready: $($Report.control_switch_guidance.ready_to_leave_observed)",
+        "- Runner observed control-ready at: $($Report.control_switch_guidance.ready_observed_at_utc)",
+        "- Minimum stay satisfied by: $($Report.control_switch_guidance.minimum_stay_satisfied_by)",
         "- Control remaining snapshots at handoff: $($Report.control_switch_guidance.control_remaining_human_snapshots)",
         "- Control remaining seconds at handoff: $($Report.control_switch_guidance.control_remaining_human_presence_seconds)",
         "- Switch explanation: $($Report.control_switch_guidance.explanation)",
+        "",
+        "## Closeout",
+        "",
+        "- Closeout wait started at: $($Report.closeout.wait_started_at_utc)",
+        "- Attempt process exit observed at: $($Report.closeout.attempt_process_exit_observed_at_utc)",
+        "- Wait-Process race observed: $($Report.closeout.wait_process_race_observed)",
+        "- Pair summary present: $($Report.closeout.pair_summary_present)",
+        "- Final session docket present: $($Report.closeout.final_session_docket_present)",
         "",
         "## Treatment-Hold Guidance",
         "",
@@ -1510,6 +1543,13 @@ $treatmentPortWait = $null
 $controlPortWaitFinishedAtUtc = ""
 $treatmentPortWaitFinishedAtUtc = ""
 $launchBlockedReason = ""
+$controlSwitchWaitStartedAtUtc = ""
+$controlReadyObservedAtUtc = ""
+$controlMinimumStaySatisfiedBy = ""
+$treatmentJoinRequestedAtUtc = ""
+$closeoutWaitStartedAtUtc = ""
+$attemptProcessExitObservedAtUtc = ""
+$waitProcessRaceObserved = $false
 
 if (-not $clientLaunchable) {
     $launchBlockedReason = [string](Get-ObjectPropertyValue -Object $discoveryReport -Name "explanation" -Default "")
@@ -1624,6 +1664,7 @@ if ($attemptProcess) {
 
             if ($controlProcessId -gt 0) {
                 if ($autoSwitchControlEnabled) {
+                    $controlSwitchWaitStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
                     $controlSwitchWait = Wait-ForControlReadySwitch `
                         -PairRoot $pairRoot `
                         -MissionPath $missionArtifacts.JsonPath `
@@ -1634,6 +1675,8 @@ if ($attemptProcess) {
                     $controlSwitchReport = Get-ObjectPropertyValue -Object $controlSwitchExecution -Name "Result" -Default $null
                     $controlSwitchReadyToLeave = [bool](Get-ObjectPropertyValue -Object $controlSwitchWait -Name "ReadyToSwitch" -Default $false)
                     $controlSwitchExplanation = [string](Get-ObjectPropertyValue -Object $controlSwitchWait -Name "Explanation" -Default "")
+                    $controlReadyObservedAtUtc = [string](Get-ObjectPropertyValue -Object $controlSwitchWait -Name "ObservedReadyAtUtc" -Default "")
+                    $controlMinimumStaySatisfiedBy = [string](Get-ObjectPropertyValue -Object $controlSwitchWait -Name "MinimumStaySatisfiedBy" -Default "")
 
                     if ($controlSwitchReadyToLeave) {
                         Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "control-first gate cleared" | Out-Null
@@ -1665,6 +1708,7 @@ if ($attemptProcess) {
     }
 
     if ($pairRoot -and $autoJoinTreatmentEnabled -and (-not $autoSwitchControlEnabled -or $controlSwitchReadyToLeave -or $JoinSequence -ne "ControlThenTreatment")) {
+        $treatmentJoinRequestedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         if ($TreatmentJoinDelaySeconds -gt 0) {
             Start-Sleep -Seconds $TreatmentJoinDelaySeconds
         }
@@ -1759,12 +1803,34 @@ if ($attemptProcess) {
         Write-Warning "Skipping automatic treatment join because the control-first switch gate never cleared."
     }
 
-    try {
-        Wait-Process -Id $attemptProcess.Id -Timeout 1800 -ErrorAction Stop
+    $closeoutWaitStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    $attemptAlreadyExited = $false
+    if ($attemptProcess) {
+        try {
+            $attemptProcess.Refresh()
+            $attemptAlreadyExited = $attemptProcess.HasExited
+        }
+        catch {
+            $waitProcessRaceObserved = $true
+            $attemptAlreadyExited = $true
+        }
     }
-    catch {
-        throw "The background conservative attempt did not finish inside the safety timeout: $($_.Exception.Message)"
+
+    if (-not $attemptAlreadyExited) {
+        try {
+            Wait-Process -Id $attemptProcess.Id -Timeout 1800 -ErrorAction Stop
+        }
+        catch {
+            $waitMessage = $_.Exception.Message
+            if ($waitMessage -like "*Cannot find a process with the process identifier*") {
+                $waitProcessRaceObserved = $true
+            }
+            else {
+                throw "The background conservative attempt did not finish inside the safety timeout: $waitMessage"
+            }
+        }
     }
+    $attemptProcessExitObservedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
 
     Stop-ClientProcessIfRunning -ProcessId $controlProcessId -Reason "final control cleanup" | Out-Null
     Stop-ClientProcessIfRunning -ProcessId $treatmentProcessId -Reason "final treatment cleanup" | Out-Null
@@ -2003,6 +2069,7 @@ $report = [ordered]@{
         join_succeeded = $treatmentHumanSignal
         join_target = [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "join_target" -Default ("127.0.0.1:{0}" -f $treatmentPort))
         process_id = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "ProcessId" -Default 0)
+        join_requested_at_utc = $treatmentJoinRequestedAtUtc
         join_attempt_count = $treatmentJoinAttemptCount
         join_retry_used = $treatmentJoinRetryUsed
         join_retry_reason = $treatmentJoinRetryReason
@@ -2031,8 +2098,12 @@ $report = [ordered]@{
     }
     control_switch_guidance = [ordered]@{
         helper_command = [string](Get-ObjectPropertyValue -Object $controlSwitchExecution -Name "CommandText" -Default "")
+        wait_started_at_utc = $controlSwitchWaitStartedAtUtc
         verdict_at_handoff = [string](Get-ObjectPropertyValue -Object $controlSwitchReport -Name "current_switch_verdict" -Default "")
         safe_to_leave_control = [bool](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlSwitchReport -Name "control_lane" -Default $null) -Name "safe_to_leave" -Default $false)
+        ready_to_leave_observed = $controlSwitchReadyToLeave
+        ready_observed_at_utc = $controlReadyObservedAtUtc
+        minimum_stay_satisfied_by = $controlMinimumStaySatisfiedBy
         control_remaining_human_snapshots = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlSwitchReport -Name "control_lane" -Default $null) -Name "remaining_human_snapshots" -Default 0)
         control_remaining_human_presence_seconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlSwitchReport -Name "control_lane" -Default $null) -Name "remaining_human_presence_seconds" -Default 0.0)
         explanation = $controlSwitchGuidanceExplanation
@@ -2075,6 +2146,13 @@ $report = [ordered]@{
         minimum_human_signal_thresholds_met = [bool](Get-ObjectPropertyValue -Object $certificate -Name "minimum_human_signal_thresholds_met" -Default $false)
         missing_grounding_targets = @([string[]](Get-ObjectPropertyValue -Object $missionAttainment -Name "targets_missed" -Default @()))
         missing_grounding_target_details = @($missingTargetDetails)
+    }
+    closeout = [ordered]@{
+        wait_started_at_utc = $closeoutWaitStartedAtUtc
+        attempt_process_exit_observed_at_utc = $attemptProcessExitObservedAtUtc
+        wait_process_race_observed = $waitProcessRaceObserved
+        pair_summary_present = -not [string]::IsNullOrWhiteSpace($pairSummaryPath)
+        final_session_docket_present = -not [string]::IsNullOrWhiteSpace($finalDocketPath)
     }
     closeout_stack_reused = Get-ObjectPropertyValue -Object $firstAttemptReport -Name "closeout_stack_reused" -Default $null
     artifacts = [ordered]@{

@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-62
+HLDM-JKBOTTI-AI-STAND-20260415-63
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -50,6 +50,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_entered_game_boundary.ps1` and `scripts/audit_entered_game_boundary.bat` for the comparative entered-the-game audit that lines up one successful bounded probe against failed repeated probes to decide whether the current divergence is a static launch mismatch, an admission race, or an early client-exit problem.
 - `scripts/audit_bounded_vs_full_session_divergence.ps1` and `scripts/audit_bounded_vs_full_session_divergence.bat` for the later workflow audit that compares a successful bounded probe against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`.
 - `scripts/run_control_phase_accumulation_probe.ps1` and `scripts/run_control_phase_accumulation_probe.bat` for the control-only strong-signal proof that keeps the human in the no-AI control lane until the stronger control target is either met or still proven short before another full control+treatment session is spent.
+- `scripts/audit_full_session_handoff.ps1` and `scripts/audit_full_session_handoff.bat` for the later full-session audit that reads the control-ready, treatment-join, treatment-phase, and closeout chain when a full conservative run already proved control readiness but still failed to finish treatment or final artifacts cleanly.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1174,6 +1175,20 @@ powershell -NoProfile -File .\scripts\run_control_phase_accumulation_probe.ps1
 - `control-phase-human-usable-but-below-strong-signal-target` means the control lane produced real human-usable evidence, but still stayed below the stronger `5` snapshots / `90` seconds bar
 - `control-phase-insufficient-human-signal` means the control-only proof still failed earlier, so another full control+treatment spend would still be premature
 - this helper differs from the broader client-presence and bounded-vs-full divergence audits because it is no longer asking whether the client can join at all; it is asking whether the full control-first workflow can hold enough real control-lane human signal to unlock the next full strong-signal spend honestly
+
+When the control-only proof already succeeds but a full strong-signal conservative rerun still fails during control-to-treatment handoff or final closeout, audit the later full-session chain directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_full_session_handoff.ps1
+```
+
+- this helper is later and narrower than `audit_bounded_vs_full_session_divergence.ps1`: it assumes the full session already proved control readiness and isolates what happened next between `control-ready`, treatment join invocation, treatment phase start, and final closeout
+- it reads `control_to_treatment_switch.json`, `conservative_phase_flow.json`, `treatment_patch_window.json`, `live_monitor_status.json`, `guided_session\mission_execution.json`, `guided_session\session_state.json`, `guided_session\final_session_docket.json` when present, pair/lane summaries, and the nearest human-participation runner stdout/stderr
+- `control-ready-not-observed-by-runner` means authoritative switch artifacts cleared control, but the full wrapper never persisted the same handoff observation
+- `control-ready-observed-but-treatment-join-not-invoked` means the full chain advanced out of control but no trustworthy local treatment join request or launch was captured
+- `treatment-phase-started-but-closeout-raced` means treatment-stage waiting began, but the session still exited without a trustworthy final pair pack
+- `closeout-raced-before-final-artifacts` means the pair root exists, but `pair_summary.json` and the final docket were truncated before the closeout stack finished
+- spend another full strong-signal conservative session only after the handoff audit is `handoff-chain-complete` or after one narrow repair plus one justified rerun proves treatment phase start and final artifact production without racing
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 

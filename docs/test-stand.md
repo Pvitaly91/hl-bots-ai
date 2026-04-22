@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-62
+HLDM-JKBOTTI-AI-STAND-20260415-63
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1154,6 +1154,19 @@ powershell -NoProfile -File .\scripts\run_control_phase_accumulation_probe.ps1
 - `control-phase-human-usable-but-below-strong-signal-target` means the control lane already became human-usable, but still stayed below the stronger `5` snapshots / `90` seconds bar
 - `control-phase-insufficient-human-signal` means the control-only proof still failed earlier and another full control+treatment spend would still be premature
 - this helper is narrower than the broader client-presence or bounded-vs-full divergence audits because it assumes admission is already workable and focuses only on proving or disproving full-session control accumulation
+
+When the control-only proof already succeeds but a full strong-signal conservative rerun still fails to turn control-ready into treatment and clean closeout, audit that later handoff chain directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_full_session_handoff.ps1
+```
+
+- this helper differs from the control-only proof because it starts after control is already safe to leave; it is not asking whether control can accumulate enough signal, only whether the full runner actually observes that readiness, launches treatment, and finishes closeout
+- this helper also differs from the bounded join-completion probe because it is not a one-lane launch test; it reads full pair-session artifacts such as `control_to_treatment_switch.json`, `conservative_phase_flow.json`, `treatment_patch_window.json`, `live_monitor_status.json`, `guided_session\mission_execution.json`, `guided_session\session_state.json`, and `guided_session\final_session_docket.json`
+- `control-ready-observed-but-treatment-join-not-invoked` means the full sequence left the control phase logically, but no trustworthy treatment join request or launch was saved
+- `treatment-phase-started-but-closeout-raced` means treatment-stage waiting began, but final pair artifacts still did not survive clean closeout
+- `closeout-raced-before-final-artifacts` means the pair root exists, but `pair_summary.json` or the final docket still disappeared before the session finished honestly
+- another full strong-signal conservative attempt is justified after this helper reaches `handoff-chain-complete` or after one narrow repair plus one justified rerun proves treatment-phase start and final artifact production
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

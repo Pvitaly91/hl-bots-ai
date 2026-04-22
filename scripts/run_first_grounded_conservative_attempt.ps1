@@ -193,16 +193,47 @@ function Find-LatestPairRootSince {
         return ""
     }
 
-    $candidate = Get-ChildItem -LiteralPath $Root -Filter "pair_summary.json" -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTimeUtc -ge $NotBeforeUtc } |
-        Sort-Object LastWriteTimeUtc -Descending |
+    $markerCandidates = New-Object System.Collections.Generic.List[object]
+    $markerSpecs = @(
+        @{ Filter = "pair_summary.json"; Depth = 0 },
+        @{ Filter = "mission_execution.json"; Depth = 1 },
+        @{ Filter = "control_to_treatment_switch.json"; Depth = 0 },
+        @{ Filter = "live_monitor_status.json"; Depth = 0 }
+    )
+
+    foreach ($spec in $markerSpecs) {
+        $matches = Get-ChildItem -LiteralPath $Root -Filter ([string]$spec.Filter) -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTimeUtc -ge $NotBeforeUtc }
+
+        foreach ($match in @($matches)) {
+            $pairRootCandidate = $match.DirectoryName
+            $depth = [int]$spec.Depth
+            for ($i = 0; $i -lt $depth; $i++) {
+                if ([string]::IsNullOrWhiteSpace($pairRootCandidate)) {
+                    break
+                }
+                $pairRootCandidate = Split-Path -Path $pairRootCandidate -Parent
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($pairRootCandidate)) {
+                $markerCandidates.Add([pscustomobject]@{
+                        pair_root = $pairRootCandidate
+                        last_write_time_utc = $match.LastWriteTimeUtc
+                        marker_path = $match.FullName
+                    }) | Out-Null
+            }
+        }
+    }
+
+    $candidate = @($markerCandidates.ToArray()) |
+        Sort-Object last_write_time_utc -Descending |
         Select-Object -First 1
 
     if ($null -eq $candidate) {
         return ""
     }
 
-    return $candidate.DirectoryName
+    return Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $candidate -Name "pair_root" -Default ""))
 }
 
 function Get-AttemptReportPaths {

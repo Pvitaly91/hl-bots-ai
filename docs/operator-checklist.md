@@ -38,6 +38,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\audit_first_human_snapshot_boundary.ps1` is available so a repeated probe that already reached `entered the game` can be audited specifically for the later boundary between authoritative telemetry history and saved lane summary reflection
 - `scripts\audit_bounded_vs_full_session_divergence.ps1` is available so a successful bounded probe can be compared directly against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`
 - `scripts\run_control_phase_accumulation_probe.ps1` is available so the operator can prove the full control-only phase can actually clear the stronger control target before spending another treatment-phase strong-signal session
+- `scripts\audit_full_session_handoff.ps1` is available so a full strong-signal session that already proved control readiness can be audited specifically for the later control-ready -> treatment-join -> closeout chain
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -221,6 +222,11 @@ Default ports and lanes:
 78. Read `control_phase_accumulation_probe.json` / `.md` as the control-only proof: stronger control target, actual control snapshots and seconds, whether control became merely human-usable, whether control really cleared the stronger target, and whether another full strong-signal control+treatment attempt is justified.
 79. Treat `control-phase-human-usable-but-below-strong-signal-target` as a real but incomplete result. It means the control lane admitted and accumulated meaningful human signal, but still stayed short of the stronger control bar, so the next step remains control-phase work.
 80. Treat `control-phase-strong-signal-target-met` as the explicit green light to return to one full strong-signal conservative control+treatment attempt. Do not jump back to treatment just because control was merely human-usable.
+81. If control-only proof already succeeded but the next full strong-signal conservative rerun still failed during the handoff to treatment or during final closeout, run `powershell -NoProfile -File .\scripts\audit_full_session_handoff.ps1 -PairRoot <failed-full-pair-root>`.
+82. Read `full_session_handoff_audit.json` / `.md` as the later-chain answer: when control became ready, when the runner observed control-ready, whether treatment join was requested, whether treatment ever started, when closeout wait began, and whether final artifacts were produced or truncated.
+83. Treat `control-ready-observed-but-treatment-join-not-invoked` as a handoff propagation problem. Control really did clear, but the full wrapper still failed to persist or execute the treatment join step.
+84. Treat `treatment-phase-started-but-closeout-raced` as later progress, not success. Treatment-stage waiting began, but the pair still exited before a trustworthy final evidence pack was written.
+85. Return to another full strong-signal conservative attempt only after the handoff audit reaches `handoff-chain-complete` or after one narrow repair plus one justified rerun proves treatment-phase start and final artifact production without racing.
 
 ## What Counts As Insufficient Data
 
