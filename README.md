@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-61
+HLDM-JKBOTTI-AI-STAND-20260415-62
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -49,6 +49,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_first_human_snapshot_boundary.ps1` and `scripts/audit_first_human_snapshot_boundary.bat` for the later ingestion-boundary audit that compares authoritative server and telemetry evidence against saved lane summary artifacts when a player already entered the game but the first counted human snapshot still appears missing.
 - `scripts/audit_entered_game_boundary.ps1` and `scripts/audit_entered_game_boundary.bat` for the comparative entered-the-game audit that lines up one successful bounded probe against failed repeated probes to decide whether the current divergence is a static launch mismatch, an admission race, or an early client-exit problem.
 - `scripts/audit_bounded_vs_full_session_divergence.ps1` and `scripts/audit_bounded_vs_full_session_divergence.bat` for the later workflow audit that compares a successful bounded probe against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`.
+- `scripts/run_control_phase_accumulation_probe.ps1` and `scripts/run_control_phase_accumulation_probe.bat` for the control-only strong-signal proof that keeps the human in the no-AI control lane until the stronger control target is either met or still proven short before another full control+treatment session is spent.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1161,6 +1162,18 @@ Use that divergence audit differently from the broader client-presence audit and
 - spend another full strong-signal conservative session only after the divergence audit shows the full-session path is back in line with the already-working bounded join path; otherwise stay on bounded diagnosis and repair
 - `human-presence-accumulating` means the later summary layer is no longer the blocker and saved human-presence time is actually building
 - this helper differs from `audit_client_presence.ps1`: the broader audit finds the chain stage, while the first-human-snapshot audit isolates whether the break is enumeration, human classification, persisted telemetry, or summary aggregation
+
+When the full-session join path already works but the latest strong-signal session still stopped short in control, prove the control-only accumulation gate before spending treatment again:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_control_phase_accumulation_probe.ps1
+```
+
+- this helper is narrower than a full strong-signal session: it reuses the strong-signal mission, local client discovery, join helper, control-first gate, and existing closeout stack, but keeps the human in the no-AI control lane only
+- `control-phase-strong-signal-target-met` means the control-only run really did clear the stronger control target, so the next full strong-signal conservative control+treatment attempt is justified
+- `control-phase-human-usable-but-below-strong-signal-target` means the control lane produced real human-usable evidence, but still stayed below the stronger `5` snapshots / `90` seconds bar
+- `control-phase-insufficient-human-signal` means the control-only proof still failed earlier, so another full control+treatment spend would still be premature
+- this helper differs from the broader client-presence and bounded-vs-full divergence audits because it is no longer asking whether the client can join at all; it is asking whether the full control-first workflow can hold enough real control-lane human signal to unlock the next full strong-signal spend honestly
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 

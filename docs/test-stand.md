@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-61
+HLDM-JKBOTTI-AI-STAND-20260415-62
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1142,6 +1142,18 @@ powershell -NoProfile -File .\scripts\audit_bounded_vs_full_session_divergence.p
 - `bounded-success-full-summary-ingestion-missing` means the full session reached the same authoritative join boundary as the bounded probe, but later pair/lane reflection still diverged
 - spend another full strong-signal conservative session only after the divergence audit shows the full-session path is aligned with the working bounded path or after one bounded-plus-full validation pair confirms the repair
 - use this helper after the startup audit and after the broader join-completion probe when the break point is clearly between authoritative player entry and saved summary reflection
+
+When the join path already survives inside the full workflow but control-side accumulation still stops short of the stronger target, prove the control-only phase before another treatment spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_control_phase_accumulation_probe.ps1
+```
+
+- this helper keeps the human in the no-AI control lane only and reuses the strong-signal mission, local client discovery, join helper, control-first gate, and existing closeout artifacts
+- `control-phase-strong-signal-target-met` means the full control phase really did clear the stronger target, so the next full strong-signal conservative control+treatment attempt is justified
+- `control-phase-human-usable-but-below-strong-signal-target` means the control lane already became human-usable, but still stayed below the stronger `5` snapshots / `90` seconds bar
+- `control-phase-insufficient-human-signal` means the control-only proof still failed earlier and another full control+treatment spend would still be premature
+- this helper is narrower than the broader client-presence or bounded-vs-full divergence audits because it assumes admission is already workable and focuses only on proving or disproving full-session control accumulation
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

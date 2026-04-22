@@ -37,6 +37,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\audit_entered_game_boundary.ps1` is available so one successful bounded probe can be compared directly against failed repeated probes when the current instability is between server connect and fully entering the game
 - `scripts\audit_first_human_snapshot_boundary.ps1` is available so a repeated probe that already reached `entered the game` can be audited specifically for the later boundary between authoritative telemetry history and saved lane summary reflection
 - `scripts\audit_bounded_vs_full_session_divergence.ps1` is available so a successful bounded probe can be compared directly against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`
+- `scripts\run_control_phase_accumulation_probe.ps1` is available so the operator can prove the full control-only phase can actually clear the stronger control target before spending another treatment-phase strong-signal session
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -216,6 +217,10 @@ Default ports and lanes:
 74. Treat `bounded-success-full-summary-ingestion-missing` as a later full-session reflection problem. That verdict means the full run reached the same authoritative join boundary as the bounded probe, but pair/lane summaries still diverged afterward.
 75. Spend another full strong-signal conservative session only after the divergence audit shows the full-session path is aligned with the already-working bounded path or after one bounded-plus-full validation pair confirms the repair.
 76. Treat `partially-reliable` as a real improvement, not as readiness. The current readiness policy is intentionally strict: every repeated bounded attempt in the suite must reach entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget before another full strong-signal conservative session is justified.
+77. If the full-session join path now survives but the latest strong-signal conservative run still stopped at `2` control snapshots / `40` control seconds, run `powershell -NoProfile -File .\scripts\run_control_phase_accumulation_probe.ps1` before spending treatment again.
+78. Read `control_phase_accumulation_probe.json` / `.md` as the control-only proof: stronger control target, actual control snapshots and seconds, whether control became merely human-usable, whether control really cleared the stronger target, and whether another full strong-signal control+treatment attempt is justified.
+79. Treat `control-phase-human-usable-but-below-strong-signal-target` as a real but incomplete result. It means the control lane admitted and accumulated meaningful human signal, but still stayed short of the stronger control bar, so the next step remains control-phase work.
+80. Treat `control-phase-strong-signal-target-met` as the explicit green light to return to one full strong-signal conservative control+treatment attempt. Do not jump back to treatment just because control was merely human-usable.
 
 ## What Counts As Insufficient Data
 
