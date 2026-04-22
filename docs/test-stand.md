@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-57
+HLDM-JKBOTTI-AI-STAND-20260415-59
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1103,6 +1103,18 @@ powershell -NoProfile -File .\scripts\audit_probe_lane_startup.ps1 -ProbeRoot .\
 - `lane-root-created-no-port-ready` means the lane root exists, but the bounded control lane still never became ready on the target port
 - `port-ready-no-join-invocation` means the bounded control lane cleared startup readiness, but the join helper still was not invoked
 - only return to another full strong-signal conservative attempt after repeated bounded probes reliably clear the startup/materialization gates and any remaining break point is later in the join or telemetry chain
+
+When startup is already healthy but repeated probes still fail before `entered the game` becomes reliable, compare a known successful bounded probe against the failed repeated probes directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_entered_game_boundary.ps1 -UseLatest
+```
+
+- this entered-the-game audit is narrower than the broader client-presence audit: it compares successful and failed bounded probes around launch, connect, and admission timing only
+- it checks launch-command equivalence, working-directory equivalence, lane-ready timing, server-side `connected` / `entered the game` timestamps, and any saved early client-exit evidence
+- `connected-but-never-entered-game` means at least one failed repeated probe reaches server connect, but still does not cross into the fully admitted in-game state
+- `entered-game-racy` means the same launch path already succeeded once and the lane was ready before launch, so the remaining divergence is timing/admission reliability rather than a static configuration mismatch
+- stay in bounded-probe mode until the repeated reliability matrix shows the entered-the-game boundary is stable across the suite, not just on one successful probe
 
 When the repeated probe already reaches `entered the game`, but the first saved human snapshot still appears missing, run the narrower first-human-snapshot boundary audit:
 

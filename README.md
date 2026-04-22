@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-57
+HLDM-JKBOTTI-AI-STAND-20260415-59
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -47,6 +47,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_client_join_reliability_matrix.ps1` and `scripts/run_client_join_reliability_matrix.bat` for repeated bounded control-lane probes, per-attempt join-stage classification, and a conservative readiness certificate that says whether the repaired local client path is still not ready, only partially reliable, or ready for the next full strong-signal conservative attempt.
 - `scripts/audit_probe_lane_startup.ps1` and `scripts/audit_probe_lane_startup.bat` for the narrower startup/materialization audit that explains whether a failed bounded probe died before lane-root creation, before port-ready, or before join invocation.
 - `scripts/audit_first_human_snapshot_boundary.ps1` and `scripts/audit_first_human_snapshot_boundary.bat` for the later ingestion-boundary audit that compares authoritative server and telemetry evidence against saved lane summary artifacts when a player already entered the game but the first counted human snapshot still appears missing.
+- `scripts/audit_entered_game_boundary.ps1` and `scripts/audit_entered_game_boundary.bat` for the comparative entered-the-game audit that lines up one successful bounded probe against failed repeated probes to decide whether the current divergence is a static launch mismatch, an admission race, or an early client-exit problem.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1114,6 +1115,20 @@ Use that startup audit differently from the later join-completion audit:
 - `lane-root-created-no-port-ready` means the lane root exists, but the bounded control lane still never reached a ready listener
 - `port-ready-no-join-invocation` means startup cleared the lane-root and port-ready gates, but the join helper still was not called
 - only move back to a full strong-signal conservative session after the repeated bounded suite consistently clears startup/materialization and the remaining break, if any, is later in the join or telemetry chain
+
+When startup is already healthy but repeated probes still do not reliably cross from `connected` into `entered the game`, compare one successful bounded probe against the failed repeated probes directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_entered_game_boundary.ps1 -UseLatest
+```
+
+Use that entered-the-game audit differently from the broader client-presence audit:
+
+- it compares one successful bounded probe against failed repeated probes instead of re-auditing the whole pair workflow
+- it checks launch-command equivalence, working-directory equivalence, lane-ready timing, client-PID lifetime evidence, and the first server-side `connected` / `entered the game` timestamps
+- `connected-but-never-entered-game` means at least one failed repeated probe now reaches server connect, but admission still stops before the player is fully in game
+- `entered-game-racy` means the same launch path already succeeded once and the lane is ready before launch, but repeated probes still fail inconsistently, so the narrowest divergence is timing/admission reliability rather than static configuration
+- only return to a full strong-signal conservative session after the repeated matrix shows the entered-the-game boundary is stable across the bounded suite, not just on one lucky probe
 
 When the server already shows `entered the game`, but the first saved human snapshot still appears missing, run the narrower first-human-snapshot boundary audit against the probe root:
 

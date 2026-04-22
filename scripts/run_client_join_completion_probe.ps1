@@ -13,6 +13,9 @@ param(
     [int]$MinHumanSnapshots = 1,
     [int]$MinHumanPresenceSeconds = 10,
     [int]$JoinDelaySeconds = 5,
+    [int]$JoinRetryGraceSeconds = 18,
+    [int]$JoinRetrySpacingSeconds = 3,
+    [int]$MaxJoinAttempts = 2,
     [int]$PollSeconds = 2,
     [switch]$DryRun
 )
@@ -390,6 +393,64 @@ function Get-ConnectionEvidence {
     }
 }
 
+function Get-ConnectionEvidenceFromLogPath {
+    param([string]$Path)
+
+    $resolvedPath = Resolve-ExistingPath -Path $Path
+    if (-not $resolvedPath) {
+        return [pscustomobject]@{
+            connected_lines = @()
+            entered_game_lines = @()
+            raw_entered_game_lines = @()
+            connected_players = @()
+        }
+    }
+
+    return Get-ConnectionEvidence -LogLines @(Get-Content -LiteralPath $resolvedPath)
+}
+
+function Get-HldsLineTimestampUtcString {
+    param([string]$Line)
+
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return ""
+    }
+
+    if ($Line -match '^L\s+(?<month>\d{2})/(?<day>\d{2})/(?<year>\d{4})\s+-\s+(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2}):') {
+        try {
+            $localTime = Get-Date -Year ([int]$Matches["year"]) -Month ([int]$Matches["month"]) -Day ([int]$Matches["day"]) `
+                -Hour ([int]$Matches["hour"]) -Minute ([int]$Matches["minute"]) -Second ([int]$Matches["second"])
+            return $localTime.ToUniversalTime().ToString("o")
+        }
+        catch {
+            return ""
+        }
+    }
+
+    return ""
+}
+
+function Invoke-JoinAttempt {
+    param(
+        [string]$JoinScriptPath,
+        [int]$Port,
+        [string]$Map,
+        [string]$ClientExePath
+    )
+
+    $execution = & $JoinScriptPath -Lane Control -Port $Port -Map $Map -ClientExePath $ClientExePath
+    $processId = [int](Get-ObjectPropertyValue -Object $execution -Name "ProcessId" -Default 0)
+    $launchStartedAtUtc = [string](Get-ObjectPropertyValue -Object $execution -Name "LaunchStartedAtUtc" -Default "")
+    $resultVerdict = [string](Get-ObjectPropertyValue -Object $execution -Name "ResultVerdict" -Default "")
+
+    return [pscustomobject]@{
+        execution = $execution
+        process_id = $processId
+        launch_started_at_utc = $launchStartedAtUtc
+        result_verdict = $resultVerdict
+    }
+}
+
 function Get-StageRecord {
     param(
         [string]$StageName,
@@ -444,9 +505,14 @@ function Get-ProbeMarkdown {
     $lines.Add("- Requested capture seconds: $($Report.thresholds.duration_seconds)") | Out-Null
     $lines.Add("- Human join grace seconds: $($Report.thresholds.human_join_grace_seconds)") | Out-Null
     $lines.Add("- Launch command prepared: $(Get-BoolString -Value ([bool]$Report.launch_observability.launch_command_prepared))") | Out-Null
+    $lines.Add("- Join retry grace seconds: $($Report.thresholds.join_retry_grace_seconds)") | Out-Null
+    $lines.Add("- Join retry spacing seconds: $($Report.thresholds.join_retry_spacing_seconds)") | Out-Null
+    $lines.Add("- Max join attempts: $($Report.thresholds.max_join_attempts)") | Out-Null
     $lines.Add("- Client path: $($Report.launch_observability.client_path)") | Out-Null
     $lines.Add("- Client working directory: $($Report.launch_observability.client_working_directory)") | Out-Null
     $lines.Add("- Join target: $($Report.launch_observability.join_target)") | Out-Null
+    $lines.Add("- Join attempt count: $($Report.launch_observability.join_attempt_count)") | Out-Null
+    $lines.Add("- Join retry used: $(Get-BoolString -Value ([bool]$Report.launch_observability.join_retry_used))") | Out-Null
     $lines.Add("- Probe lane output root: $($Report.launch_observability.probe_lane_output_root)") | Out-Null
     $lines.Add("- qconsole path: $($Report.launch_observability.qconsole_path)") | Out-Null
     $lines.Add("- debug log path: $($Report.launch_observability.debug_log_path)") | Out-Null
@@ -493,6 +559,8 @@ function Get-ProbeMarkdown {
     $lines.Add("- Entered-the-game observed: $(Get-BoolString -Value ([bool]$Report.final_metrics.entered_the_game_seen))") | Out-Null
     $lines.Add("- First human snapshot observed: $(Get-BoolString -Value ([bool]$Report.final_metrics.first_human_snapshot_seen))") | Out-Null
     $lines.Add("- Human presence accumulating: $(Get-BoolString -Value ([bool]$Report.final_metrics.human_presence_accumulating))") | Out-Null
+    $lines.Add("- First server connection timestamp UTC: $($Report.final_metrics.first_server_connection_seen_at_utc)") | Out-Null
+    $lines.Add("- First entered-the-game timestamp UTC: $($Report.final_metrics.first_entered_the_game_seen_at_utc)") | Out-Null
     $lines.Add("") | Out-Null
     $lines.Add("## Artifacts") | Out-Null
     $lines.Add("") | Out-Null
@@ -545,6 +613,14 @@ $probeLaneRoot = ""
 $joinExecution = $null
 $joinProcessId = 0
 $joinStartedAtUtc = ""
+$joinAttempts = New-Object System.Collections.Generic.List[object]
+$joinRetryUsed = $false
+$joinRetryReason = ""
+$joinRetryTriggeredAtUtc = ""
+$latestConnectedLine = ""
+$latestEnteredGameLine = ""
+$firstServerConnectionSeenAtUtc = ""
+$firstEnteredGameSeenAtUtc = ""
 $postQconsoleSnapshot = $preQconsoleSnapshot
 $postDebugSnapshot = $preDebugSnapshot
 $qconsoleCopyPath = ""
@@ -636,15 +712,36 @@ try {
         $probeLaneRoot = $laneRootWait.LaneRoot
         Write-Host "  Lane-root readiness: $($laneRootWait.Explanation)"
 
+        $joinScriptPath = Join-Path $PSScriptRoot "join_live_pair_lane.ps1"
+        $maxJoinAttemptsResolved = [Math]::Max(1, $MaxJoinAttempts)
+
         if ($portReady) {
             if ($JoinDelaySeconds -gt 0) {
                 Start-Sleep -Seconds $JoinDelaySeconds
             }
 
-            $joinScriptPath = Join-Path $PSScriptRoot "join_live_pair_lane.ps1"
-            $joinExecution = & $joinScriptPath -Lane Control -Port $Port -Map $Map -ClientExePath $launchPlan.client_exe_path
-            $joinProcessId = [int](Get-ObjectPropertyValue -Object $joinExecution -Name "ProcessId" -Default 0)
-            $joinStartedAtUtc = [string](Get-ObjectPropertyValue -Object $joinExecution -Name "LaunchStartedAtUtc" -Default "")
+            $joinAttempt = Invoke-JoinAttempt -JoinScriptPath $joinScriptPath -Port $Port -Map $Map -ClientExePath $launchPlan.client_exe_path
+            $joinExecution = $joinAttempt.execution
+            $joinProcessId = $joinAttempt.process_id
+            $joinStartedAtUtc = $joinAttempt.launch_started_at_utc
+            $joinAttempts.Add([pscustomobject]@{
+                    attempt_index = 1
+                    helper_result_verdict = [string]$joinAttempt.result_verdict
+                    process_id = $joinProcessId
+                    launched_at_utc = $joinStartedAtUtc
+                    join_target = [string]$launchPlan.join_info.LoopbackAddress
+                    launch_command = [string]$launchPlan.command_text
+                    client_working_directory = [string]$launchPlan.client_working_directory
+                    process_observed_running = $false
+                    process_alive_first_seen_at_utc = ""
+                    process_alive_last_seen_at_utc = ""
+                    process_exit_observed_at_utc = ""
+                    process_runtime_seconds = $null
+                    server_connection_seen = $false
+                    entered_game_seen = $false
+                    exited_before_server_connect = $false
+                    exited_before_entered_game = $false
+                }) | Out-Null
             Write-Host "  Join helper verdict: $([string](Get-ObjectPropertyValue -Object $joinExecution -Name 'ResultVerdict' -Default ''))"
         }
         else {
@@ -654,6 +751,118 @@ try {
         $probeDeadlineUtc = (Get-Date).ToUniversalTime().AddSeconds([Math]::Max(90, $HumanJoinGraceSeconds + $DurationSeconds + 30))
         while ($null -ne $probeProcess -and -not $probeProcess.HasExited -and (Get-Date).ToUniversalTime() -lt $probeDeadlineUtc) {
             $telemetrySnapshotObserved = $telemetrySnapshotObserved -or (Test-Path -LiteralPath $liveTelemetryPath)
+
+            $liveLaneStdoutLogPath = if ($probeLaneRoot) { Resolve-ExistingPath -Path (Join-Path $probeLaneRoot "hlds.stdout.log") } else { "" }
+            $liveConnectionEvidence = Get-ConnectionEvidenceFromLogPath -Path $liveLaneStdoutLogPath
+            if (@($liveConnectionEvidence.connected_lines).Count -gt 0) {
+                $latestConnectedLine = [string]$liveConnectionEvidence.connected_lines[0]
+                if (-not $firstServerConnectionSeenAtUtc) {
+                    $firstServerConnectionSeenAtUtc = Get-HldsLineTimestampUtcString -Line $latestConnectedLine
+                }
+            }
+            if (@($liveConnectionEvidence.entered_game_lines).Count -gt 0) {
+                $latestEnteredGameLine = [string]$liveConnectionEvidence.entered_game_lines[0]
+                if (-not $firstEnteredGameSeenAtUtc) {
+                    $firstEnteredGameSeenAtUtc = Get-HldsLineTimestampUtcString -Line $latestEnteredGameLine
+                }
+            }
+
+            if ($joinAttempts.Count -gt 0) {
+                $currentAttemptRecord = $joinAttempts[$joinAttempts.Count - 1]
+                $currentAttemptProcessId = [int](Get-ObjectPropertyValue -Object $currentAttemptRecord -Name "process_id" -Default 0)
+                if ($currentAttemptProcessId -gt 0) {
+                    $runningClientProcess = Get-Process -Id $currentAttemptProcessId -ErrorAction SilentlyContinue
+                    if ($null -ne $runningClientProcess) {
+                        $currentAttemptRecord.process_observed_running = $true
+                        if (-not $currentAttemptRecord.process_alive_first_seen_at_utc) {
+                            $currentAttemptRecord.process_alive_first_seen_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+                        }
+                        $currentAttemptRecord.process_alive_last_seen_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+                    }
+                    elseif (-not $currentAttemptRecord.process_exit_observed_at_utc) {
+                        $currentAttemptRecord.process_exit_observed_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+                        $launchedAtValue = [string](Get-ObjectPropertyValue -Object $currentAttemptRecord -Name "launched_at_utc" -Default "")
+                        if ($launchedAtValue) {
+                            try {
+                                $currentAttemptRecord.process_runtime_seconds = [Math]::Round((((Get-Date).ToUniversalTime()) - ([datetime]$launchedAtValue)).TotalSeconds, 1)
+                            }
+                            catch {
+                                $currentAttemptRecord.process_runtime_seconds = $null
+                            }
+                        }
+                        $currentAttemptRecord.exited_before_server_connect = -not [bool]$latestConnectedLine
+                        $currentAttemptRecord.exited_before_entered_game = -not [bool]$latestEnteredGameLine
+                    }
+                }
+                $currentAttemptRecord.server_connection_seen = [bool]$latestConnectedLine
+                $currentAttemptRecord.entered_game_seen = [bool]$latestEnteredGameLine
+            }
+
+            $shouldRetryJoin = $false
+            if (
+                $joinAttempts.Count -gt 0 -and
+                $joinAttempts.Count -lt $maxJoinAttemptsResolved -and
+                -not $latestConnectedLine -and
+                -not $latestEnteredGameLine
+            ) {
+                $currentAttemptRecord = $joinAttempts[$joinAttempts.Count - 1]
+                $launchedAtValue = [string](Get-ObjectPropertyValue -Object $currentAttemptRecord -Name "launched_at_utc" -Default "")
+                $processExitedAtValue = [string](Get-ObjectPropertyValue -Object $currentAttemptRecord -Name "process_exit_observed_at_utc" -Default "")
+                $elapsedSinceJoinLaunchSeconds = 0.0
+                if ($launchedAtValue) {
+                    try {
+                        $elapsedSinceJoinLaunchSeconds = (((Get-Date).ToUniversalTime()) - ([datetime]$launchedAtValue)).TotalSeconds
+                    }
+                    catch {
+                        $elapsedSinceJoinLaunchSeconds = 0.0
+                    }
+                }
+
+                if ($processExitedAtValue) {
+                    $shouldRetryJoin = $true
+                    $joinRetryReason = "client-process-exited-before-server-connect"
+                }
+                elseif ($elapsedSinceJoinLaunchSeconds -ge [double]$JoinRetryGraceSeconds) {
+                    $shouldRetryJoin = $true
+                    $joinRetryReason = "no-server-connect-within-retry-grace-window"
+                }
+            }
+
+            if ($shouldRetryJoin) {
+                $joinRetryUsed = $true
+                $joinRetryTriggeredAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+                Stop-ProcessIfRunning -ProcessId $joinProcessId -Reason "bounded join probe retry" | Out-Null
+                if ($JoinRetrySpacingSeconds -gt 0) {
+                    Start-Sleep -Seconds $JoinRetrySpacingSeconds
+                }
+
+                $nextAttemptIndex = $joinAttempts.Count + 1
+                $joinAttempt = Invoke-JoinAttempt -JoinScriptPath $joinScriptPath -Port $Port -Map $Map -ClientExePath $launchPlan.client_exe_path
+                $joinExecution = $joinAttempt.execution
+                $joinProcessId = $joinAttempt.process_id
+                $joinStartedAtUtc = $joinAttempt.launch_started_at_utc
+                $joinAttempts.Add([pscustomobject]@{
+                        attempt_index = $nextAttemptIndex
+                        helper_result_verdict = [string]$joinAttempt.result_verdict
+                        process_id = $joinProcessId
+                        launched_at_utc = $joinStartedAtUtc
+                        join_target = [string]$launchPlan.join_info.LoopbackAddress
+                        launch_command = [string]$launchPlan.command_text
+                        client_working_directory = [string]$launchPlan.client_working_directory
+                        process_observed_running = $false
+                        process_alive_first_seen_at_utc = ""
+                        process_alive_last_seen_at_utc = ""
+                        process_exit_observed_at_utc = ""
+                        process_runtime_seconds = $null
+                        server_connection_seen = $false
+                        entered_game_seen = $false
+                        exited_before_server_connect = $false
+                        exited_before_entered_game = $false
+                    }) | Out-Null
+                Write-Host ("  Join retry {0}/{1}: {2}" -f $nextAttemptIndex, $maxJoinAttemptsResolved, $joinRetryReason)
+                Write-Host "  Join helper verdict: $([string](Get-ObjectPropertyValue -Object $joinExecution -Name 'ResultVerdict' -Default ''))"
+            }
+
             Start-Sleep -Seconds ([Math]::Max(1, $PollSeconds))
             try {
                 $probeProcess.Refresh()
@@ -661,6 +870,27 @@ try {
             catch {
                 break
             }
+        }
+
+        foreach ($attempt in @($joinAttempts.ToArray())) {
+            if ($null -eq (Get-ObjectPropertyValue -Object $attempt -Name "process_runtime_seconds" -Default $null)) {
+                $launchedAtValue = [string](Get-ObjectPropertyValue -Object $attempt -Name "launched_at_utc" -Default "")
+                $lastSeenAtValue = [string](Get-ObjectPropertyValue -Object $attempt -Name "process_alive_last_seen_at_utc" -Default "")
+                if ($launchedAtValue -and $lastSeenAtValue) {
+                    try {
+                        $attempt.process_runtime_seconds = [Math]::Round((([datetime]$lastSeenAtValue) - ([datetime]$launchedAtValue)).TotalSeconds, 1)
+                    }
+                    catch {
+                        $attempt.process_runtime_seconds = $null
+                    }
+                }
+            }
+        }
+
+        if ($joinAttempts.Count -gt 0) {
+            $finalAttemptRecord = $joinAttempts[$joinAttempts.Count - 1]
+            $finalAttemptRecord.server_connection_seen = [bool]$latestConnectedLine
+            $finalAttemptRecord.entered_game_seen = [bool]$latestEnteredGameLine
         }
 
         if ($null -ne $probeProcess) {
@@ -677,7 +907,10 @@ try {
     }
 }
 finally {
-    Stop-ProcessIfRunning -ProcessId $joinProcessId -Reason "bounded join probe cleanup" | Out-Null
+    foreach ($attempt in @($joinAttempts.ToArray())) {
+        $attemptProcessId = [int](Get-ObjectPropertyValue -Object $attempt -Name "process_id" -Default 0)
+        Stop-ProcessIfRunning -ProcessId $attemptProcessId -Reason "bounded join probe cleanup" | Out-Null
+    }
 }
 
 $postQconsoleSnapshot = Get-FileSnapshot -Path $launchPlan.qconsole_path
@@ -975,6 +1208,9 @@ $report = [ordered]@{
         duration_seconds = $DurationSeconds
         human_join_grace_seconds = $HumanJoinGraceSeconds
         join_delay_seconds = $JoinDelaySeconds
+        join_retry_grace_seconds = $JoinRetryGraceSeconds
+        join_retry_spacing_seconds = $JoinRetrySpacingSeconds
+        max_join_attempts = [Math]::Max(1, $MaxJoinAttempts)
         poll_seconds = $PollSeconds
     }
     launch_observability = [ordered]@{
@@ -991,6 +1227,12 @@ $report = [ordered]@{
         control_join_helper_result_verdict = [string](Get-ObjectPropertyValue -Object $joinExecution -Name "ResultVerdict" -Default "")
         client_process_id = $joinProcessId
         launch_started_at_utc = $joinStartedAtUtc
+        initial_launch_started_at_utc = if ($joinAttempts.Count -gt 0) { [string](Get-ObjectPropertyValue -Object $joinAttempts[0] -Name "launched_at_utc" -Default "") } else { "" }
+        join_attempt_count = $joinAttempts.Count
+        join_retry_used = $joinRetryUsed
+        join_retry_reason = $joinRetryReason
+        join_retry_triggered_at_utc = $joinRetryTriggeredAtUtc
+        join_attempts = @($joinAttempts.ToArray())
         probe_lane_command = $evalCommandText
         probe_lane_process_id = if ($null -ne $probeProcess) { $probeProcess.Id } else { 0 }
         probe_lane_launch_attempted = $null -ne $probeProcess
@@ -1008,6 +1250,8 @@ $report = [ordered]@{
         join_helper_skipped_reason = $joinSkippedReason
         lane_output_root = $laneOutputRoot
         lane_root = $probeLaneRoot
+        first_server_connection_seen_at_utc = $firstServerConnectionSeenAtUtc
+        first_entered_the_game_seen_at_utc = $firstEnteredGameSeenAtUtc
     }
     qconsole_snapshot_before = $preQconsoleSnapshot
     qconsole_snapshot_after = $postQconsoleSnapshot
@@ -1027,6 +1271,8 @@ $report = [ordered]@{
         server_connection_seen = @($controlConnectionEvidence.connected_lines).Count -gt 0
         entered_the_game_seen = $enteredGameEquivalentSeen
         entered_the_game_seen_exact = $enteredGameSeenExact
+        first_server_connection_seen_at_utc = $firstServerConnectionSeenAtUtc
+        first_entered_the_game_seen_at_utc = $firstEnteredGameSeenAtUtc
         first_human_snapshot_seen = $firstHumanSnapshotSeen
         human_presence_accumulating = $humanPresenceAccumulating
         control_lane_human_usable = $controlLaneHumanUsable
