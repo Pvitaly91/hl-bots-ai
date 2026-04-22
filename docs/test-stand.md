@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-63
+HLDM-JKBOTTI-AI-STAND-20260415-64
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1167,6 +1167,20 @@ powershell -NoProfile -File .\scripts\audit_full_session_handoff.ps1
 - `treatment-phase-started-but-closeout-raced` means treatment-stage waiting began, but final pair artifacts still did not survive clean closeout
 - `closeout-raced-before-final-artifacts` means the pair root exists, but `pair_summary.json` or the final docket still disappeared before the session finished honestly
 - another full strong-signal conservative attempt is justified after this helper reaches `handoff-chain-complete` or after one narrow repair plus one justified rerun proves treatment-phase start and final artifact production
+
+When the latest repaired full rerun already counts as grounded evidence but still fails to capture treatment-side strong-signal evidence, audit that gap like this before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -UseLatest -DryRun
+powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -PairRoot .\lab\logs\eval\ssca53-live\<pair-pack> -DryRun
+```
+
+- this helper is narrower than the broader grounded-evidence matrix because it assumes a valid grounded pair already exists and asks only whether the remaining treatment-side strong-signal gap is real
+- it also differs from `reconcile_pair_metrics.ps1`: that helper reconciles a counted pair generally, while this one applies a treatment strong-signal precedence order and says whether wrapper drift is merely narrative or actually substantive
+- canonical sources are `pair_summary.json`, treatment `summary.json`, `grounded_evidence_certificate.json`, patch history, patch-apply history, telemetry history, and human-presence timing
+- secondary sources are `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, `strong_signal_conservative_attempt.json`, and related wrapper summaries
+- `strong-signal-gap-real-treatment-still-short` means the next full conservative session must still capture the missing treatment-side event or window
+- `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, and `strong-signal-criteria-met-but-wrapper-stale` are refresh-only branches; dry-run first and execute only the listed safe secondary refresh commands when the helper says promotion state stays unchanged
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

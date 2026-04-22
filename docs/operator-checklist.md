@@ -39,6 +39,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\audit_bounded_vs_full_session_divergence.ps1` is available so a successful bounded probe can be compared directly against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`
 - `scripts\run_control_phase_accumulation_probe.ps1` is available so the operator can prove the full control-only phase can actually clear the stronger control target before spending another treatment-phase strong-signal session
 - `scripts\audit_full_session_handoff.ps1` is available so a full strong-signal session that already proved control readiness can be audited specifically for the later control-ready -> treatment-join -> closeout chain
+- `scripts\audit_treatment_strong_signal_gap.ps1` is available so a valid grounded full rerun that still missed strong-signal capture can be audited specifically for treatment-side evidence shortfall vs wrapper drift
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -227,6 +228,11 @@ Default ports and lanes:
 83. Treat `control-ready-observed-but-treatment-join-not-invoked` as a handoff propagation problem. Control really did clear, but the full wrapper still failed to persist or execute the treatment join step.
 84. Treat `treatment-phase-started-but-closeout-raced` as later progress, not success. Treatment-stage waiting began, but the pair still exited before a trustworthy final evidence pack was written.
 85. Return to another full strong-signal conservative attempt only after the handoff audit reaches `handoff-chain-complete` or after one narrow repair plus one justified rerun proves treatment-phase start and final artifact production without racing.
+86. If the latest full rerun already counts as grounded evidence but strong-signal still stayed at zero, run `powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -UseLatest -DryRun`.
+87. Read `treatment_strong_signal_gap_audit.json` / `.md` as the treatment-side consistency answer: which sources are canonical, which are secondary, whether treatment snapshots / seconds / patch events / post-patch window actually met target, and whether any disagreement is substantive or only wrapper drift.
+88. Treat `strong-signal-gap-real-treatment-still-short` as a real evidence shortfall. Another full conservative session is justified only if the missing treatment-side event or window still has to be collected live.
+89. Treat `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, or `strong-signal-criteria-met-but-wrapper-stale` as refresh-only branches. Dry-run first, then use `-ExecuteRefresh` only when the helper explicitly says the refresh is safe, secondary-only, and promotion state stays unchanged.
+90. Do not use the treatment-gap audit as a replacement for `reconcile_pair_metrics.ps1` or the grounded-evidence matrix review. This helper is only for the later question: the pair already counts, so why did treatment-side strong-signal still not capture?
 
 ## What Counts As Insufficient Data
 

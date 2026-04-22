@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-63
+HLDM-JKBOTTI-AI-STAND-20260415-64
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -51,6 +51,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_bounded_vs_full_session_divergence.ps1` and `scripts/audit_bounded_vs_full_session_divergence.bat` for the later workflow audit that compares a successful bounded probe against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`.
 - `scripts/run_control_phase_accumulation_probe.ps1` and `scripts/run_control_phase_accumulation_probe.bat` for the control-only strong-signal proof that keeps the human in the no-AI control lane until the stronger control target is either met or still proven short before another full control+treatment session is spent.
 - `scripts/audit_full_session_handoff.ps1` and `scripts/audit_full_session_handoff.bat` for the later full-session audit that reads the control-ready, treatment-join, treatment-phase, and closeout chain when a full conservative run already proved control readiness but still failed to finish treatment or final artifacts cleanly.
+- `scripts/audit_treatment_strong_signal_gap.ps1` and `scripts/audit_treatment_strong_signal_gap.bat` for the later treatment-side audit that distinguishes a real strong-signal evidence shortfall from stale secondary wrapper drift after a valid grounded full rerun already exists.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1189,6 +1190,19 @@ powershell -NoProfile -File .\scripts\audit_full_session_handoff.ps1
 - `treatment-phase-started-but-closeout-raced` means treatment-stage waiting began, but the session still exited without a trustworthy final pair pack
 - `closeout-raced-before-final-artifacts` means the pair root exists, but `pair_summary.json` and the final docket were truncated before the closeout stack finished
 - spend another full strong-signal conservative session only after the handoff audit is `handoff-chain-complete` or after one narrow repair plus one justified rerun proves treatment phase start and final artifact production without racing
+
+When the latest repaired full rerun already counts as grounded evidence but still fails to capture treatment-side strong-signal evidence, audit that gap directly before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -UseLatest -DryRun
+```
+
+- this helper is narrower than the broader grounded-evidence matrix review because it assumes the pair already counts and asks only why treatment-side strong-signal still did not capture
+- it also differs from `reconcile_pair_metrics.ps1`: that helper is for general canonical metric reconciliation on a counted pair, while this one applies a treatment-side strong-signal precedence order to say whether the remaining gap is real or just wrapper drift
+- canonical sources are `pair_summary.json`, treatment `summary.json`, `grounded_evidence_certificate.json`, patch history, patch-apply history, telemetry history, and human-presence timing
+- secondary sources are `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, `strong_signal_conservative_attempt.json`, and other wrapper narratives
+- `strong-signal-gap-real-treatment-still-short` means the canonical treatment evidence is still below the mission target, so another full conservative session must still capture the missing human-present patch event or whatever exact metric remains short
+- `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, or `strong-signal-criteria-met-but-wrapper-stale` mean refresh-only branches; use `-DryRun` first and `-ExecuteRefresh` only when the helper says the secondary refresh is safe and promotion state remains unchanged
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 
