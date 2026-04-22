@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-60
+HLDM-JKBOTTI-AI-STAND-20260415-61
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -48,6 +48,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_probe_lane_startup.ps1` and `scripts/audit_probe_lane_startup.bat` for the narrower startup/materialization audit that explains whether a failed bounded probe died before lane-root creation, before port-ready, or before join invocation.
 - `scripts/audit_first_human_snapshot_boundary.ps1` and `scripts/audit_first_human_snapshot_boundary.bat` for the later ingestion-boundary audit that compares authoritative server and telemetry evidence against saved lane summary artifacts when a player already entered the game but the first counted human snapshot still appears missing.
 - `scripts/audit_entered_game_boundary.ps1` and `scripts/audit_entered_game_boundary.bat` for the comparative entered-the-game audit that lines up one successful bounded probe against failed repeated probes to decide whether the current divergence is a static launch mismatch, an admission race, or an early client-exit problem.
+- `scripts/audit_bounded_vs_full_session_divergence.ps1` and `scripts/audit_bounded_vs_full_session_divergence.bat` for the later workflow audit that compares a successful bounded probe against a failed full strong-signal session when the join path works in isolation but the full session still records `no humans`.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1143,6 +1144,21 @@ Use that boundary audit differently from the broader client-presence audit:
 - it compares authoritative HLDS `connected` / `entered the game` lines plus saved telemetry history against the secondary lane summary and session-pack artifacts
 - `snapshot-written-but-summary-not-updated` means the first human snapshot already exists in `telemetry_history.ndjson`, but the saved lane summary/session layer still failed to reflect it
 - `first-human-snapshot-seen` means the lane summary now reflects the first counted human snapshot, even if accumulated saved presence is still thin
+
+When one or more bounded probes already succeed end to end, but a full strong-signal conservative session still reports `control-baseline-no-humans` and `ai-healthy-no-humans`, compare the two paths directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_bounded_vs_full_session_divergence.ps1
+```
+
+Use that divergence audit differently from the broader client-presence audit and the narrower entered-the-game audit:
+
+- it compares a successful bounded probe root against a failed full-session pair root, not just probe-vs-probe or launch-to-snapshot evidence in isolation
+- it lines up launch command, working directory, pair/lane roots, control/treatment join attempts, control/treatment phase-gate outputs, and the timestamps for launch, connect, entered-the-game, first human snapshot, and accumulating human presence
+- `bounded-success-full-control-never-cleared` means the bounded path already proved the local join chain can work, but the full session still died earlier and never cleared the control-first gate
+- `bounded-success-full-treatment-never-joined` means the full control side survived far enough to stay in sequence, but treatment progression still diverged and never got a real human-participation chance
+- `bounded-success-full-summary-ingestion-missing` means the full session reached the same admission boundary as the bounded probe, but pair/lane summary reflection still diverged later
+- spend another full strong-signal conservative session only after the divergence audit shows the full-session path is back in line with the already-working bounded join path; otherwise stay on bounded diagnosis and repair
 - `human-presence-accumulating` means the later summary layer is no longer the blocker and saved human-presence time is actually building
 - this helper differs from `audit_client_presence.ps1`: the broader audit finds the chain stage, while the first-human-snapshot audit isolates whether the break is enumeration, human classification, persisted telemetry, or summary aggregation
 

@@ -19,7 +19,11 @@ param(
     [int]$ControlStaySecondsMinimum = -1,
     [int]$TreatmentStaySecondsMinimum = -1,
     [int]$ControlStaySeconds = -1,
-    [int]$TreatmentStaySeconds = -1
+    [int]$TreatmentStaySeconds = -1,
+    [int]$JoinAdmissionPollSeconds = 2,
+    [int]$JoinRetryGraceSeconds = 18,
+    [int]$JoinRetrySpacingSeconds = 3,
+    [int]$MaxJoinAttempts = 2
 )
 
 . (Join-Path $PSScriptRoot "common.ps1")
@@ -729,6 +733,334 @@ function Wait-ForTreatmentGroundedReady {
     }
 }
 
+function Find-LatestLaneRootForPair {
+    param(
+        [string]$PairRoot,
+        [string]$Lane
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PairRoot) -or [string]::IsNullOrWhiteSpace($Lane)) {
+        return ""
+    }
+
+    $laneParent = Resolve-ExistingPath -Path (Join-Path (Join-Path $PairRoot "lanes") $Lane.ToLowerInvariant())
+    if (-not $laneParent) {
+        return ""
+    }
+
+    $candidate = Get-ChildItem -LiteralPath $laneParent -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+
+    if ($null -eq $candidate) {
+        return ""
+    }
+
+    return $candidate.FullName
+}
+
+function Get-ConnectionEvidence {
+    param([string[]]$LogLines)
+
+    $connectedLines = New-Object System.Collections.Generic.List[string]
+    $enteredLines = New-Object System.Collections.Generic.List[string]
+    $matchedEnteredLines = New-Object System.Collections.Generic.List[string]
+    $connectedPlayers = New-Object System.Collections.Generic.List[object]
+
+    foreach ($line in @($LogLines)) {
+        if ($line -match 'connected, address') {
+            $connectedLines.Add($line) | Out-Null
+            if ($line -match '"(?<name>[^"<]+)<\d+><(?<steam>[^>]*)><[^>]*>" connected, address "(?<address>[^"]+)"') {
+                $connectedPlayers.Add([pscustomobject]@{
+                        name = [string]$Matches["name"]
+                        steam = [string]$Matches["steam"]
+                        address = [string]$Matches["address"]
+                    }) | Out-Null
+            }
+        }
+
+        if ($line -match 'entered the game') {
+            $enteredLines.Add($line) | Out-Null
+        }
+    }
+
+    foreach ($enteredLine in @($enteredLines.ToArray())) {
+        foreach ($player in @($connectedPlayers.ToArray())) {
+            $name = [string](Get-ObjectPropertyValue -Object $player -Name "name" -Default "")
+            $steam = [string](Get-ObjectPropertyValue -Object $player -Name "steam" -Default "")
+            if ([string]::IsNullOrWhiteSpace($name)) {
+                continue
+            }
+
+            $nameMatched = $enteredLine -match ('"{0}<\d+><' -f [regex]::Escape($name))
+            $steamMatched = if ([string]::IsNullOrWhiteSpace($steam)) { $true } else { $enteredLine -match [regex]::Escape($steam) }
+            if ($nameMatched -and $steamMatched) {
+                $matchedEnteredLines.Add($enteredLine) | Out-Null
+                break
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        connected_lines = @($connectedLines.ToArray())
+        entered_game_lines = @($matchedEnteredLines.ToArray())
+        raw_entered_game_lines = @($enteredLines.ToArray())
+        connected_players = @($connectedPlayers.ToArray())
+    }
+}
+
+function Get-ConnectionEvidenceFromLogPath {
+    param([string]$Path)
+
+    $resolvedPath = Resolve-ExistingPath -Path $Path
+    if (-not $resolvedPath) {
+        return [pscustomobject]@{
+            connected_lines = @()
+            entered_game_lines = @()
+            raw_entered_game_lines = @()
+            connected_players = @()
+        }
+    }
+
+    return Get-ConnectionEvidence -LogLines @(Get-Content -LiteralPath $resolvedPath)
+}
+
+function Get-HldsLineTimestampUtcString {
+    param([string]$Line)
+
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return ""
+    }
+
+    if ($Line -match '^L\s+(?<month>\d{2})/(?<day>\d{2})/(?<year>\d{4})\s+-\s+(?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2}):') {
+        try {
+            $localTime = Get-Date -Year ([int]$Matches["year"]) -Month ([int]$Matches["month"]) -Day ([int]$Matches["day"]) `
+                -Hour ([int]$Matches["hour"]) -Minute ([int]$Matches["minute"]) -Second ([int]$Matches["second"])
+            return $localTime.ToUniversalTime().ToString("o")
+        }
+        catch {
+            return ""
+        }
+    }
+
+    return ""
+}
+
+function Wait-ForLaneJoinAdmission {
+    param(
+        [string]$PairRoot,
+        [string]$Lane,
+        [System.Diagnostics.Process]$AttemptProcess,
+        [int]$ClientProcessId,
+        [string]$JoinStartedAtUtc,
+        [int]$GraceSeconds,
+        [int]$PollSeconds
+    )
+
+    $startedAtUtc = if (-not [string]::IsNullOrWhiteSpace($JoinStartedAtUtc)) {
+        try {
+            [datetime]$JoinStartedAtUtc
+        }
+        catch {
+            (Get-Date).ToUniversalTime()
+        }
+    }
+    else {
+        (Get-Date).ToUniversalTime()
+    }
+
+    $deadlineUtc = $startedAtUtc.AddSeconds([Math]::Max(5, $GraceSeconds))
+    $probePollSeconds = [Math]::Max(1, $PollSeconds)
+    $laneRoot = ""
+    $hldsStdoutPath = ""
+    $firstServerConnectionSeenAtUtc = ""
+    $firstEnteredTheGameSeenAtUtc = ""
+    $processObservedRunning = $false
+    $processAliveFirstSeenAtUtc = ""
+    $processAliveLastSeenAtUtc = ""
+    $processExitObservedAtUtc = ""
+    $processRuntimeSeconds = $null
+    $latestConnectedLine = ""
+    $latestEnteredGameLine = ""
+
+    while ((Get-Date).ToUniversalTime() -lt $deadlineUtc) {
+        if (-not $laneRoot) {
+            $laneRoot = Find-LatestLaneRootForPair -PairRoot $PairRoot -Lane $Lane
+        }
+
+        if ($laneRoot -and -not $hldsStdoutPath) {
+            $hldsStdoutPath = Resolve-ExistingPath -Path (Join-Path $laneRoot "hlds.stdout.log")
+        }
+
+        $connectionEvidence = Get-ConnectionEvidenceFromLogPath -Path $hldsStdoutPath
+        if (@($connectionEvidence.connected_lines).Count -gt 0) {
+            $latestConnectedLine = [string]$connectionEvidence.connected_lines[0]
+            if (-not $firstServerConnectionSeenAtUtc) {
+                $firstServerConnectionSeenAtUtc = Get-HldsLineTimestampUtcString -Line $latestConnectedLine
+            }
+        }
+
+        if (@($connectionEvidence.entered_game_lines).Count -gt 0) {
+            $latestEnteredGameLine = [string]$connectionEvidence.entered_game_lines[0]
+            if (-not $firstEnteredTheGameSeenAtUtc) {
+                $firstEnteredTheGameSeenAtUtc = Get-HldsLineTimestampUtcString -Line $latestEnteredGameLine
+            }
+        }
+
+        if ($ClientProcessId -gt 0) {
+            $runningClientProcess = Get-Process -Id $ClientProcessId -ErrorAction SilentlyContinue
+            if ($null -ne $runningClientProcess) {
+                $processObservedRunning = $true
+                if (-not $processAliveFirstSeenAtUtc) {
+                    $processAliveFirstSeenAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+                }
+                $processAliveLastSeenAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            }
+            elseif (-not $processExitObservedAtUtc) {
+                $processExitObservedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+            }
+        }
+
+        if ($latestEnteredGameLine) {
+            break
+        }
+
+        if ($null -ne $AttemptProcess) {
+            try {
+                if ($AttemptProcess.HasExited) {
+                    break
+                }
+            }
+            catch {
+            }
+        }
+
+        Start-Sleep -Seconds $probePollSeconds
+    }
+
+    if ($null -eq $processRuntimeSeconds -and $JoinStartedAtUtc) {
+        $endRuntimeAtUtc = if ($processExitObservedAtUtc) { [datetime]$processExitObservedAtUtc } elseif ($processAliveLastSeenAtUtc) { [datetime]$processAliveLastSeenAtUtc } else { $null }
+        if ($null -ne $endRuntimeAtUtc) {
+            try {
+                $processRuntimeSeconds = [Math]::Round(($endRuntimeAtUtc - ([datetime]$JoinStartedAtUtc)).TotalSeconds, 1)
+            }
+            catch {
+                $processRuntimeSeconds = $null
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        lane_root = $laneRoot
+        hlds_stdout_log = $hldsStdoutPath
+        server_connection_seen = [bool]$latestConnectedLine
+        entered_the_game_seen = [bool]$latestEnteredGameLine
+        first_server_connection_seen_at_utc = $firstServerConnectionSeenAtUtc
+        first_entered_the_game_seen_at_utc = $firstEnteredTheGameSeenAtUtc
+        client_process_observed_running = $processObservedRunning
+        process_alive_first_seen_at_utc = $processAliveFirstSeenAtUtc
+        process_alive_last_seen_at_utc = $processAliveLastSeenAtUtc
+        process_exit_observed_at_utc = $processExitObservedAtUtc
+        process_runtime_seconds = $processRuntimeSeconds
+        exited_before_server_connect = [bool]$processExitObservedAtUtc -and -not [bool]$latestConnectedLine
+        exited_before_entered_game = [bool]$processExitObservedAtUtc -and -not [bool]$latestEnteredGameLine
+    }
+}
+
+function Invoke-ValidatedLaneJoin {
+    param(
+        [string]$Lane,
+        [string]$PairRoot,
+        [string]$ResolvedClientExePath,
+        [int]$Port,
+        [string]$Map,
+        [System.Diagnostics.Process]$AttemptProcess,
+        [int]$GraceSeconds,
+        [int]$RetrySpacingSeconds,
+        [int]$MaxAttempts,
+        [int]$AdmissionPollSeconds
+    )
+
+    $attemptRecords = New-Object System.Collections.Generic.List[object]
+    $joinExecution = $null
+    $joinAttemptCount = 0
+    $joinRetryUsed = $false
+    $joinRetryReason = ""
+    $joinRetryTriggeredAtUtc = ""
+    $latestAdmissionEvidence = $null
+
+    $maxAttemptsResolved = [Math]::Max(1, $MaxAttempts)
+    for ($attemptIndex = 1; $attemptIndex -le $maxAttemptsResolved; $attemptIndex++) {
+        $joinExecution = Invoke-LaneJoinHelper -Lane $Lane -PairRoot $PairRoot -ResolvedClientExePath $ResolvedClientExePath -Port $Port -Map $Map
+        $joinAttemptCount = $attemptIndex
+        $joinResult = Get-ObjectPropertyValue -Object $joinExecution -Name "Result" -Default $null
+        $joinProcessId = [int](Get-ObjectPropertyValue -Object $joinResult -Name "ProcessId" -Default 0)
+        $joinStartedAtUtc = [string](Get-ObjectPropertyValue -Object $joinResult -Name "LaunchStartedAtUtc" -Default "")
+        $joinVerdict = [string](Get-ObjectPropertyValue -Object $joinResult -Name "ResultVerdict" -Default "")
+
+        $admissionEvidence = Wait-ForLaneJoinAdmission `
+            -PairRoot $PairRoot `
+            -Lane $Lane `
+            -AttemptProcess $AttemptProcess `
+            -ClientProcessId $joinProcessId `
+            -JoinStartedAtUtc $joinStartedAtUtc `
+            -GraceSeconds $GraceSeconds `
+            -PollSeconds $AdmissionPollSeconds
+        $latestAdmissionEvidence = $admissionEvidence
+
+        $attemptRecords.Add([pscustomobject]@{
+                attempt_index = $attemptIndex
+                helper_result_verdict = $joinVerdict
+                process_id = $joinProcessId
+                launched_at_utc = $joinStartedAtUtc
+                launch_command = [string](Get-ObjectPropertyValue -Object $joinResult -Name "LaunchCommand" -Default "")
+                client_working_directory = [string](Get-ObjectPropertyValue -Object $joinResult -Name "ClientWorkingDirectory" -Default "")
+                server_connection_seen = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "server_connection_seen" -Default $false)
+                entered_the_game_seen = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "entered_the_game_seen" -Default $false)
+                first_server_connection_seen_at_utc = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "first_server_connection_seen_at_utc" -Default "")
+                first_entered_the_game_seen_at_utc = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "first_entered_the_game_seen_at_utc" -Default "")
+                process_observed_running = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "client_process_observed_running" -Default $false)
+                process_alive_first_seen_at_utc = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "process_alive_first_seen_at_utc" -Default "")
+                process_alive_last_seen_at_utc = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "process_alive_last_seen_at_utc" -Default "")
+                process_exit_observed_at_utc = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "process_exit_observed_at_utc" -Default "")
+                process_runtime_seconds = Get-ObjectPropertyValue -Object $admissionEvidence -Name "process_runtime_seconds" -Default $null
+                exited_before_server_connect = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "exited_before_server_connect" -Default $false)
+                exited_before_entered_game = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "exited_before_entered_game" -Default $false)
+                lane_root = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "lane_root" -Default "")
+                hlds_stdout_log = [string](Get-ObjectPropertyValue -Object $admissionEvidence -Name "hlds_stdout_log" -Default "")
+            }) | Out-Null
+
+        $serverConnectionSeen = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "server_connection_seen" -Default $false)
+        $enteredTheGameSeen = [bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "entered_the_game_seen" -Default $false)
+        if ($serverConnectionSeen -or $enteredTheGameSeen -or $attemptIndex -ge $maxAttemptsResolved) {
+            break
+        }
+
+        $joinRetryUsed = $true
+        if ([bool](Get-ObjectPropertyValue -Object $admissionEvidence -Name "exited_before_server_connect" -Default $false)) {
+            $joinRetryReason = "client-process-exited-before-server-connect"
+        }
+        else {
+            $joinRetryReason = "no-server-connect-within-retry-grace-window"
+        }
+        $joinRetryTriggeredAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+        Stop-ClientProcessIfRunning -ProcessId $joinProcessId -Reason ("{0} lane join retry" -f $Lane.ToLowerInvariant()) | Out-Null
+        if ($RetrySpacingSeconds -gt 0) {
+            Start-Sleep -Seconds $RetrySpacingSeconds
+        }
+    }
+
+    return [pscustomobject]@{
+        JoinExecution = $joinExecution
+        JoinAttemptCount = $joinAttemptCount
+        JoinRetryUsed = $joinRetryUsed
+        JoinRetryReason = $joinRetryReason
+        JoinRetryTriggeredAtUtc = $joinRetryTriggeredAtUtc
+        JoinAttempts = @($attemptRecords.ToArray())
+        AdmissionEvidence = $latestAdmissionEvidence
+    }
+}
+
 function Get-ReportPaths {
     param(
         [string]$PairRoot,
@@ -947,6 +1279,11 @@ function Get-HumanAttemptMarkdown {
         "- Control client working directory: $($Report.control_lane_join.client_working_directory)",
         "- Control qconsole path: $($Report.control_lane_join.qconsole_path)",
         "- Control debug log path: $($Report.control_lane_join.debug_log_path)",
+        "- Control join attempts: $($Report.control_lane_join.join_attempt_count)",
+        "- Control join retry used: $($Report.control_lane_join.join_retry_used)",
+        "- Control port ready: $($Report.control_lane_join.port_ready)",
+        "- Control server connection seen: $($Report.control_lane_join.server_connection_seen)",
+        "- Control entered the game seen: $($Report.control_lane_join.entered_the_game_seen)",
         "- Control join succeeded: $($Report.control_lane_join.join_succeeded)",
         "- Control human snapshots: $($Report.control_lane_join.human_snapshots_count)",
         "- Control human seconds: $($Report.control_lane_join.seconds_with_human_presence)",
@@ -956,6 +1293,11 @@ function Get-HumanAttemptMarkdown {
         "- Treatment client working directory: $($Report.treatment_lane_join.client_working_directory)",
         "- Treatment qconsole path: $($Report.treatment_lane_join.qconsole_path)",
         "- Treatment debug log path: $($Report.treatment_lane_join.debug_log_path)",
+        "- Treatment join attempts: $($Report.treatment_lane_join.join_attempt_count)",
+        "- Treatment join retry used: $($Report.treatment_lane_join.join_retry_used)",
+        "- Treatment port ready: $($Report.treatment_lane_join.port_ready)",
+        "- Treatment server connection seen: $($Report.treatment_lane_join.server_connection_seen)",
+        "- Treatment entered the game seen: $($Report.treatment_lane_join.entered_the_game_seen)",
         "- Treatment join succeeded: $($Report.treatment_lane_join.join_succeeded)",
         "- Treatment human snapshots: $($Report.treatment_lane_join.human_snapshots_count)",
         "- Treatment human seconds: $($Report.treatment_lane_join.seconds_with_human_presence)",
@@ -1151,6 +1493,22 @@ $controlJoinExecution = $null
 $treatmentJoinExecution = $null
 $controlProcessId = 0
 $treatmentProcessId = 0
+$controlJoinAttempts = @()
+$treatmentJoinAttempts = @()
+$controlJoinAttemptCount = 0
+$treatmentJoinAttemptCount = 0
+$controlJoinRetryUsed = $false
+$treatmentJoinRetryUsed = $false
+$controlJoinRetryReason = ""
+$treatmentJoinRetryReason = ""
+$controlJoinRetryTriggeredAtUtc = ""
+$treatmentJoinRetryTriggeredAtUtc = ""
+$controlAdmissionEvidence = $null
+$treatmentAdmissionEvidence = $null
+$controlPortWait = $null
+$treatmentPortWait = $null
+$controlPortWaitFinishedAtUtc = ""
+$treatmentPortWaitFinishedAtUtc = ""
 $launchBlockedReason = ""
 
 if (-not $clientLaunchable) {
@@ -1220,6 +1578,7 @@ if ($attemptProcess) {
         }
 
         $controlPortWait = Wait-ForPortActive -Port $controlPort -Label "control" -AttemptProcess $attemptProcess -TimeoutSeconds 180
+        $controlPortWaitFinishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         Write-Host "  Control lane port wait: $($controlPortWait.Explanation)"
         if ($controlPortWait.Ready) {
             $controlSwitchPreview = Invoke-ControlSwitchGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $ControlGatePollSeconds
@@ -1229,11 +1588,35 @@ if ($attemptProcess) {
                 Write-Host "  Control-first switch helper: $($controlSwitchExecution.CommandText)"
             }
 
-            $controlJoinExecution = Invoke-LaneJoinHelper -Lane "Control" -PairRoot $pairRoot -ResolvedClientExePath $resolvedClientExePath -Port $controlPort -Map $missionMap
+            $controlJoinValidated = Invoke-ValidatedLaneJoin `
+                -Lane "Control" `
+                -PairRoot $pairRoot `
+                -ResolvedClientExePath $resolvedClientExePath `
+                -Port $controlPort `
+                -Map $missionMap `
+                -AttemptProcess $attemptProcess `
+                -GraceSeconds $JoinRetryGraceSeconds `
+                -RetrySpacingSeconds $JoinRetrySpacingSeconds `
+                -MaxAttempts $MaxJoinAttempts `
+                -AdmissionPollSeconds $JoinAdmissionPollSeconds
+            $controlJoinExecution = Get-ObjectPropertyValue -Object $controlJoinValidated -Name "JoinExecution" -Default $null
+            $controlJoinAttempts = @(Get-ObjectPropertyValue -Object $controlJoinValidated -Name "JoinAttempts" -Default @())
+            $controlJoinAttemptCount = [int](Get-ObjectPropertyValue -Object $controlJoinValidated -Name "JoinAttemptCount" -Default 0)
+            $controlJoinRetryUsed = [bool](Get-ObjectPropertyValue -Object $controlJoinValidated -Name "JoinRetryUsed" -Default $false)
+            $controlJoinRetryReason = [string](Get-ObjectPropertyValue -Object $controlJoinValidated -Name "JoinRetryReason" -Default "")
+            $controlJoinRetryTriggeredAtUtc = [string](Get-ObjectPropertyValue -Object $controlJoinValidated -Name "JoinRetryTriggeredAtUtc" -Default "")
+            $controlAdmissionEvidence = Get-ObjectPropertyValue -Object $controlJoinValidated -Name "AdmissionEvidence" -Default $null
             if ($controlJoinExecution.Result) {
                 $controlProcessId = [int](Get-ObjectPropertyValue -Object $controlJoinExecution.Result -Name "ProcessId" -Default 0)
                 $controlJoinVerdict = [string](Get-ObjectPropertyValue -Object $controlJoinExecution.Result -Name "ResultVerdict" -Default "")
                 Write-Host "  Control lane join helper verdict: $controlJoinVerdict"
+                if ($controlJoinRetryUsed) {
+                    Write-Host "  Control lane join retry used: $controlJoinRetryReason"
+                }
+                if ($controlAdmissionEvidence) {
+                    Write-Host "  Control server connection seen: $([bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name 'server_connection_seen' -Default $false))"
+                    Write-Host "  Control entered the game seen: $([bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name 'entered_the_game_seen' -Default $false))"
+                }
             }
             elseif ($controlJoinExecution.Error) {
                 Write-Warning "Control lane join failed: $($controlJoinExecution.Error)"
@@ -1287,6 +1670,7 @@ if ($attemptProcess) {
         }
 
         $treatmentPortWait = Wait-ForPortActive -Port $treatmentPort -Label "treatment" -AttemptProcess $attemptProcess -TimeoutSeconds 300
+        $treatmentPortWaitFinishedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
         Write-Host "  Treatment lane port wait: $($treatmentPortWait.Explanation)"
         if ($treatmentPortWait.Ready) {
             $treatmentPatchPreview = Invoke-TreatmentPatchGuide -PairRoot $pairRoot -MissionPath $missionArtifacts.JsonPath -PollSeconds $TreatmentGatePollSeconds
@@ -1296,11 +1680,35 @@ if ($attemptProcess) {
                 Write-Host "  Treatment-hold helper: $($treatmentPatchExecution.CommandText)"
             }
 
-            $treatmentJoinExecution = Invoke-LaneJoinHelper -Lane "Treatment" -PairRoot $pairRoot -ResolvedClientExePath $resolvedClientExePath -Port $treatmentPort -Map $missionMap
+            $treatmentJoinValidated = Invoke-ValidatedLaneJoin `
+                -Lane "Treatment" `
+                -PairRoot $pairRoot `
+                -ResolvedClientExePath $resolvedClientExePath `
+                -Port $treatmentPort `
+                -Map $missionMap `
+                -AttemptProcess $attemptProcess `
+                -GraceSeconds $JoinRetryGraceSeconds `
+                -RetrySpacingSeconds $JoinRetrySpacingSeconds `
+                -MaxAttempts $MaxJoinAttempts `
+                -AdmissionPollSeconds $JoinAdmissionPollSeconds
+            $treatmentJoinExecution = Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "JoinExecution" -Default $null
+            $treatmentJoinAttempts = @(Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "JoinAttempts" -Default @())
+            $treatmentJoinAttemptCount = [int](Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "JoinAttemptCount" -Default 0)
+            $treatmentJoinRetryUsed = [bool](Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "JoinRetryUsed" -Default $false)
+            $treatmentJoinRetryReason = [string](Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "JoinRetryReason" -Default "")
+            $treatmentJoinRetryTriggeredAtUtc = [string](Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "JoinRetryTriggeredAtUtc" -Default "")
+            $treatmentAdmissionEvidence = Get-ObjectPropertyValue -Object $treatmentJoinValidated -Name "AdmissionEvidence" -Default $null
             if ($treatmentJoinExecution.Result) {
                 $treatmentProcessId = [int](Get-ObjectPropertyValue -Object $treatmentJoinExecution.Result -Name "ProcessId" -Default 0)
                 $treatmentJoinVerdict = [string](Get-ObjectPropertyValue -Object $treatmentJoinExecution.Result -Name "ResultVerdict" -Default "")
                 Write-Host "  Treatment lane join helper verdict: $treatmentJoinVerdict"
+                if ($treatmentJoinRetryUsed) {
+                    Write-Host "  Treatment lane join retry used: $treatmentJoinRetryReason"
+                }
+                if ($treatmentAdmissionEvidence) {
+                    Write-Host "  Treatment server connection seen: $([bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name 'server_connection_seen' -Default $false))"
+                    Write-Host "  Treatment entered the game seen: $([bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name 'entered_the_game_seen' -Default $false))"
+                }
             }
             elseif ($treatmentJoinExecution.Error) {
                 Write-Warning "Treatment lane join failed: $($treatmentJoinExecution.Error)"
@@ -1555,6 +1963,27 @@ $report = [ordered]@{
         join_succeeded = $controlHumanSignal
         join_target = [string](Get-ObjectPropertyValue -Object $controlLane -Name "join_target" -Default ("127.0.0.1:{0}" -f $controlPort))
         process_id = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $controlJoinExecution -Name "Result" -Default $null) -Name "ProcessId" -Default 0)
+        join_attempt_count = $controlJoinAttemptCount
+        join_retry_used = $controlJoinRetryUsed
+        join_retry_reason = $controlJoinRetryReason
+        join_retry_triggered_at_utc = $controlJoinRetryTriggeredAtUtc
+        join_attempts = @($controlJoinAttempts)
+        port_ready = [bool](Get-ObjectPropertyValue -Object $controlPortWait -Name "Ready" -Default $false)
+        port_wait_finished_at_utc = $controlPortWaitFinishedAtUtc
+        port_wait_explanation = [string](Get-ObjectPropertyValue -Object $controlPortWait -Name "Explanation" -Default "")
+        lane_root = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "lane_root" -Default ([string](Get-ObjectPropertyValue -Object $controlLane -Name "lane_root" -Default "")))
+        hlds_stdout_log = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "hlds_stdout_log" -Default "")
+        server_connection_seen = [bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "server_connection_seen" -Default $false)
+        entered_the_game_seen = [bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "entered_the_game_seen" -Default $false)
+        first_server_connection_seen_at_utc = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "first_server_connection_seen_at_utc" -Default "")
+        first_entered_the_game_seen_at_utc = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "first_entered_the_game_seen_at_utc" -Default "")
+        client_process_observed_running = [bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "client_process_observed_running" -Default $false)
+        process_alive_first_seen_at_utc = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "process_alive_first_seen_at_utc" -Default "")
+        process_alive_last_seen_at_utc = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "process_alive_last_seen_at_utc" -Default "")
+        process_exit_observed_at_utc = [string](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "process_exit_observed_at_utc" -Default "")
+        process_runtime_seconds = Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "process_runtime_seconds" -Default $null
+        exited_before_server_connect = [bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "exited_before_server_connect" -Default $false)
+        exited_before_entered_game = [bool](Get-ObjectPropertyValue -Object $controlAdmissionEvidence -Name "exited_before_entered_game" -Default $false)
         stay_seconds = $resolvedControlStayMinimum
         human_snapshots_count = $controlHumanSnapshots
         seconds_with_human_presence = $controlHumanSeconds
@@ -1574,6 +2003,27 @@ $report = [ordered]@{
         join_succeeded = $treatmentHumanSignal
         join_target = [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "join_target" -Default ("127.0.0.1:{0}" -f $treatmentPort))
         process_id = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $treatmentJoinExecution -Name "Result" -Default $null) -Name "ProcessId" -Default 0)
+        join_attempt_count = $treatmentJoinAttemptCount
+        join_retry_used = $treatmentJoinRetryUsed
+        join_retry_reason = $treatmentJoinRetryReason
+        join_retry_triggered_at_utc = $treatmentJoinRetryTriggeredAtUtc
+        join_attempts = @($treatmentJoinAttempts)
+        port_ready = [bool](Get-ObjectPropertyValue -Object $treatmentPortWait -Name "Ready" -Default $false)
+        port_wait_finished_at_utc = $treatmentPortWaitFinishedAtUtc
+        port_wait_explanation = [string](Get-ObjectPropertyValue -Object $treatmentPortWait -Name "Explanation" -Default "")
+        lane_root = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "lane_root" -Default ([string](Get-ObjectPropertyValue -Object $treatmentLane -Name "lane_root" -Default "")))
+        hlds_stdout_log = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "hlds_stdout_log" -Default "")
+        server_connection_seen = [bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "server_connection_seen" -Default $false)
+        entered_the_game_seen = [bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "entered_the_game_seen" -Default $false)
+        first_server_connection_seen_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "first_server_connection_seen_at_utc" -Default "")
+        first_entered_the_game_seen_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "first_entered_the_game_seen_at_utc" -Default "")
+        client_process_observed_running = [bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "client_process_observed_running" -Default $false)
+        process_alive_first_seen_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "process_alive_first_seen_at_utc" -Default "")
+        process_alive_last_seen_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "process_alive_last_seen_at_utc" -Default "")
+        process_exit_observed_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "process_exit_observed_at_utc" -Default "")
+        process_runtime_seconds = Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "process_runtime_seconds" -Default $null
+        exited_before_server_connect = [bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "exited_before_server_connect" -Default $false)
+        exited_before_entered_game = [bool](Get-ObjectPropertyValue -Object $treatmentAdmissionEvidence -Name "exited_before_entered_game" -Default $false)
         stay_seconds = $TreatmentStaySeconds
         human_snapshots_count = $treatmentHumanSnapshots
         seconds_with_human_presence = $treatmentHumanSeconds

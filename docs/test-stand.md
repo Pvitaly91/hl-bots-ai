@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-60
+HLDM-JKBOTTI-AI-STAND-20260415-61
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1128,6 +1128,19 @@ powershell -NoProfile -File .\scripts\audit_first_human_snapshot_boundary.ps1 -P
 - `snapshot-written-but-summary-not-updated` means `telemetry_history.ndjson` already contains the first human snapshot, but the saved summary/session layer still failed to reflect it
 - `first-human-snapshot-seen` means the saved lane summary now reflects the first counted human snapshot, even if accumulated human presence is still thin
 - `human-presence-accumulating` means the later summary layer is no longer the blocker and saved human-presence seconds are actually building
+
+When one or more bounded probes already succeed end to end, but a full strong-signal conservative session still records `control-baseline-no-humans` / `ai-healthy-no-humans`, compare the bounded and full paths directly:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_bounded_vs_full_session_divergence.ps1
+```
+
+- this divergence audit is broader than the entered-the-game audit but narrower than a generic pair review: it compares a successful bounded probe root against a failed full-session pair root
+- it lines up launch command, working directory, pair/lane roots, control/treatment join attempts, control/treatment phase-gate outputs, and the timestamps for launch, connect, entered-the-game, first human snapshot, and accumulating human presence
+- `bounded-success-full-control-never-cleared` means the already-working bounded join path still diverged earlier inside the full control-first workflow, so treatment never got a fair live chance
+- `bounded-success-full-treatment-never-joined` means the divergence is no longer in bare launch readiness; the full sequence itself still failed to carry human signal into treatment
+- `bounded-success-full-summary-ingestion-missing` means the full session reached the same authoritative join boundary as the bounded probe, but later pair/lane reflection still diverged
+- spend another full strong-signal conservative session only after the divergence audit shows the full-session path is aligned with the working bounded path or after one bounded-plus-full validation pair confirms the repair
 - use this helper after the startup audit and after the broader join-completion probe when the break point is clearly between authoritative player entry and saved summary reflection
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
