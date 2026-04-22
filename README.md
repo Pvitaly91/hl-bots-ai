@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-59
+HLDM-JKBOTTI-AI-STAND-20260415-60
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -1010,7 +1010,9 @@ Use it differently from the earlier generic conservative wrappers:
 - it reads `strong_signal_conservative_mission.json` by default, so the stronger control/treatment human-signal, patch-window, and post-patch observation targets stay explicit for the run
 - it still reuses `run_human_participation_conservative_attempt.ps1`, the local client discovery/join helpers, the sequential phase guidance, the live monitor, certification, mission attainment, outcome dossier, registry summary, responsive gate, next-live planner, and grounded-evidence matrix
 - it writes `strong_signal_conservative_attempt.json` and `strong_signal_conservative_attempt.md` into the pair root so the operator can see the mission used, whether the run drifted, the before/after strong-signal counts, the before/after evidence mix, and whether the mixed state actually narrowed
+- use it after the bounded join certificate is honestly `ready-for-next-strong-signal-attempt`; bounded green is the spend gate, not the same thing as a successful strong-signal capture
 - `first-strong-signal-conservative-capture` means the pair both counted toward promotion and added a grounded strong-signal conservative row to the matrix; anything below that must stay explicit as non-strong-signal, still-mixed, insufficient-human-signal, interrupted-and-recovered, or manual-review-required
+- a successful strong-signal conservative result means the saved pair both counted and added grounded strong-signal evidence; an unsuccessful result means the live conservative spend still failed to resolve the evidence mix honestly
 - even a successful strong-signal conservative attempt does not open `responsive` automatically; it only strengthens the keep-conservative or future-responsive case depending on the saved treatment-behavior assessment
 
 Use the verdict conservatively:

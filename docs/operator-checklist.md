@@ -184,15 +184,17 @@ Default ports and lanes:
 43. Prefer `powershell -NoProfile -File .\scripts\run_strong_signal_conservative_attempt.ps1` when you want that stronger-signal mission spent through the existing client-assisted conservative path and summarized into one pair-local attempt report.
 44. Use `run_current_live_mission.ps1 -MissionPath <strong-signal-mission>` only when you intentionally want the lower-level mission runner without the strong-signal attempt wrapper.
 45. Do not treat the strong-signal mission or the strong-signal attempt wrapper as responsive readiness by itself; a successful run only matters if the saved pair actually counts and adds grounded strong-signal conservative evidence.
-46. If the local client launched but the saved pair still shows `0` human snapshots / `0` human presence seconds, stop and run `powershell -NoProfile -File .\scripts\audit_client_presence.ps1 -PairRoot <pair-root>` before another live attempt.
-47. Read `client_presence_audit.json` / `.md` as a chain diagnosis rather than a scorecard: launch, server connect, lane attribution, human snapshot accumulation, and final pair-summary reflection.
-48. Treat `lane-attribution-present-but-no-human-snapshots` as a very specific break: the lane-local HLDS log saw the client connect, but telemetry and summaries never counted that client as an in-game human participant.
-49. Treat `client-launched-but-no-server-connect` differently: that means the launch path worked, but the server never logged a real connection at all.
-50. When the audit still points at the join-completion boundary, run `powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1` before another full strong-signal conservative session.
-51. Read `client_join_completion_probe.json` / `.md` as the bounded control-lane answer to whether the chain reached `entered-the-game-seen`, `first-human-snapshot-seen`, `human-presence-accumulating`, and `control-lane-human-usable`.
-52. Treat `connected-but-not-entered-game` as a launch/join completion problem, not as a tuning or certification problem.
-53. Treat `entered-game-but-no-human-snapshot` as a telemetry-ingestion problem: the client got in, but saved control-lane evidence still never counted a human.
-54. Treat `human-snapshot-seen-but-presence-does-not-accumulate` as a narrower accumulation problem: the first saved human snapshot appeared, but the saved presence window still stayed too weak.
+46. Treat `ready-for-next-strong-signal-attempt` as the bounded spend gate. It justifies the next full strong-signal conservative session, but it is not the same thing as a successful strong-signal capture.
+47. Read `strong_signal_conservative_attempt.json` / `.md` as the authoritative closeout of that full spend: successful means the pair both counted and added grounded strong-signal evidence; unsuccessful means the live conservative spend still did not resolve the mixed state honestly.
+48. If the local client launched but the saved pair still shows `0` human snapshots / `0` human presence seconds, stop and run `powershell -NoProfile -File .\scripts\audit_client_presence.ps1 -PairRoot <pair-root>` before another live attempt.
+49. Read `client_presence_audit.json` / `.md` as a chain diagnosis rather than a scorecard: launch, server connect, lane attribution, human snapshot accumulation, and final pair-summary reflection.
+50. Treat `lane-attribution-present-but-no-human-snapshots` as a very specific break: the lane-local HLDS log saw the client connect, but telemetry and summaries never counted that client as an in-game human participant.
+51. Treat `client-launched-but-no-server-connect` differently: that means the launch path worked, but the server never logged a real connection at all.
+52. When the audit still points at the join-completion boundary, run `powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1` before another full strong-signal conservative session.
+53. Read `client_join_completion_probe.json` / `.md` as the bounded control-lane answer to whether the chain reached `entered-the-game-seen`, `first-human-snapshot-seen`, `human-presence-accumulating`, and `control-lane-human-usable`.
+54. Treat `connected-but-not-entered-game` as a launch/join completion problem, not as a tuning or certification problem.
+55. Treat `entered-game-but-no-human-snapshot` as a telemetry-ingestion problem: the client got in, but saved control-lane evidence still never counted a human.
+56. Treat `human-snapshot-seen-but-presence-does-not-accumulate` as a narrower accumulation problem: the first saved human snapshot appeared, but the saved presence window still stayed too weak.
 55. Only return to another full strong-signal conservative attempt after the audit or bounded probe identifies a trustworthy entered-the-game to first-human-snapshot path and human presence starts accumulating in saved control-lane evidence.
 56. When one bounded probe succeeds but another still fails earlier in the chain, run `powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -Attempts 3 -UseLatestMissionContext`.
 57. Read `client_join_reliability_matrix.json` / `.md` for the per-attempt matrix: launched process, server connection, entered-the-game, first human snapshot, human presence accumulation, final attempt verdict, and the exact break point when an attempt fails.

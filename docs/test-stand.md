@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-59
+HLDM-JKBOTTI-AI-STAND-20260415-60
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -524,8 +524,10 @@ This wrapper stays thin:
 - it reads `strong_signal_conservative_mission.json` by default and keeps the stronger-signal thresholds visible in the saved report
 - it reuses the existing client-assisted conservative path instead of creating another launch or closeout engine
 - it writes `strong_signal_conservative_attempt.json` / `.md` with the mission path used, pair root, lane verdicts, certification verdict, promotion-counting status, strong-signal before/after counts, grounded before/after counts, responsive gate before/after, next objective before/after, and the before/after evidence mix
+- use it only after the repeated bounded join certificate is honestly `ready-for-next-strong-signal-attempt`; bounded green is the prerequisite for the full spend, not proof that the strong-signal session already succeeded
 - `first-strong-signal-conservative-capture` is only valid if the pair both counts toward promotion and actually adds grounded strong-signal conservative evidence to the matrix
 - unsuccessful results must stay explicit as still-mixed, insufficient-human-signal, interrupted-and-recovered, or manual-review-required; the helper must not treat a merely grounded tuning-usable pair as a strong-signal capture
+- a successful strong-signal conservative result strengthens either keep-conservative or the future responsive case depending on the saved treatment-behavior assessment, but it still does not open `responsive` automatically
 
 If the pair remains counted, refresh only safe derived artifacts. If the review recommends registry correction, do that explicitly and auditably instead of silently rewriting promotion history.
 
