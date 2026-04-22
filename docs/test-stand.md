@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-57
+HLDM-JKBOTTI-AI-STAND-20260415-58
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1104,6 +1104,18 @@ powershell -NoProfile -File .\scripts\audit_probe_lane_startup.ps1 -ProbeRoot .\
 - `port-ready-no-join-invocation` means the bounded control lane cleared startup readiness, but the join helper still was not invoked
 - only return to another full strong-signal conservative attempt after repeated bounded probes reliably clear the startup/materialization gates and any remaining break point is later in the join or telemetry chain
 
+When the repeated probe already reaches `entered the game`, but the first saved human snapshot still appears missing, run the narrower first-human-snapshot boundary audit:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_first_human_snapshot_boundary.ps1 -ProbeRoot .\lab\logs\eval\join_reliability_matrices\<matrix-root>\att\<attempt>\<probe-root>
+```
+
+- this boundary audit is narrower than the broader client-presence audit: it compares authoritative HLDS join lines and telemetry history against the secondary lane summary/session artifacts
+- `snapshot-written-but-summary-not-updated` means `telemetry_history.ndjson` already contains the first human snapshot, but the saved summary/session layer still failed to reflect it
+- `first-human-snapshot-seen` means the saved lane summary now reflects the first counted human snapshot, even if accumulated human presence is still thin
+- `human-presence-accumulating` means the later summary layer is no longer the blocker and saved human-presence seconds are actually building
+- use this helper after the startup audit and after the broader join-completion probe when the break point is clearly between authoritative player entry and saved summary reflection
+
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 
 ```powershell
@@ -1377,7 +1389,7 @@ Each lane folder contains:
 - `session_pack.json`
 - `session_pack.md`
 - `join_instructions.txt`
-- `human_presence_timeline.ndjson`
+- `human_presence_timeline.ndjson` or the shorter fallback alias `human_timeline.ndjson` when deep bounded-probe roots would otherwise exceed the classic Windows path limit
 
 Per-lane summaries now include:
 

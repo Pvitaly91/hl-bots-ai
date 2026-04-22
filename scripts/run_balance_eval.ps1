@@ -33,6 +33,11 @@ function Write-JsonFile {
         [object]$Value
     )
 
+    $parent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Ensure-Directory -Path $parent | Out-Null
+    }
+
     $json = $Value | ConvertTo-Json -Depth 10
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine, $encoding)
@@ -44,6 +49,11 @@ function Write-TextFile {
         [string]$Value
     )
 
+    $parent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Ensure-Directory -Path $parent | Out-Null
+    }
+
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
@@ -53,6 +63,11 @@ function Write-NdjsonFile {
         [string]$Path,
         [object[]]$Records
     )
+
+    $parent = Split-Path -Path $Path -Parent
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        Ensure-Directory -Path $parent | Out-Null
+    }
 
     $lines = @()
     foreach ($record in @($Records)) {
@@ -634,10 +649,19 @@ $copiedArtifacts["patch_history"] = Copy-ArtifactIfExists -SourcePath $patchHist
 $copiedArtifacts["patch_apply_history"] = Copy-ArtifactIfExists -SourcePath $patchApplyHistoryPath -DestinationPath (Join-Path $laneRoot "patch_apply_history.ndjson")
 $copiedArtifacts["bot_settings_history"] = Copy-ArtifactIfExists -SourcePath $botSettingsHistoryPath -DestinationPath (Join-Path $laneRoot "bot_settings_history.ndjson")
 
-$humanPresenceTimelinePath = Join-Path $laneRoot "human_presence_timeline.ndjson"
+# Deep repeated-probe roots can push the canonical diagnostic filename past the
+# classic Windows path limit. Prefer the canonical name and fall back only when
+# the lane-local path would otherwise be too long to materialize.
+$humanPresenceTimelineArtifact = Get-CompatibleLaneArtifactOutputPath `
+    -LaneRoot $laneRoot `
+    -PreferredLeaf "human_presence_timeline.ndjson" `
+    -FallbackLeafNames @("human_timeline.ndjson")
+$humanPresenceTimelinePath = $humanPresenceTimelineArtifact.path
 $humanPresenceTimelineRecords = New-HumanPresenceTimelineRecords -TelemetryRecords $telemetryRecords
 Write-NdjsonFile -Path $humanPresenceTimelinePath -Records $humanPresenceTimelineRecords
 $copiedArtifacts["human_presence_timeline"] = $humanPresenceTimelinePath
+$copiedArtifacts["human_presence_timeline_leaf"] = $humanPresenceTimelineArtifact.leaf
+$copiedArtifacts["human_presence_timeline_used_fallback"] = [bool]$humanPresenceTimelineArtifact.used_fallback
 
 $joinInstructionsPath = Join-Path $laneRoot "join_instructions.txt"
 Write-TextFile -Path $joinInstructionsPath -Value (

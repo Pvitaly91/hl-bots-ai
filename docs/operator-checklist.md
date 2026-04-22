@@ -34,6 +34,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_client_join_completion_probe.ps1` is available so the launch-to-snapshot chain can be reproduced in one bounded control-lane probe before another full strong-signal conservative session is spent
 - `scripts\run_client_join_reliability_matrix.ps1` is available so repeated bounded control-lane probes can be summarized into one reliability matrix and one conservative readiness certificate before another full strong-signal conservative session is spent
 - `scripts\audit_probe_lane_startup.ps1` is available so a failed repeated bounded probe can be audited specifically for lane-root materialization, port-ready, and join-invocation failure before another live spend is justified
+- `scripts\audit_first_human_snapshot_boundary.ps1` is available so a repeated probe that already reached `entered the game` can be audited specifically for the later boundary between authoritative telemetry history and saved lane summary reflection
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -200,7 +201,12 @@ Default ports and lanes:
 61. Treat `lane-launch-attempted-no-root` as a startup/materialization failure, not as a later join or telemetry problem. If the audit also reports a missing `Resolve-Path` lane root and a very long expected path, assume path-depth startup failure first.
 62. Treat `lane-root-created-no-port-ready` as a later startup readiness problem: the lane capture root exists, but the control lane never became ready on the target port.
 63. Treat `port-ready-no-join-invocation` as a join orchestration problem: startup cleared, but the join helper still was not called.
-64. Treat `partially-reliable` as a real improvement, not as readiness. The current readiness policy is intentionally strict: every repeated bounded attempt in the suite must reach entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget before another full strong-signal conservative session is justified.
+64. When a repeated probe already reached `entered-the-game-seen`, but the first saved human snapshot still appears missing, run `powershell -NoProfile -File .\scripts\audit_first_human_snapshot_boundary.ps1 -ProbeRoot <failed-probe-root>`.
+65. Read `first_human_snapshot_audit.json` / `.md` as the later-boundary answer: authoritative HLDS join lines, saved telemetry history, lane summary reflection, and whether the first counted human snapshot was lost in enumeration, human classification, persisted telemetry, or summary aggregation.
+66. Treat `snapshot-written-but-summary-not-updated` as a summary-aggregation failure, not as a missing join. That verdict means the first human snapshot already exists in `telemetry_history.ndjson`, but the summary/session layer still failed to reflect it.
+67. Treat `first-human-snapshot-seen` as progress, not final readiness. The boundary cleared enough to reflect the first counted human snapshot, but accumulated saved human presence may still be too thin.
+68. Treat `human-presence-accumulating` as the sign that the later summary layer is no longer the blocker and the path is ready for the stricter reliability judgment.
+69. Treat `partially-reliable` as a real improvement, not as readiness. The current readiness policy is intentionally strict: every repeated bounded attempt in the suite must reach entered-the-game, first human snapshot, accumulating saved human presence, and control-lane human-usable without overrunning the matrix budget before another full strong-signal conservative session is justified.
 
 ## What Counts As Insufficient Data
 
@@ -515,6 +521,8 @@ How to read grounded evidence certification:
 - when launch succeeded but saved human signal still stayed at zero, run `powershell -NoProfile -File .\scripts\run_client_join_completion_probe.ps1` before another full live conservative session
 - `connected-but-not-entered-game` means the server saw the connection, but the saved control-lane evidence still has no trusted in-game join state
 - `entered-game-but-no-human-snapshot` means the join completed, but saved control-lane telemetry still never counted a human player
+- when the server log and telemetry history disagree with the saved summary/session layer, run `powershell -NoProfile -File .\scripts\audit_first_human_snapshot_boundary.ps1 -ProbeRoot <probe-root>`
+- `snapshot-written-but-summary-not-updated` means the first human snapshot is already present in `telemetry_history.ndjson`, but the saved lane summary/session pack still failed to reflect it
 - the system is only ready for another full strong-signal conservative session after the bounded probe shows `entered-the-game-seen` or equivalent, at least one counted human snapshot, and accumulating saved human presence
 - when one bounded probe succeeds but reliability still looks mixed, run `powershell -NoProfile -File .\scripts\run_client_join_reliability_matrix.ps1 -Attempts 3 -UseLatestMissionContext`
 - `partially-reliable-repeat-bounded-probes` means the repaired path is improving but still too mixed for another full strong-signal spend

@@ -110,6 +110,77 @@ function Ensure-Directory {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Resolve-LaneArtifactPath {
+    param(
+        [string]$LaneRoot,
+        [string]$PreferredLeaf,
+        [string[]]$FallbackLeafNames = @()
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LaneRoot) -or [string]::IsNullOrWhiteSpace($PreferredLeaf)) {
+        return ""
+    }
+
+    foreach ($leafName in @($PreferredLeaf) + @($FallbackLeafNames)) {
+        if ([string]::IsNullOrWhiteSpace($leafName)) {
+            continue
+        }
+
+        $candidatePath = Join-Path $LaneRoot $leafName
+        if (Test-Path -LiteralPath $candidatePath) {
+            return (Resolve-Path -LiteralPath $candidatePath).Path
+        }
+    }
+
+    return ""
+}
+
+function Get-CompatibleLaneArtifactOutputPath {
+    param(
+        [string]$LaneRoot,
+        [string]$PreferredLeaf,
+        [string[]]$FallbackLeafNames = @(),
+        [int]$MaxPathLength = 259
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LaneRoot) -or [string]::IsNullOrWhiteSpace($PreferredLeaf)) {
+        throw "LaneRoot and PreferredLeaf are required."
+    }
+
+    $candidates = @($PreferredLeaf) + @($FallbackLeafNames)
+    foreach ($leafName in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($leafName)) {
+            continue
+        }
+
+        $candidatePath = Join-Path $LaneRoot $leafName
+        if ($candidatePath.Length -le $MaxPathLength) {
+            return [pscustomobject]@{
+                path = $candidatePath
+                leaf = $leafName
+                used_fallback = $leafName -ne $PreferredLeaf
+                preferred_leaf = $PreferredLeaf
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        path = (Join-Path $LaneRoot $PreferredLeaf)
+        leaf = $PreferredLeaf
+        used_fallback = $false
+        preferred_leaf = $PreferredLeaf
+    }
+}
+
+function Resolve-LaneHumanPresenceTimelinePath {
+    param([string]$LaneRoot)
+
+    return Resolve-LaneArtifactPath `
+        -LaneRoot $LaneRoot `
+        -PreferredLeaf "human_presence_timeline.ndjson" `
+        -FallbackLeafNames @("human_timeline.ndjson")
+}
+
 function Get-MSBuildPath {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path -LiteralPath $vswhere) {

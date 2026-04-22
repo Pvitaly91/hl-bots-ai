@@ -288,7 +288,7 @@ function Get-TreatmentLaneArtifacts {
         SummaryPath = $summaryPath
         PatchHistoryPath = if ($laneRoot) { Resolve-ExistingPath -Path (Join-Path $laneRoot "patch_history.ndjson") } else { "" }
         PatchApplyHistoryPath = if ($laneRoot) { Resolve-ExistingPath -Path (Join-Path $laneRoot "patch_apply_history.ndjson") } else { "" }
-        HumanPresenceTimelinePath = if ($laneRoot) { Resolve-ExistingPath -Path (Join-Path $laneRoot "human_presence_timeline.ndjson") } else { "" }
+    HumanPresenceTimelinePath = if ($laneRoot) { Resolve-LaneHumanPresenceTimelinePath -LaneRoot $laneRoot } else { "" }
     }
 }
 

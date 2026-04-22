@@ -200,7 +200,7 @@ function Get-LaneArtifacts {
 
     $summaryPath = Resolve-ExistingPath -Path (Join-Path $LaneRoot "summary.json")
     $sessionPackPath = Resolve-ExistingPath -Path (Join-Path $LaneRoot "session_pack.json")
-    $timelinePath = Resolve-ExistingPath -Path (Join-Path $LaneRoot "human_presence_timeline.ndjson")
+    $timelinePath = Resolve-LaneHumanPresenceTimelinePath -LaneRoot $LaneRoot
     $stdoutPath = Resolve-ExistingPath -Path (Join-Path $LaneRoot "hlds.stdout.log")
     $stderrPath = Resolve-ExistingPath -Path (Join-Path $LaneRoot "hlds.stderr.log")
 

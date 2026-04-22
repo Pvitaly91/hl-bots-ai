@@ -692,7 +692,7 @@ if ($probeLaneRoot) {
     $primaryLaneSummary = Get-ObjectPropertyValue -Object $summaryPayload -Name "primary_lane" -Default $null
     $sessionPackPath = Resolve-ExistingPath -Path (Join-Path $probeLaneRoot "session_pack.json")
     $sessionPack = Read-JsonFile -Path $sessionPackPath
-    $humanPresenceTimelinePath = Resolve-ExistingPath -Path (Join-Path $probeLaneRoot "human_presence_timeline.ndjson")
+    $humanPresenceTimelinePath = Resolve-LaneHumanPresenceTimelinePath -LaneRoot $probeLaneRoot
     $humanPresenceTimeline = Read-NdjsonFile -Path $humanPresenceTimelinePath
     $laneJsonPath = Resolve-ExistingPath -Path (Join-Path $probeLaneRoot "lane.json")
     $laneJson = Read-JsonFile -Path $laneJsonPath

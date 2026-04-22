@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-57
+HLDM-JKBOTTI-AI-STAND-20260415-58
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -46,6 +46,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_client_join_completion_probe.ps1` and `scripts/run_client_join_completion_probe.bat` for the bounded control-lane probe that proves or disproves the missing transition from launched client to entered-the-game, first counted human snapshot, and accumulating saved human presence before another full strong-signal conservative run is spent.
 - `scripts/run_client_join_reliability_matrix.ps1` and `scripts/run_client_join_reliability_matrix.bat` for repeated bounded control-lane probes, per-attempt join-stage classification, and a conservative readiness certificate that says whether the repaired local client path is still not ready, only partially reliable, or ready for the next full strong-signal conservative attempt.
 - `scripts/audit_probe_lane_startup.ps1` and `scripts/audit_probe_lane_startup.bat` for the narrower startup/materialization audit that explains whether a failed bounded probe died before lane-root creation, before port-ready, or before join invocation.
+- `scripts/audit_first_human_snapshot_boundary.ps1` and `scripts/audit_first_human_snapshot_boundary.bat` for the later ingestion-boundary audit that compares authoritative server and telemetry evidence against saved lane summary artifacts when a player already entered the game but the first counted human snapshot still appears missing.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -251,7 +252,7 @@ If no humans join, the lane can still be `ai-healthy`, but the summary marks it 
 - `session_pack.json`
 - `session_pack.md`
 - `join_instructions.txt`
-- `human_presence_timeline.ndjson`
+- `human_presence_timeline.ndjson` or the shorter fallback alias `human_timeline.ndjson` when deep bounded-probe roots would otherwise exceed the classic Windows path limit
 - copied HLDS, bootstrap, sidecar, bot-config, telemetry, and patch artifacts
 
 Live lane summaries now also record the active tuning profile and the effective knobs used for that run, so mixed-session results can be interpreted relative to `conservative`, `default`, or `responsive` treatment behavior.
@@ -1114,6 +1115,20 @@ Use that startup audit differently from the later join-completion audit:
 - `port-ready-no-join-invocation` means startup cleared the lane-root and port-ready gates, but the join helper still was not called
 - only move back to a full strong-signal conservative session after the repeated bounded suite consistently clears startup/materialization and the remaining break, if any, is later in the join or telemetry chain
 
+When the server already shows `entered the game`, but the first saved human snapshot still appears missing, run the narrower first-human-snapshot boundary audit against the probe root:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_first_human_snapshot_boundary.ps1 -ProbeRoot .\lab\logs\eval\join_reliability_matrices\<matrix-root>\att\<attempt>\<probe-root>
+```
+
+Use that boundary audit differently from the broader client-presence audit:
+
+- it compares authoritative HLDS `connected` / `entered the game` lines plus saved telemetry history against the secondary lane summary and session-pack artifacts
+- `snapshot-written-but-summary-not-updated` means the first human snapshot already exists in `telemetry_history.ndjson`, but the saved lane summary/session layer still failed to reflect it
+- `first-human-snapshot-seen` means the lane summary now reflects the first counted human snapshot, even if accumulated saved presence is still thin
+- `human-presence-accumulating` means the later summary layer is no longer the blocker and saved human-presence time is actually building
+- this helper differs from `audit_client_presence.ps1`: the broader audit finds the chain stage, while the first-human-snapshot audit isolates whether the break is enumeration, human classification, persisted telemetry, or summary aggregation
+
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 
 ```powershell
@@ -1406,6 +1421,8 @@ For evaluation runs, the plugin now preserves per-match append-only NDJSON histo
 - `scripts/run_client_join_reliability_matrix.bat`: `cmd.exe` wrapper for the join reliability matrix helper.
 - `scripts/audit_probe_lane_startup.ps1`: bounded probe-lane startup/materialization audit that explains whether a failed repeated probe died before lane-root creation, before port-ready, or before join invocation.
 - `scripts/audit_probe_lane_startup.bat`: `cmd.exe` wrapper for the probe-lane startup audit helper.
+- `scripts/audit_first_human_snapshot_boundary.ps1`: later ingestion-boundary audit that compares authoritative server entry plus telemetry-history evidence against saved lane summary/session artifacts when the first human snapshot still appears missing.
+- `scripts/audit_first_human_snapshot_boundary.bat`: `cmd.exe` wrapper for the first-human-snapshot boundary audit helper.
 - `scripts/run_guided_pair_rehearsal.ps1`: deterministic synthetic pair runner used only by guided rehearsal mode so the sufficiency and auto-stop success branch can be validated without a real human-rich session.
 - `scripts/preflight_real_pair_session.ps1`: operator-facing preflight that verifies build output, required scripts, known paths, control/treatment ports, the conservative treatment profile, and optional local client-helper readiness before a real human pair session.
 - `scripts/preflight_real_pair_session.bat`: `cmd.exe` wrapper for the real pair-session preflight helper.
