@@ -40,6 +40,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_control_phase_accumulation_probe.ps1` is available so the operator can prove the full control-only phase can actually clear the stronger control target before spending another treatment-phase strong-signal session
 - `scripts\audit_full_session_handoff.ps1` is available so a full strong-signal session that already proved control readiness can be audited specifically for the later control-ready -> treatment-join -> closeout chain
 - `scripts\audit_treatment_strong_signal_gap.ps1` is available so a valid grounded full rerun that still missed strong-signal capture can be audited specifically for treatment-side evidence shortfall vs wrapper drift
+- `scripts\run_treatment_patch_completion_attempt.ps1` is available so the next justified conservative live spend can target the one remaining treatment-side patch event instead of rerunning a generic strong-signal wrapper blindly
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
 - default treatment profile remains `conservative`
@@ -233,6 +234,12 @@ Default ports and lanes:
 88. Treat `strong-signal-gap-real-treatment-still-short` as a real evidence shortfall. Another full conservative session is justified only if the missing treatment-side event or window still has to be collected live.
 89. Treat `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, or `strong-signal-criteria-met-but-wrapper-stale` as refresh-only branches. Dry-run first, then use `-ExecuteRefresh` only when the helper explicitly says the refresh is safe, secondary-only, and promotion state stays unchanged.
 90. Do not use the treatment-gap audit as a replacement for `reconcile_pair_metrics.ps1` or the grounded-evidence matrix review. This helper is only for the later question: the pair already counts, so why did treatment-side strong-signal still not capture?
+91. If that audit proves the remaining blocker is exactly one missing treatment patch-while-humans-present event, run `powershell -NoProfile -File .\scripts\run_treatment_patch_completion_attempt.ps1`.
+92. Read `treatment_patch_completion_attempt.json` / `.md` as the milestone answer: missing patch events before vs after, whether the third human-present patch was captured, whether treatment became strong-signal-ready, and whether the first strong-signal conservative capture actually happened.
+93. Treat `treatment-patch-target-met` as the narrow success branch. It means the third human-present patch was finally captured and the run changed the strong-signal evidence state for real.
+94. Treat `treatment-patch-target-still-short` as a real live miss, not as wrapper drift. The run stayed honest, but treatment still ended below the patch-event target.
+95. Treat `treatment-phase-insufficient-human-signal` as an even earlier failure. The run did not preserve enough treatment-side human signal to answer the patch-completion question honestly.
+96. `responsive` stays closed unless that saved attempt really changes the counted strong-signal evidence state. This completion wrapper is narrower than the generic strong-signal attempt, but it still must not be treated as permission to open responsive by narrative alone.
 
 ## What Counts As Insufficient Data
 

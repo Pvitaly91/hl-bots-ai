@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-64
+HLDM-JKBOTTI-AI-STAND-20260415-65
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -52,6 +52,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_control_phase_accumulation_probe.ps1` and `scripts/run_control_phase_accumulation_probe.bat` for the control-only strong-signal proof that keeps the human in the no-AI control lane until the stronger control target is either met or still proven short before another full control+treatment session is spent.
 - `scripts/audit_full_session_handoff.ps1` and `scripts/audit_full_session_handoff.bat` for the later full-session audit that reads the control-ready, treatment-join, treatment-phase, and closeout chain when a full conservative run already proved control readiness but still failed to finish treatment or final artifacts cleanly.
 - `scripts/audit_treatment_strong_signal_gap.ps1` and `scripts/audit_treatment_strong_signal_gap.bat` for the later treatment-side audit that distinguishes a real strong-signal evidence shortfall from stale secondary wrapper drift after a valid grounded full rerun already exists.
+- `scripts/run_treatment_patch_completion_attempt.ps1` and `scripts/run_treatment_patch_completion_attempt.bat` for the next narrow live milestone after that audit, where the explicit goal is to capture the missing third treatment patch-while-humans-present event and determine whether the first strong-signal conservative evidence pack was finally produced.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -1203,6 +1204,20 @@ powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -Use
 - secondary sources are `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, `strong_signal_conservative_attempt.json`, and other wrapper narratives
 - `strong-signal-gap-real-treatment-still-short` means the canonical treatment evidence is still below the mission target, so another full conservative session must still capture the missing human-present patch event or whatever exact metric remains short
 - `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, or `strong-signal-criteria-met-but-wrapper-stale` mean refresh-only branches; use `-DryRun` first and `-ExecuteRefresh` only when the helper says the secondary refresh is safe and promotion state remains unchanged
+
+When that audit already proves the remaining blocker is one missing treatment patch-while-humans-present event, spend the next conservative run through the dedicated completion helper:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_treatment_patch_completion_attempt.ps1
+```
+
+- this helper is narrower than the earlier generic strong-signal conservative attempt wrapper: it still reuses the same strong-signal mission, mission-driven runner, client-assisted join path, sequential control/treatment guidance, live monitor, certification, outcome dossier, grounded-evidence matrix, responsive gate, and next-live planner, but its report is centered on the missing treatment patch target
+- it records the canonical treatment patch count before and after the run, says explicitly whether the third human-present patch was captured, and reports whether treatment became strong-signal-ready
+- `treatment-patch-target-met` means the missing third human-present patch was finally captured and the run changed the strong-signal evidence state for real
+- `treatment-patch-target-still-short` means the run stayed honest, but treatment still ended below the patch-event target
+- `treatment-phase-insufficient-human-signal` means the run did not preserve enough treatment-side human presence to answer the patch-completion question honestly
+- `treatment-phase-manual-review-required` means the third patch may have been captured, but the final strong-signal result still needs explicit review before it can be treated as a clean first capture
+- `responsive` still stays closed unless the saved evidence actually changes
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 

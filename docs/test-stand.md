@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-64
+HLDM-JKBOTTI-AI-STAND-20260415-65
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1181,6 +1181,19 @@ powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -Pai
 - secondary sources are `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, `strong_signal_conservative_attempt.json`, and related wrapper summaries
 - `strong-signal-gap-real-treatment-still-short` means the next full conservative session must still capture the missing treatment-side event or window
 - `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, and `strong-signal-criteria-met-but-wrapper-stale` are refresh-only branches; dry-run first and execute only the listed safe secondary refresh commands when the helper says promotion state stays unchanged
+
+When that audit already proves the remaining blocker is one missing treatment patch-while-humans-present event, use the dedicated completion helper for the next real conservative spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_treatment_patch_completion_attempt.ps1
+```
+
+- this helper is narrower than the earlier generic strong-signal conservative attempt because it assumes the remaining blocker is already known and centers the report on treatment patch completion
+- it still reuses the strong-signal mission, mission-driven runner, local client discovery, join helpers, control-first guidance, treatment-hold guidance, live monitor, certification, mission attainment, outcome dossier, grounded-evidence matrix, responsive gate, and next-live planner
+- `third human-present patch captured` means the canonical counted treatment patch-events metric moved from `2 / 3` to `3 / 3` while humans were still present
+- a successful result means treatment becomes strong-signal-ready and the first strong-signal conservative evidence pack is finally captured
+- an unsuccessful result means either treatment still stayed short of the third patch event or the session lost enough human signal that the target could not be evaluated honestly
+- `responsive` still stays closed unless the saved pair really changes the counted strong-signal evidence state
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 
