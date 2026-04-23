@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-72
+HLDM-JKBOTTI-AI-STAND-20260415-73
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -186,6 +186,18 @@ Validate the public human-trigger path like this:
 powershell -NoProfile -File .\scripts\validate_public_human_trigger.ps1 -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
+Audit the local Steam + Half-Life public admission environment like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_public_steam_environment.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+Compare the public client admission paths like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\compare_public_client_admission_paths.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
 The validator reuses the same authoritative human-count source as public mode itself: GoldSrc `status` over RCON. It writes:
 
 - `public_human_trigger_validation.json`
@@ -209,12 +221,14 @@ The full public human-trigger validation is complete only when one validator run
 - `bots-disconnected-humans-present` while that human remains
 - `bots-repopulated-empty-server` after humans leave
 
+`blocked-before-server-admission` means the local client never crossed the authoritative server-side human boundary. If the environment audit ends `steam-environment-blocked-before-admission` and the best compared Steam-backed path still fails before server connect, the remaining blocker is likely external to repo-side public server logic on that machine.
+
 Current local status on `main`:
 
 - empty-server public mode is working on `crossfire`
 - advanced AI balance remains off by default
-- the remaining blocker on this machine is still `steam-admission-failed-before-server-connect`
-- the latest main-state validator shows Steam-backed admission failing in the CM reconnect stage before any real server-side human `connected` event appears
+- the prompt-73 environment audit now classifies this machine as `steam-environment-blocked-before-admission`
+- the latest prompt-73 comparison shows both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` can materialize locally but still does not create authoritative public admission under `sv_lan 0`
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
 

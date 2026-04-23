@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-72
+HLDM-JKBOTTI-AI-STAND-20260415-73
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -282,6 +282,12 @@ This comparison helper writes:
 
 It compares the Steam app-launch path, the Steam `steam://connect/...` URI path, and the direct `hl.exe` path when those paths are available on the current machine. Use it when you need to know which public admission path is best, not when you need to join a control or treatment lab lane.
 
+The prompt-73 alias is:
+
+```bat
+scripts\compare_public_client_admission_paths.bat -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
 Audit one Steam-backed public admission failure like this:
 
 ```bat
@@ -292,6 +298,17 @@ This audit helper writes:
 
 - `steam_public_admission_audit.json`
 - `steam_public_admission_audit.md`
+
+Audit the local Steam + Half-Life public admission environment like this:
+
+```bat
+scripts\audit_public_steam_environment.bat -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+This environment helper writes:
+
+- `public_steam_environment_audit.json`
+- `public_steam_environment_audit.md`
 
 `steam-admission-failed-before-server-connect` means the Steam-backed path started locally but the Steam admission chain failed before the HLDS log ever saw a real human `connected`.
 
@@ -321,12 +338,14 @@ The full public human-trigger validation is complete only when one validator run
 - `bots-disconnected-humans-present` while that human remains
 - `bots-repopulated-empty-server` after humans leave
 
+`blocked-before-server-admission` means the local client launch path never crossed the authoritative server-side human boundary. If the environment audit ends `steam-environment-blocked-before-admission` and the best Steam-backed comparison path still fails before server connect, the remaining blocker is likely external to repo-side public server logic on that machine.
+
 Current local status on `main`:
 
 - empty-server public mode is working on `crossfire`
 - advanced AI balance remains off by default
-- the remaining blocker on this machine is still `steam-admission-failed-before-server-connect`
-- the latest main-state validator shows Steam-backed admission failing in the CM reconnect stage before any real server-side human `connected` event appears
+- the prompt-73 environment audit now classifies this machine as `steam-environment-blocked-before-admission`
+- the latest prompt-73 comparison shows both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` can materialize locally but still does not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
 

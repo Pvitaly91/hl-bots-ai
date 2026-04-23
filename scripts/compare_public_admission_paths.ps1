@@ -171,6 +171,7 @@ function Get-ComparisonMarkdown {
         foreach ($entry in @($Comparison.path_results)) {
             $lines += "- $($entry.path_id): available=$($entry.path_available); stage=$($entry.narrowest_failure_stage); client_process_started=$($entry.client_process_started); server_connect_seen=$($entry.server_connect_seen); entered_the_game_seen=$($entry.entered_the_game_seen); authoritative_human_seen=$($entry.authoritative_human_seen); explanation=$($entry.explanation)"
             $lines += "  command=$($entry.command_text)"
+            $lines += "  working_directory=$($entry.working_directory)"
         }
     }
 
@@ -236,6 +237,7 @@ foreach ($pathId in @($effectivePaths.ToArray())) {
             path_id = $pathId
             path_available = $false
             command_text = ""
+            working_directory = ""
             launcher_process_started = $false
             client_process_started = $false
             steam_admission_succeeded = $false
@@ -301,17 +303,20 @@ foreach ($pathId in @($effectivePaths.ToArray())) {
     $enteredGameSeen = $false
     $authoritativeHumanSeen = $false
     $commandText = ""
+    $workingDirectory = ""
     $failureStage = if ($DryRun) { "dry-run-not-executed" } else { "inconclusive-manual-review" }
     $explanation = if ($DryRun) { "Recorded the resolved launch shape without executing the admission path." } else { "No diagnosis output was produced." }
     $steamAdmissionSucceeded = $false
 
     if ($null -ne $attempt) {
+        $launchedHlProcessIds = @((Get-ObjectPropertyValue -Object $attempt -Name "launched_hl_process_ids" -Default @()))
         $launcherProcessStarted = [bool](Get-ObjectPropertyValue -Object $attempt -Name "launcher_process_started" -Default $false)
-        $clientProcessStarted = $launcherProcessStarted -or @((Get-ObjectPropertyValue -Object $attempt -Name "launched_hl_process_ids" -Default @())).Count -gt 0
+        $clientProcessStarted = @($launchedHlProcessIds).Count -gt 0
         $serverConnectSeen = [bool](Get-ObjectPropertyValue -Object $attempt -Name "server_connect_seen" -Default $false)
         $enteredGameSeen = [bool](Get-ObjectPropertyValue -Object $attempt -Name "server_entered_game_seen" -Default $false)
         $authoritativeHumanSeen = [bool](Get-ObjectPropertyValue -Object $attempt -Name "authoritative_human_seen" -Default $false)
         $commandText = [string](Get-ObjectPropertyValue -Object $attempt -Name "command_text" -Default "")
+        $workingDirectory = [string](Get-ObjectPropertyValue -Object $attempt -Name "working_directory" -Default "")
     }
     if ($null -ne $diagnosis) {
         $failureStage = [string](Get-ObjectPropertyValue -Object $diagnosis -Name "stage_verdict" -Default $failureStage)
@@ -323,6 +328,7 @@ foreach ($pathId in @($effectivePaths.ToArray())) {
         path_id = $pathId
         path_available = $true
         command_text = $commandText
+        working_directory = $workingDirectory
         launcher_process_started = $launcherProcessStarted
         client_process_started = $clientProcessStarted
         steam_admission_succeeded = $steamAdmissionSucceeded
