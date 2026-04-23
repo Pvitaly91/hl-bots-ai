@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-67
+HLDM-JKBOTTI-AI-STAND-20260415-68
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -54,6 +54,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_treatment_strong_signal_gap.ps1` and `scripts/audit_treatment_strong_signal_gap.bat` for the later treatment-side audit that distinguishes a real strong-signal evidence shortfall from stale secondary wrapper drift after a valid grounded full rerun already exists.
 - `scripts/audit_treatment_dwell_and_patch_consistency.ps1` and `scripts/audit_treatment_dwell_and_patch_consistency.bat` for the narrower comparison between the latest better treatment run and the latest regressed one, with explicit separation between real treatment dwell loss and secondary patch-count drift.
 - `scripts/audit_treatment_closeout_cutoff.ps1` and `scripts/audit_treatment_closeout_cutoff.bat` for the narrower cutoff audit that asks whether a regressed treatment run ended just before the next expected human sample while treatment was still unsafe to leave.
+- `scripts/audit_full_rerun_artifact_gap.ps1` and `scripts/audit_full_rerun_artifact_gap.bat` for the next failure-stage audit when a post-fix full rerun still does not produce `pair_summary.json`, the grounded certificate, or mission attainment.
 - `scripts/run_treatment_patch_completion_attempt.ps1` and `scripts/run_treatment_patch_completion_attempt.bat` for the next narrow live milestone after that audit, where the explicit goal is to capture the missing third treatment patch-while-humans-present event and determine whether the first strong-signal conservative evidence pack was finally produced.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
@@ -1248,6 +1249,19 @@ powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1 -PairR
 - `closeout-started-while-safe_to_leave_false` means treatment still was not safe to leave, but the saved timing is not tight enough to prove a one-sample cutoff
 - the closeout guard is bounded on purpose: it only holds treatment open for one short grace window so the next expected sample can arrive, then it recomputes instead of silently loosening thresholds or leaving the lane open indefinitely
 - if a guarded rerun fixes treatment dwell but the third patch event is still missing, treat that as progress but not success; another conservative session is justified only if the remaining live gap is still exactly the missing patch event rather than another dwell cutoff
+
+If the post-guard full rerun fails earlier and never produces `pair_summary.json`, audit that artifact gap before spending another live session:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_full_rerun_artifact_gap.ps1
+powershell -NoProfile -File .\scripts\audit_full_rerun_artifact_gap.ps1 -PairRoot .\lab\logs\eval\ssca53-live\<failed-rerun-pair>
+```
+
+- this helper is narrower than the treatment closeout-cutoff audit: the cutoff audit assumes treatment already became evaluable, while this one asks why the validating full rerun failed before a trustworthy final pair pack existed at all
+- it distinguishes whether the rerun failed before control-ready, before treatment request, during lane materialization, or during final summary flush and closeout
+- `pair-summary-missing-but-recoverable` means the lane summaries survived and the existing salvage path may still rebuild pair-level closeout safely
+- `process-exit-before-summary-flush` means the pair runner died before the raw lane summary or pair summary could be written, so downstream certificate and mission-attainment helpers had nothing authoritative to consume
+- use the salvage decision in `full_rerun_artifact_gap_audit.json` to decide whether to attempt pair-local salvage or spend a new full rerun
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 

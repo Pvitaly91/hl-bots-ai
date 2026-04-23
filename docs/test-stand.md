@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-67
+HLDM-JKBOTTI-AI-STAND-20260415-68
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1222,6 +1222,19 @@ powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1 -PairR
 - `closeout-started-while-safe_to_leave_false` means treatment still was not safe to leave, but the timing is not tight enough to prove a one-sample cutoff
 - the closeout guard is intentionally bounded: it can hold the treatment lane open for one short grace window, wait for the next expected sample or lane end, then recompute without loosening any thresholds
 - if a guarded rerun fixes treatment dwell but the third human-present patch is still missing, treat that as real progress but still not as a strong-signal capture
+
+If the post-guard full rerun collapses earlier and never produces a valid final pair pack, audit that artifact gap directly before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_full_rerun_artifact_gap.ps1
+powershell -NoProfile -File .\scripts\audit_full_rerun_artifact_gap.ps1 -PairRoot .\lab\logs\eval\ssca53-live\<failed-rerun-pair>
+```
+
+- this helper is narrower than the treatment closeout-cutoff audit: it assumes the validating rerun never even reached a trustworthy final pair pack, so the problem is earlier than treatment-side cutoff analysis
+- it maps the exact artifact gap across mission snapshot, mission execution, control-to-treatment switch, phase flow, live monitor, pair summary, grounded certificate, mission attainment, and final session docket
+- `process-exit-before-summary-flush` means the pair runner itself died before the raw lane summary or pair summary existed, so downstream closeout helpers could not be trusted to salvage the run
+- `pair-summary-missing-but-recoverable` means the lane-level evidence survived and pair-local salvage may still be safe
+- use the explicit salvage-vs-rerun decision to choose between existing recovery helpers and another full strong-signal conservative attempt
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

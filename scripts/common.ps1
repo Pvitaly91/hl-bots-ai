@@ -48,6 +48,33 @@ function Get-RepoHeadCommitSha {
     return ""
 }
 
+function Get-ObjectPropertyValue {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$Default = $null
+    )
+
+    if ($null -eq $Object) {
+        return $Default
+    }
+
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name) -and $null -ne $Object[$Name]) {
+            return $Object[$Name]
+        }
+
+        return $Default
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $Default
+    }
+
+    return $property.Value
+}
+
 function Get-TuningProfilesPath {
     return Join-Path (Get-RepoRoot) "ai_director\testdata\tuning_profiles.json"
 }

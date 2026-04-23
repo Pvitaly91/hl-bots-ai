@@ -42,6 +42,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\audit_treatment_strong_signal_gap.ps1` is available so a valid grounded full rerun that still missed strong-signal capture can be audited specifically for treatment-side evidence shortfall vs wrapper drift
 - `scripts\audit_treatment_dwell_and_patch_consistency.ps1` is available so the latest better treatment run can be compared directly against the latest regressed treatment run before another live spend is justified
 - `scripts\audit_treatment_closeout_cutoff.ps1` is available so the latest regressed full rerun can be checked for the narrower case where treatment ended just before the next expected human sample while treatment was still unsafe to leave
+- `scripts\audit_full_rerun_artifact_gap.ps1` is available so a failed post-guard rerun that never produced `pair_summary.json`, the grounded certificate, or mission attainment can be audited for the earliest broken stage and salvageability
 - `scripts\run_treatment_patch_completion_attempt.ps1` is available so the next justified conservative live spend can target the one remaining treatment-side patch event instead of rerunning a generic strong-signal wrapper blindly
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
@@ -254,6 +255,13 @@ Default ports and lanes:
 106. Treat `closeout-started-while-safe_to_leave_false` as weaker evidence. Treatment still was not safe to leave, but the timing does not prove that one more sample would have fixed the dwell target.
 107. The closeout guard is intentionally bounded. It may hold treatment open for one short grace window so the next expected sample can arrive and state can be recomputed, but it must not invent samples, loosen thresholds, or leave the lane open indefinitely.
 108. If a guarded rerun fixes treatment dwell but the third human-present patch event is still missing, record that as real progress but not as a strong-signal capture. Another conservative session is justified only if the remaining live gap is now exactly the missing patch event rather than another early cutoff.
+109. If the post-guard rerun still fails earlier and never writes `pair_summary.json`, run `powershell -NoProfile -File .\scripts\audit_full_rerun_artifact_gap.ps1 -PairRoot <failed-rerun-pair-root>` before another live session.
+110. Read `full_rerun_artifact_gap_audit.json` / `.md` as the earliest-stage answer. It tells you whether the rerun died before control-ready, before treatment request, during lane materialization, or during summary flush / guided closeout.
+111. Treat `process-exit-before-summary-flush` as a runner failure, not as a late closeout-only problem. It means the pair runner itself died before the raw lane or pair summaries existed.
+112. Treat `pair-summary-missing-but-recoverable` as the salvage branch only when the lane summaries survived and the helper says the pair root is structurally salvageable.
+113. Treat `failed-rerun-nonrecoverable-rerun-required` as the discard branch. It means the pair root is missing the minimum raw artifacts required for safe salvage.
+114. This artifact-gap audit differs from the treatment closeout-cutoff audit: the cutoff audit assumes treatment already became evaluable, while the artifact-gap audit assumes the validating full rerun never produced a trustworthy final pair pack.
+115. Another full strong-signal conservative attempt is justified only after this artifact-gap audit either proves the failed rerun is safely recoverable or a narrow runner fix is in place for the earlier collapse.
 
 ## What Counts As Insufficient Data
 
