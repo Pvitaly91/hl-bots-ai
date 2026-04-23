@@ -58,7 +58,25 @@ powershell -NoProfile -File .\scripts\diagnose_public_client_admission.ps1 -Atte
 
 These public admission helpers are separate from `join_live_pair_lane.ps1`: they are for product-minimum `sv_lan 0` admission checks, not for control/treatment lane work.
 
+Compare the available public admission paths like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\compare_public_admission_paths.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+Audit the Steam-backed public admission chain like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_steam_public_admission.ps1 -ComparisonJsonPath D:\DEV\CPP\HL-Bots\lab\logs\public_server\admission_path_comparisons\<comparison-root>\public_admission_path_comparison.json
+```
+
+Use the comparison helper when you need to know which public admission path is best. Use the Steam audit helper when you already know the failure is on a Steam-backed path and need the exact stage.
+
+`steam-admission-failed-before-server-connect` means the Steam-backed path failed before HLDS ever counted a real human. `server-connect-seen-no-entered-game` means HLDS saw the human connect but the run still never crossed the entered-the-game boundary.
+
 If the validator says the public human-trigger path is still blocked before server admission, read the saved `public_client_admission_diagnosis.json`, `qconsole.log` tail, and Steam `connection_log_<port>.txt` tail before changing the public server policy. That blocker is narrower than the server bot policy itself.
+
+Treat the public human-trigger validation as complete only when one validator run shows a real authoritative human admission, `bots-disconnected-humans-present`, and later `bots-repopulated-empty-server`.
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
 

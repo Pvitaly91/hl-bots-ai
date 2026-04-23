@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-71
+HLDM-JKBOTTI-AI-STAND-20260415-72
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -152,6 +152,34 @@ The diagnosis helper writes:
 
 Unlike `scripts\join_live_pair_lane.ps1`, these helpers are not for control/treatment lane work. They are specifically for public-mode client admission and only report success after the server sees a real human connect or `entered the game`.
 
+Compare the available public admission paths like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\compare_public_admission_paths.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+This comparison helper writes:
+
+- `public_admission_path_comparison.json`
+- `public_admission_path_comparison.md`
+
+It compares the Steam app-launch path, the Steam `steam://connect/...` URI path, and the direct `hl.exe` path when those are available on the current machine. Use it for public-mode admission diagnostics, not for control/treatment lane work.
+
+Audit one Steam-backed public admission failure like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_steam_public_admission.ps1 -ComparisonJsonPath D:\DEV\CPP\HL-Bots\lab\logs\public_server\admission_path_comparisons\<comparison-root>\public_admission_path_comparison.json
+```
+
+The audit helper writes:
+
+- `steam_public_admission_audit.json`
+- `steam_public_admission_audit.md`
+
+`steam-admission-failed-before-server-connect` means the Steam-backed path started locally but the Steam admission chain failed before HLDS logged a real human `connected`.
+
+`server-connect-seen-no-entered-game` means HLDS already logged a real human connect, but the run still never crossed into a saved non-BOT `entered the game` event.
+
 Validate the public human-trigger path like this:
 
 ```powershell
@@ -171,9 +199,15 @@ The validator records whether these public states were actually observed:
 - `waiting-empty-server-repopulate`
 - `bots-repopulated-empty-server`
 
-The validator also records which admission path was attempted, whether it fell back from Steam-native to direct `hl.exe`, and the matching `public_client_admission_diagnosis.json` path for each attempt.
+The validator also records which admission path was attempted, whether it fell back from Steam-native to Steam URI or direct `hl.exe`, and the matching `public_client_admission_diagnosis.json` path for each attempt.
 
 If a local public join still fails before real server admission, the validator preserves the exact blocker with the latest public status snapshot, the public admission diagnosis, `qconsole.log` tail, and Steam `connection_log_<port>.txt` tail instead of pretending the human-trigger path was fully exercised.
+
+The full public human-trigger validation is complete only when one validator run records:
+
+- a real authoritative human admission
+- `bots-disconnected-humans-present` while that human remains
+- `bots-repopulated-empty-server` after humans leave
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
 

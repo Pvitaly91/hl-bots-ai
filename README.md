@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-71
+HLDM-JKBOTTI-AI-STAND-20260415-72
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -60,6 +60,8 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
 - `scripts/launch_public_hldm_client.ps1` and `scripts/launch_public_hldm_client.bat` for the public-mode local admission attempt that prefers the Steam-native launch path for `sv_lan 0`, records the exact command, PID, working directory, and log paths, and only calls the attempt admitted if the server actually sees a real human connect.
 - `scripts/diagnose_public_client_admission.ps1` and `scripts/diagnose_public_client_admission.bat` for the narrow public admission diagnosis that separates Steam-launch failure, client-start-without-admission, pre-connect Steam failure, server-connect-without-entered-game, and real admitted-human outcomes.
+- `scripts/compare_public_admission_paths.ps1` and `scripts/compare_public_admission_paths.bat` for the side-by-side comparison of Steam app launch, Steam URI, and direct `hl.exe` public admission paths against one live public server.
+- `scripts/audit_steam_public_admission.ps1` and `scripts/audit_steam_public_admission.bat` for the Steam-backed admission-stage audit that narrows failures to steam path resolution, launch, client materialization, CM admission, server connect, or entered-the-game.
 - `scripts/validate_public_human_trigger.ps1` and `scripts/validate_public_human_trigger.bat` for the product-minimum public-mode validation pass that starts or attaches to the public `crossfire` server, observes the authoritative public policy state transitions, and records whether a local human actually triggered bot removal and later repopulation.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
@@ -267,6 +269,34 @@ The diagnosis helper writes:
 
 Unlike `scripts\join_live_pair_lane.ps1`, these public-mode helpers are not lab lane join tools. They are specifically for `sv_lan 0` public admission and only report success when the server logs a real human connect or `entered the game`.
 
+Compare the available public admission paths like this:
+
+```bat
+scripts\compare_public_admission_paths.bat -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+This comparison helper writes:
+
+- `public_admission_path_comparison.json`
+- `public_admission_path_comparison.md`
+
+It compares the Steam app-launch path, the Steam `steam://connect/...` URI path, and the direct `hl.exe` path when those paths are available on the current machine. Use it when you need to know which public admission path is best, not when you need to join a control or treatment lab lane.
+
+Audit one Steam-backed public admission failure like this:
+
+```bat
+scripts\audit_steam_public_admission.bat -ComparisonJsonPath D:\DEV\CPP\HL-Bots\lab\logs\public_server\admission_path_comparisons\<comparison-root>\public_admission_path_comparison.json
+```
+
+This audit helper writes:
+
+- `steam_public_admission_audit.json`
+- `steam_public_admission_audit.md`
+
+`steam-admission-failed-before-server-connect` means the Steam-backed path started locally but the Steam admission chain failed before the HLDS log ever saw a real human `connected`.
+
+`server-connect-seen-no-entered-game` means the HLDS log already saw a real human connect, but the session still never crossed into a saved non-BOT `entered the game` event.
+
 Validate the human-trigger path like this:
 
 ```bat
@@ -281,9 +311,15 @@ The validator uses the same authoritative human-count source as public mode itse
 - `waiting-empty-server-repopulate`
 - `bots-repopulated-empty-server`
 
-The validator also records which public admission path was attempted first, whether it fell back to direct `hl.exe`, and the matching `public_client_admission_diagnosis.json` path for each attempt.
+The validator also records which public admission path was attempted first, whether it fell back to Steam URI or direct `hl.exe`, and the matching `public_client_admission_diagnosis.json` path for each attempt.
 
 If the local public join still fails before server admission, the validator preserves the narrowest blocker instead of guessing. In this environment that means checking the client `qconsole.log`, the Steam per-port `connection_log_<port>.txt`, the public admission diagnosis, and the public server status history before claiming the human-trigger path is really broken.
+
+The full public human-trigger validation is complete only when one validator run records:
+
+- a real authoritative human admission
+- `bots-disconnected-humans-present` while that human remains
+- `bots-repopulated-empty-server` after humans leave
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
 

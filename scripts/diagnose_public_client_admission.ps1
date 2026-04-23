@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "common.ps1")
 
-$promptId = "HLDM-JKBOTTI-AI-STAND-20260415-71"
+$promptId = Get-RepoPromptId
 $repoRoot = Get-RepoRoot
 
 function Write-JsonFile {
@@ -192,6 +192,7 @@ if ($null -ne $validation) {
 }
 
 $attemptPathKind = [string](Get-ObjectPropertyValue -Object $attempt -Name "attempt_path_kind" -Default "")
+$steamBackedAttempt = $attemptPathKind -eq "steam-native-applaunch" -or $attemptPathKind -eq "steam-connect-uri"
 $launcherProcessStarted = [bool](Get-ObjectPropertyValue -Object $attempt -Name "launcher_process_started" -Default $false)
 $launcherProcessId = [int](Get-ObjectPropertyValue -Object $attempt -Name "launcher_process_id" -Default 0)
 $launchedHlProcessIds = @((Get-ObjectPropertyValue -Object $attempt -Name "launched_hl_process_ids" -Default @()))
@@ -240,9 +241,9 @@ if ($qconsoleSteamInitFailureSeen) { $evidenceFound.Add("qconsole showed Steam i
 
 $stageVerdict = ""
 $explanation = ""
-if ($attemptPathKind -ne "steam-native-applaunch") {
+if (-not $steamBackedAttempt) {
     $stageVerdict = "steam-launch-not-attempted"
-    $explanation = "This admission attempt did not use the Steam-native public path. Use the Steam-native path first for authoritative sv_lan 0 admission checks, then use direct hl.exe only as comparison."
+    $explanation = "This admission attempt did not use a Steam-backed public path. Use a Steam-backed path first for authoritative sv_lan 0 admission checks, then use direct hl.exe only as comparison."
 }
 elseif ($serverEnteredSeen -or $attemptAuthoritativeHumanSeen) {
     $stageVerdict = "entered-game-seen-human-admitted"
@@ -254,7 +255,7 @@ elseif ($serverConnectSeen) {
 }
 elseif (-not $launcherProcessStarted -and @($launchedHlProcessIds).Count -eq 0) {
     $stageVerdict = "steam-launch-attempted-no-client-process"
-    $explanation = "The Steam-native launch command was issued, but no new hl.exe client process appeared afterward."
+    $explanation = "The Steam-backed launch command was issued, but no new hl.exe client process appeared afterward."
 }
 elseif ($steamCmFailureSeen -or $qconsoleSteamInitFailureSeen) {
     $stageVerdict = "steam-admission-failed-before-server-connect"

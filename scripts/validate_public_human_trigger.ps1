@@ -334,7 +334,10 @@ function Invoke-HumanJoinAttempt {
         $launchParams["SteamExePath"] = $steamExePath
     }
 
-    if ($Method -match "steam") {
+    if ($Method -eq "steam-connect-uri") {
+        $launchParams["UseSteamUriLaunchPath"] = $true
+    }
+    elseif ($Method -match "steam") {
         $launchParams["UseSteamLaunchPath"] = $true
     }
     else {
@@ -348,7 +351,7 @@ function Invoke-HumanJoinAttempt {
     if ($null -eq $attempt) {
         return [pscustomobject]@{
             method = $Method
-            attempt_path_kind = if ($Method -match "steam") { "steam-native-applaunch" } else { "direct-hl-exe" }
+            attempt_path_kind = if ($Method -eq "steam-connect-uri") { "steam-connect-uri" } elseif ($Method -match "steam") { "steam-native-applaunch" } else { "direct-hl-exe" }
             launched = $false
             authoritative_human_seen = $false
             server_connect_seen = $false
@@ -602,6 +605,24 @@ try {
         Start-Sleep -Seconds 2
 
         $humanJoinAttempts.Add((Invoke-HumanJoinAttempt `
+            -Method "steam-connect-uri" `
+            -StatusJsonPath $publicStatusJsonPath `
+            -ServerLogPath $serverLogPath `
+            -ClientQConsolePath $launchPlan.qconsole_path `
+            -SteamConnectionLogPath $steamConnectionLogPath `
+            -TimeoutSeconds $HumanJoinAttemptWaitSeconds `
+            -LaunchAction $null `
+            -CommandText "" `
+            -WorkingDirectory "" `
+            -ExplanationIfUnavailable "Steam.exe or the steam://connect path was not discoverable for the public-mode secondary admission attempt.")) | Out-Null
+    }
+
+    $latestAttempt = $humanJoinAttempts[$humanJoinAttempts.Count - 1]
+    if (-not $latestAttempt.authoritative_human_seen) {
+        Stop-TrackedHlProcesses
+        Start-Sleep -Seconds 2
+
+        $humanJoinAttempts.Add((Invoke-HumanJoinAttempt `
             -Method "direct-hl-exe-connect" `
             -StatusJsonPath $publicStatusJsonPath `
             -ServerLogPath $serverLogPath `
@@ -664,7 +685,7 @@ try {
     }
     elseif (-not $humanAttemptSucceeded) {
         $validationVerdict = "public-human-trigger-blocked-before-server-admission"
-        $explanation = "The public server stayed empty of humans during both local join attempts. The narrowest remaining blocker is the local Steam-backed public client admission path, not the empty-server bot policy."
+        $explanation = "The public server stayed empty of humans during all local join attempts. The narrowest remaining blocker is the local Steam-backed public client admission path, not the empty-server bot policy."
     }
     else {
         $validationVerdict = "public-human-trigger-partially-validated"

@@ -54,6 +54,7 @@ function Write-PublicStatusFiles {
         "- Steam connect URI: $($Status.join_targets.steam_connect_uri)",
         "- Preferred public client launch path: $($Status.client_admission_plan.preferred_launch_path)",
         "- Steam-native admission command: $($Status.client_admission_plan.steam_native_helper_command)",
+        "- Steam URI admission command: $($Status.client_admission_plan.steam_uri_helper_command)",
         "- Direct-client admission command: $($Status.client_admission_plan.direct_helper_command)",
         "- Max players: $($Status.max_players)",
         "- Bot target when empty: $($Status.bot_count_target_when_empty)",
@@ -510,6 +511,10 @@ try {
             client_admission_plan = [ordered]@{
                 preferred_launch_path = [string]$publicClientAdmissionPlan.preferred_launch_path
                 steam_native_helper_command = ("powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\launch_public_hldm_client.ps1 -ServerAddress {0} -ServerPort {1} -PublicServerOutputRoot {2} -UseSteamLaunchPath" -f `
+                    (Format-ProcessArgumentText -Value $serverHost), `
+                    $Port, `
+                    (Format-ProcessArgumentText -Value $resolvedOutputRoot))
+                steam_uri_helper_command = ("powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\launch_public_hldm_client.ps1 -ServerAddress {0} -ServerPort {1} -PublicServerOutputRoot {2} -UseSteamUriLaunchPath" -f `
                     (Format-ProcessArgumentText -Value $serverHost), `
                     $Port, `
                     (Format-ProcessArgumentText -Value $resolvedOutputRoot))

@@ -4,6 +4,7 @@ param(
     [string]$SteamExePath = "",
     [string]$ClientExePath = "",
     [switch]$UseSteamLaunchPath,
+    [switch]$UseSteamUriLaunchPath,
     [switch]$UseDirectClientLaunchPath,
     [switch]$DryRun,
     [string]$OutputRoot = "",
@@ -19,7 +20,7 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "common.ps1")
 
-$promptId = "HLDM-JKBOTTI-AI-STAND-20260415-71"
+$promptId = Get-RepoPromptId
 $repoRoot = Get-RepoRoot
 $resolvedLabRoot = Get-LabRootDefault
 $resolvedOutputRoot = if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
@@ -286,6 +287,9 @@ $pathKind = ""
 if ($UseDirectClientLaunchPath) {
     $pathKind = "direct-hl-exe"
 }
+elseif ($UseSteamUriLaunchPath) {
+    $pathKind = "steam-connect-uri"
+}
 elseif ($UseSteamLaunchPath -or -not $UseDirectClientLaunchPath) {
     $pathKind = "steam-native-applaunch"
 }
@@ -328,6 +332,22 @@ if ($pathKind -eq "steam-native-applaunch") {
     }
     else {
         $launchExplanation = "Steam.exe was not discoverable for the public admission attempt."
+    }
+}
+elseif ($pathKind -eq "steam-connect-uri") {
+    $launcherPath = [string]$admissionPlan.steam_exe_path
+    $launcherArguments = @()
+    if (-not [string]::IsNullOrWhiteSpace([string]$admissionPlan.steam_connect_uri)) {
+        $launcherArguments = @([string]$admissionPlan.steam_connect_uri)
+    }
+    $commandText = [string]$admissionPlan.steam_connect_uri_command_text
+    $workingDirectory = [string]$admissionPlan.steam_working_directory
+    $launcherAvailable = -not [string]::IsNullOrWhiteSpace($launcherPath) -and @($launcherArguments).Count -gt 0
+    if ($launcherAvailable) {
+        $launchExplanation = "Steam connect URI path selected."
+    }
+    else {
+        $launchExplanation = "Steam.exe or the steam://connect URI was not available for the public admission attempt."
     }
 }
 elseif ($pathKind -eq "direct-hl-exe") {
@@ -471,9 +491,9 @@ elseif ($serverConnectSeen) {
     $attemptVerdict = "server-connect-seen-no-entered-game"
     $explanation = "The server logged a non-BOT connect, but no non-BOT entered-the-game event was observed before the admission timeout expired."
 }
-elseif ($pathKind -eq "steam-native-applaunch" -and @($newHlProcessIds).Count -eq 0) {
+elseif (($pathKind -eq "steam-native-applaunch" -or $pathKind -eq "steam-connect-uri") -and @($newHlProcessIds).Count -eq 0) {
     $attemptVerdict = "steam-launch-attempted-no-client-process"
-    $explanation = "The Steam-native public admission launch was attempted, but no new hl.exe client process became visible afterward."
+    $explanation = "The Steam-backed public admission launch was attempted, but no new hl.exe client process became visible afterward."
 }
 else {
     $attemptVerdict = "client-process-started-no-server-admission"
