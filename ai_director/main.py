@@ -13,6 +13,8 @@ if __package__ in (None, ""):
 
 from ai_director.bridge import load_dotenv, read_json, write_json_atomic
 from ai_director.decision import materialize_patch, recommend_patch
+from ai_director.evaluation import build_patch_event
+from ai_director.history import append_ndjson, history_file_path
 from ai_director.openai_client import generate_recommendation_with_openai
 
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -28,9 +30,12 @@ def configure_logging(level: str) -> None:
 def process_telemetry(
     telemetry: dict,
     *,
+    runtime_dir: Path,
     prompt_path: Path,
     api_key: str | None,
     model: str,
+    previous_patch: dict | None,
+    tuning_profile: str,
 ) -> dict:
     if api_key:
         try:
@@ -40,11 +45,30 @@ def process_telemetry(
             logging.info("Generated patch with OpenAI model %s", model)
         except Exception as exc:  # pragma: no cover - depends on local env
             logging.warning("OpenAI path failed, falling back to rules: %s", exc)
-            recommendation = recommend_patch(telemetry)
+            recommendation = recommend_patch(telemetry, tuning_profile=tuning_profile)
     else:
-        recommendation = recommend_patch(telemetry)
+        recommendation = recommend_patch(telemetry, tuning_profile=tuning_profile)
 
-    patch = materialize_patch(telemetry, recommendation)
+    patch = materialize_patch(
+        telemetry,
+        recommendation,
+        tuning_profile=tuning_profile,
+    )
+    patch_event = build_patch_event(telemetry, recommendation, patch, previous_patch)
+    append_ndjson(
+        history_file_path(runtime_dir, "patch", str(telemetry.get("match_id", "unknown-match"))),
+        patch_event,
+    )
+
+    if not patch_event["emitted"]:
+        logging.info(
+            "Suppressed patch %s for telemetry %s (%s)",
+            patch["patch_id"],
+            telemetry.get("telemetry_sequence", ""),
+            patch_event["skip_reason"],
+        )
+        return {}
+
     logging.info(
         "Patch %s target_skill=%s bot_delta=%s reason=%s",
         patch["patch_id"],
@@ -85,6 +109,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Process the latest telemetry file once and exit.",
     )
+    parser.add_argument(
+        "--tuning-profile",
+        default=os.getenv("AI_DIRECTOR_TUNING_PROFILE", "default"),
+        help="Named tuning profile for the bounded offline rule path.",
+    )
     return parser.parse_args()
 
 
@@ -103,6 +132,8 @@ def main() -> int:
     api_key = os.getenv("OPENAI_API_KEY")
     model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     last_processed = ""
+    last_patch: dict | None = None
+    last_match_id = ""
 
     logging.info("Watching runtime directory %s", runtime_dir)
 
@@ -110,15 +141,24 @@ def main() -> int:
         if telemetry_path.exists():
             telemetry = read_json(telemetry_path)
             telemetry_key = f"{telemetry.get('match_id', '')}:{telemetry.get('telemetry_sequence', '')}"
+            match_id = str(telemetry.get("match_id", ""))
 
             if telemetry_key and telemetry_key != last_processed:
+                if match_id != last_match_id:
+                    last_patch = None
+                    last_match_id = match_id
                 patch = process_telemetry(
                     telemetry,
+                    runtime_dir=runtime_dir,
                     prompt_path=prompt_path,
                     api_key=api_key,
                     model=model,
+                    previous_patch=last_patch,
+                    tuning_profile=str(args.tuning_profile),
                 )
-                write_json_atomic(patch_path, patch)
+                if patch:
+                    write_json_atomic(patch_path, patch)
+                    last_patch = patch
                 last_processed = telemetry_key
 
                 if args.once:

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "no_humans_insufficient_data",
+  "description": "No humans ever join either lane. The pair should remain plumbing-valid only and must not justify responsive.",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "treatment_profile": "conservative",
+  "min_human_snapshots": 3,
+  "min_human_presence_seconds": 60.0,
+  "min_patch_events_for_usable_lane": 2,
+  "expected": {
+    "pair_classification": "plumbing-valid only",
+    "comparison_verdict": "comparison-insufficient-data",
+    "scorecard_treatment_behavior_assessment": "inconclusive",
+    "scorecard_recommendation": "insufficient-data-repeat-session",
+    "shadow_decision": "insufficient-data-no-promotion"
+  }
+}

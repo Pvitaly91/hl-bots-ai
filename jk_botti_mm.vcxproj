@@ -74,6 +74,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>wsock32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <ModuleDefinitionFile>$(ProjectDir)jk_botti_mm.def</ModuleDefinitionFile>
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(SolutionDir)build\bin\$(Configuration)\$(Platform)\addons\jk_botti" mkdir "$(SolutionDir)build\bin\$(Configuration)\$(Platform)\addons\jk_botti"
@@ -107,6 +108,7 @@ xcopy "$(SolutionDir)addons\jk_botti" "$(SolutionDir)build\bin\$(Configuration)\
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>wsock32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
+      <ModuleDefinitionFile>$(ProjectDir)jk_botti_mm.def</ModuleDefinitionFile>
     </Link>
     <PostBuildEvent>
       <Command>if not exist "$(SolutionDir)build\bin\$(Configuration)\$(Platform)\addons\jk_botti" mkdir "$(SolutionDir)build\bin\$(Configuration)\$(Platform)\addons\jk_botti"
@@ -166,6 +168,7 @@ xcopy "$(SolutionDir)addons\jk_botti" "$(SolutionDir)build\bin\$(Configuration)\
     <ClInclude Include="bot_sound.h" />
     <ClInclude Include="bot_trace.h" />
     <ClInclude Include="bot_weapons.h" />
+    <ClInclude Include="bootstrap_log.h" />
     <ClInclude Include="compiler.h" />
     <ClInclude Include="geneticalg.h" />
     <ClInclude Include="neuralnet.h" />
@@ -175,6 +178,9 @@ xcopy "$(SolutionDir)addons\jk_botti" "$(SolutionDir)build\bin\$(Configuration)\
     <ClInclude Include="safe_snprintf.h" />
     <ClInclude Include="util.h" />
     <ClInclude Include="waypoint.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="jk_botti_mm.def" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

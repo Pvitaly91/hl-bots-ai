@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "strong_signal_keep_conservative",
+  "description": "Conservative produces strong grounded evidence while staying bounded. This is the clearest keep-conservative fixture.",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "treatment_profile": "conservative",
+  "min_human_snapshots": 3,
+  "min_human_presence_seconds": 60.0,
+  "min_patch_events_for_usable_lane": 2,
+  "expected": {
+    "pair_classification": "strong-signal",
+    "comparison_verdict": "comparison-strong-signal",
+    "scorecard_treatment_behavior_assessment": "appropriately conservative",
+    "scorecard_recommendation": "keep-conservative-and-collect-more",
+    "shadow_decision": "conservative-and-default-similar"
+  }
+}

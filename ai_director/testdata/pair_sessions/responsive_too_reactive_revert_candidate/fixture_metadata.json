@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "responsive_too_reactive_revert_candidate",
+  "description": "Responsive reacts too aggressively under usable human signal. The scorecard and registry should both point back to conservative.",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "treatment_profile": "responsive",
+  "min_human_snapshots": 3,
+  "min_human_presence_seconds": 60.0,
+  "min_patch_events_for_usable_lane": 2,
+  "expected": {
+    "pair_classification": "strong-signal",
+    "comparison_verdict": "comparison-strong-signal",
+    "scorecard_treatment_behavior_assessment": "too reactive",
+    "scorecard_recommendation": "responsive-too-reactive-revert-to-conservative",
+    "shadow_decision": "responsive-would-have-overreacted"
+  }
+}

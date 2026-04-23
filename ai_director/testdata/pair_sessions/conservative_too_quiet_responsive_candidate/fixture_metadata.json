@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "synthetic_fixture": true,
+  "fixture_id": "conservative_too_quiet_responsive_candidate",
+  "description": "Conservative stays underactive despite usable human signal. The scorecard should surface responsive as the next candidate, and shadow review should agree without overstating certainty.",
+  "fixture_note": "Synthetic decision-validation fixture generated from deterministic replay frames. This is not a real live pair run.",
+  "treatment_profile": "conservative",
+  "min_human_snapshots": 3,
+  "min_human_presence_seconds": 60.0,
+  "min_patch_events_for_usable_lane": 3,
+  "expected": {
+    "pair_classification": "tuning-usable",
+    "comparison_verdict": "comparison-usable",
+    "scorecard_treatment_behavior_assessment": "too quiet",
+    "scorecard_recommendation": "conservative-looks-too-quiet-try-responsive-next",
+    "shadow_decision": "conservative-looks-too-quiet-responsive-candidate"
+  }
+}

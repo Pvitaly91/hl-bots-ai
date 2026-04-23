@@ -7,6 +7,7 @@ param(
     [string]$Platform = "Win32",
     [string]$SteamCmdPath = "",
     [string]$PythonPath = "",
+    [string]$TuningProfile = "default",
     [int]$MaxPlayers = 8,
     [int]$Port = 27015,
     [string]$Hostname = "HLDM JK_Botti AI Lab",
@@ -64,6 +65,7 @@ Write-Host "  Logs root: $logsRoot"
 Write-Host "  Mode: $mode"
 Write-Host "  Max players: $MaxPlayers"
 Write-Host "  Port: $Port"
+Write-Host "  Tuning profile: $TuningProfile"
 
 & (Join-Path $PSScriptRoot "build_vs2022.ps1") -Configuration $Configuration -Platform $Platform
 Stop-LabProcesses -HldsRoot $HldsRoot
@@ -91,13 +93,20 @@ if ($SkipMetamodDownload) {
 $aiProcess = $null
 $serverProcess = $null
 $botConfigPath = $null
+$deployment = Test-JKBottiLabDeployment -HldsRoot $HldsRoot -Configuration $Configuration -Platform $Platform
 $aiStdout = Join-Path $logsRoot "ai_director.stdout.log"
 $aiStderr = Join-Path $logsRoot "ai_director.stderr.log"
 $hldsStdout = Join-Path $logsRoot "hlds.stdout.log"
 $hldsStderr = Join-Path $logsRoot "hlds.stderr.log"
 
+Write-Host "Verified plugin deployment:"
+Write-Host "  plugins.ini: $($deployment.PluginsIniPath)"
+Write-Host "  plugin path: $($deployment.PluginRelativePath)"
+Write-Host "  deployed DLL: $($deployment.DeployedDllPath)"
+Write-Host "  bootstrap log: $($deployment.BootstrapLogPath)"
+
 try {
-    $aiProcess = & (Join-Path $PSScriptRoot "run_ai_director.ps1") -LabRoot $LabRoot -HldsRoot $HldsRoot -PythonPath $PythonPath -PassThru
+    $aiProcess = & (Join-Path $PSScriptRoot "run_ai_director.ps1") -LabRoot $LabRoot -HldsRoot $HldsRoot -PythonPath $PythonPath -TuningProfile $TuningProfile -PassThru
     $serverProcess = & (Join-Path $PSScriptRoot "run_server.ps1") -LabRoot $LabRoot -HldsRoot $HldsRoot -Map $Map -BotCount $BotCount -BotSkill $BotSkill -MaxPlayers $MaxPlayers -Port $Port -Hostname $Hostname -UseTestBotConfig -PassThru
 
     $botConfigPath = Get-BotTestConfigPath -ModRoot (Get-ServerModRoot -HldsRoot $HldsRoot) -Map $Map
@@ -145,5 +154,6 @@ catch {
     HldsPid       = $serverProcess.Id
     BotConfigPath = $botConfigPath
     LogsRoot      = $logsRoot
+    BootstrapLogPath = $deployment.BootstrapLogPath
     Mode          = $mode
 }

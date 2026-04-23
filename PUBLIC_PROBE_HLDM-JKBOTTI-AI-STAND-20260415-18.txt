@@ -1,0 +1,6 @@
+PROMPT_ID_BEGIN
+HLDM-JKBOTTI-AI-STAND-20260415-18
+PROMPT_ID_END
+repository_full_name=Pvitaly91/hl-bots-ai
+branch=feat/hldm-jk-botti-ai-stand
+public_probe_sentinel_for_prompt_18

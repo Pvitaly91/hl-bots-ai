@@ -1180,6 +1180,17 @@ static void print_to_console_config(int printtype, void *, char * msg)
       UTIL_ConsolePrintf("line[%d] config error: %s", bot_cfg_linenumber, msg);
 }
 
+static qboolean ConfigCommandTargetsRegisteredCvar(const char *pcmd)
+{
+   if (pcmd == NULL || *pcmd == 0)
+      return FALSE;
+
+   if (g_engfuncs.pfnCVarGetPointer == NULL)
+      return FALSE;
+
+   return (CVAR_GET_POINTER(pcmd) != NULL) ? TRUE : FALSE;
+}
+
 
 void ProcessBotCfgFile(void)
 {
@@ -1271,6 +1282,13 @@ void ProcessBotCfgFile(void)
 
    if(ProcessCommand(CFGCMD_TYPE, print_to_console_config, NULL, cmd, arg1, arg2, arg3, arg4, arg5))
       return;
+
+   if (ConfigCommandTargetsRegisteredCvar(cmd))
+   {
+      SERVER_COMMAND(server_cmd);
+      SERVER_EXECUTE();
+      return;
+   }
 
    UTIL_ConsolePrintf("line[%d] unknown command: '%s' (trying to execute as server command)\n", bot_cfg_linenumber, server_cmd_print);
 

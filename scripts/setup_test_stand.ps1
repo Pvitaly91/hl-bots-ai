@@ -38,12 +38,28 @@ if (-not $SkipMetamodDownload) {
     $metamodArchive = Join-Path $ToolsRoot ([System.IO.Path]::GetFileName(([Uri]$MetamodUrl).AbsolutePath))
     $extractDir = Join-Path $ToolsRoot "metamod-p"
     $metamodDest = Ensure-Directory -Path (Join-Path $modRoot "addons\metamod")
-
-    Invoke-WebRequest -Uri $MetamodUrl -OutFile $metamodArchive
-    Expand-ArchiveSmart -ArchivePath $metamodArchive -DestinationPath $extractDir
-
     $legacyLayout = Join-Path $extractDir "addons\metamod"
     $flatDll = Join-Path $extractDir "metamod.dll"
+    $existingPayloadAvailable = (Test-Path -LiteralPath $legacyLayout) -or (Test-Path -LiteralPath $flatDll)
+
+    if (-not $existingPayloadAvailable -and (Test-Path -LiteralPath $metamodArchive)) {
+        Expand-ArchiveSmart -ArchivePath $metamodArchive -DestinationPath $extractDir
+        $existingPayloadAvailable = (Test-Path -LiteralPath $legacyLayout) -or (Test-Path -LiteralPath $flatDll)
+    }
+
+    if (-not $existingPayloadAvailable) {
+        Invoke-WebRequest -Uri $MetamodUrl -OutFile $metamodArchive
+        Expand-ArchiveSmart -ArchivePath $metamodArchive -DestinationPath $extractDir
+    }
+    else {
+        try {
+            Invoke-WebRequest -Uri $MetamodUrl -OutFile $metamodArchive
+            Expand-ArchiveSmart -ArchivePath $metamodArchive -DestinationPath $extractDir
+        }
+        catch {
+            Write-Warning "Could not refresh the Metamod payload from $MetamodUrl. Reusing the existing extracted payload under $extractDir. $($_.Exception.Message)"
+        }
+    }
 
     if (Test-Path -LiteralPath $legacyLayout) {
         Copy-Item -Path (Join-Path $legacyLayout "*") -Destination $metamodDest -Recurse -Force

@@ -7,6 +7,10 @@ param(
     [int]$MaxPlayers = 8,
     [int]$Port = 27015,
     [string]$Hostname = "HLDM JK_Botti AI Lab",
+    [ValidateRange(0, 1)][int]$SvLan = 1,
+    [string]$RconPassword = "",
+    [int]$FragLimit = 30,
+    [int]$TimeLimit = 10,
     [switch]$UseTestBotConfig,
     [switch]$PassThru
 )
@@ -47,12 +51,16 @@ $arguments = @(
     "-insecure"
     "+maxplayers", "$MaxPlayers"
     "+map", $Map
-    "+sv_lan", "1"
+    "+sv_lan", "$SvLan"
     "+port", "$Port"
     "+hostname", $Hostname
-    "+mp_fraglimit", "30"
-    "+mp_timelimit", "10"
+    "+mp_fraglimit", "$FragLimit"
+    "+mp_timelimit", "$TimeLimit"
 )
+
+if (-not [string]::IsNullOrWhiteSpace($RconPassword)) {
+    $arguments += @("+rcon_password", $RconPassword)
+}
 
 $stdout = Join-Path $logsRoot "hlds.stdout.log"
 $stderr = Join-Path $logsRoot "hlds.stderr.log"

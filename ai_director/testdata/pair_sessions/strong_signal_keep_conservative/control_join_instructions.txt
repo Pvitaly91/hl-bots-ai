@@ -1,0 +1,6 @@
+Synthetic HLDM paired lane instructions
+Role: Control baseline
+Mode: NoAI
+Lane label: control-baseline
+Loopback join target: 127.0.0.1:27016
+Synthetic fixture only. Do not treat this as a real operator runbook.

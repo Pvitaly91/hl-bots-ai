@@ -156,6 +156,8 @@ static void AiBalanceBuildRuntimePath(char *path, const size_t path_size, const 
       safevoid_snprintf(path, path_size, "%s/addons/jk_botti/runtime/ai_balance", AiBalanceGetModDir());
 }
 
+static void AiBalanceBuildUtcTimestamp(char *timestamp, const size_t timestamp_size);
+
 static qboolean AiBalanceCreateDirectoryIfMissing(const char *path)
 {
 #ifdef _WIN32
@@ -201,6 +203,251 @@ static qboolean AiBalanceEnsureRuntimeDir(void)
    }
 
    return AiBalanceCreateDirectoryIfMissing(partial);
+}
+
+static void AiBalanceSanitizePathToken(const char *value, char *token, const size_t token_size)
+{
+   size_t idx;
+   size_t outpos = 0;
+
+   if (token_size == 0)
+      return;
+
+   if (value == NULL || *value == 0)
+      value = "unknown-match";
+
+   for (idx = 0; value[idx] != 0 && outpos + 1 < token_size; idx++)
+   {
+      const unsigned char ch = (unsigned char)value[idx];
+
+      if (isalnum(ch) || ch == '-' || ch == '_' || ch == '.')
+         token[outpos++] = (char)ch;
+      else
+         token[outpos++] = '_';
+   }
+
+   token[outpos] = 0;
+}
+
+static void AiBalanceBuildHistoryPath(char *path, const size_t path_size, const char *prefix)
+{
+   char match_token[128];
+
+   AiBalanceSanitizePathToken(g_ai_balance.match_id, match_token, sizeof(match_token));
+   safevoid_snprintf(path, path_size, "%s/addons/jk_botti/runtime/ai_balance/history/%s-%s.ndjson",
+      AiBalanceGetModDir(),
+      prefix,
+      match_token);
+}
+
+static qboolean AiBalanceEnsureHistoryDir(void)
+{
+   char history_dir[512];
+
+   if (!AiBalanceEnsureRuntimeDir())
+      return FALSE;
+
+   AiBalanceBuildRuntimePath(history_dir, sizeof(history_dir), "history");
+   return AiBalanceCreateDirectoryIfMissing(history_dir);
+}
+
+static qboolean AiBalanceAppendLine(const char *path, const char *line)
+{
+   FILE *fp;
+   size_t expected_size;
+
+   fp = fopen(path, "ab");
+   if (fp == NULL)
+      return FALSE;
+
+   expected_size = strlen(line);
+   if (expected_size > 0 && fwrite(line, 1, expected_size, fp) != expected_size)
+   {
+      fclose(fp);
+      return FALSE;
+   }
+
+   if (fwrite("\n", 1, 1, fp) != 1)
+   {
+      fclose(fp);
+      return FALSE;
+   }
+
+   fclose(fp);
+   return TRUE;
+}
+
+static void AiBalanceJsonEscapeString(const char *value, char *escaped, const size_t escaped_size)
+{
+   size_t idx;
+   size_t outpos = 0;
+
+   if (escaped_size == 0)
+      return;
+
+   if (value == NULL)
+      value = "";
+
+   for (idx = 0; value[idx] != 0 && outpos + 1 < escaped_size; idx++)
+   {
+      const char ch = value[idx];
+
+      if (ch == '"' || ch == '\\')
+      {
+         if (outpos + 2 >= escaped_size)
+            break;
+
+         escaped[outpos++] = '\\';
+         escaped[outpos++] = ch;
+         continue;
+      }
+
+      if (ch == '\n' || ch == '\r' || ch == '\t')
+      {
+         if (outpos + 2 >= escaped_size)
+            break;
+
+         escaped[outpos++] = '\\';
+         escaped[outpos++] = (ch == '\n') ? 'n' : (ch == '\r' ? 'r' : 't');
+         continue;
+      }
+
+      if ((unsigned char)ch < 32)
+      {
+         escaped[outpos++] = ' ';
+         continue;
+      }
+
+      escaped[outpos++] = ch;
+   }
+
+   escaped[outpos] = 0;
+}
+
+static void AiBalanceBuildAdjustmentDirection(char *direction, const size_t direction_size,
+   const int previous_skill_level, const int effective_skill_level,
+   const int applied_bot_delta,
+   const float pause_frequency_scale, const float battle_strafe_scale)
+{
+   if (effective_skill_level < previous_skill_level ||
+      applied_bot_delta > 0 ||
+      pause_frequency_scale < 1.0f ||
+      battle_strafe_scale > 1.0f)
+   {
+      safe_strcopy(direction, direction_size, "strengthen");
+      return;
+   }
+
+   if (effective_skill_level > previous_skill_level ||
+      applied_bot_delta < 0 ||
+      pause_frequency_scale > 1.0f ||
+      battle_strafe_scale < 1.0f)
+   {
+      safe_strcopy(direction, direction_size, "relax");
+      return;
+   }
+
+   safe_strcopy(direction, direction_size, "hold");
+}
+
+static void AiBalanceAppendPatchApplyHistory(const ai_balance_patch_t *patch,
+   const int previous_skill_level, const int effective_skill_level,
+   const int applied_bot_delta, const float cooldown_seconds)
+{
+   char timestamp[64];
+   char history_path[512];
+   char direction[32];
+   char history_json[2048];
+   char escaped_match_id[192];
+   char escaped_patch_id[192];
+   char escaped_map_name[128];
+   char escaped_reason[320];
+
+   if (!AiBalanceEnsureHistoryDir())
+      return;
+
+   AiBalanceBuildUtcTimestamp(timestamp, sizeof(timestamp));
+   AiBalanceBuildHistoryPath(history_path, sizeof(history_path), "patch_apply");
+   AiBalanceBuildAdjustmentDirection(direction, sizeof(direction),
+      previous_skill_level, effective_skill_level, applied_bot_delta,
+      patch->pause_frequency_scale, patch->battle_strafe_scale);
+   AiBalanceJsonEscapeString(g_ai_balance.match_id, escaped_match_id, sizeof(escaped_match_id));
+   AiBalanceJsonEscapeString(patch->patch_id, escaped_patch_id, sizeof(escaped_patch_id));
+   AiBalanceJsonEscapeString(
+      patch->map_name[0] ? patch->map_name : (gpGlobals ? STRING(gpGlobals->mapname) : "unknown"),
+      escaped_map_name,
+      sizeof(escaped_map_name));
+   AiBalanceJsonEscapeString(patch->reason[0] ? patch->reason : "n/a", escaped_reason, sizeof(escaped_reason));
+
+   safevoid_snprintf(history_json, sizeof(history_json),
+      "{\"schema_version\":1,\"event_type\":\"patch_applied\",\"match_id\":\"%s\",\"patch_id\":\"%s\","
+      "\"telemetry_sequence\":%d,\"timestamp_utc\":\"%s\",\"server_time_seconds\":%.2f,"
+      "\"map_name\":\"%s\",\"previous_default_bot_skill_level\":%d,"
+      "\"effective_default_bot_skill_level\":%d,\"target_skill_level\":%d,"
+      "\"requested_bot_count_delta\":%d,\"applied_bot_count_delta\":%d,"
+      "\"pause_frequency_scale\":%.3f,\"battle_strafe_scale\":%.3f,"
+      "\"cooldown_seconds\":%.1f,\"direction\":\"%s\",\"reason\":\"%s\"}",
+      escaped_match_id,
+      escaped_patch_id,
+      patch->telemetry_sequence,
+      timestamp,
+      gpGlobals ? gpGlobals->time : 0.0f,
+      escaped_map_name,
+      previous_skill_level,
+      effective_skill_level,
+      patch->target_skill_level,
+      patch->bot_count_delta,
+      applied_bot_delta,
+      patch->pause_frequency_scale,
+      patch->battle_strafe_scale,
+      cooldown_seconds,
+      direction,
+      escaped_reason);
+
+   AiBalanceAppendLine(history_path, history_json);
+}
+
+static void AiBalanceAppendBotSettingsHistory(const ai_balance_patch_t *patch,
+   const int effective_skill_level, const int applied_bot_delta)
+{
+   char timestamp[64];
+   char history_path[512];
+   char history_json[1024];
+   char escaped_match_id[192];
+   char escaped_patch_id[192];
+   char escaped_map_name[128];
+
+   if (!AiBalanceEnsureHistoryDir())
+      return;
+
+   AiBalanceBuildUtcTimestamp(timestamp, sizeof(timestamp));
+   AiBalanceBuildHistoryPath(history_path, sizeof(history_path), "bot_settings");
+   AiBalanceJsonEscapeString(g_ai_balance.match_id, escaped_match_id, sizeof(escaped_match_id));
+   AiBalanceJsonEscapeString(patch->patch_id, escaped_patch_id, sizeof(escaped_patch_id));
+   AiBalanceJsonEscapeString(
+      patch->map_name[0] ? patch->map_name : (gpGlobals ? STRING(gpGlobals->mapname) : "unknown"),
+      escaped_map_name,
+      sizeof(escaped_map_name));
+
+   safevoid_snprintf(history_json, sizeof(history_json),
+      "{\"schema_version\":1,\"event_type\":\"bot_settings\",\"source\":\"patch_apply\","
+      "\"match_id\":\"%s\",\"patch_id\":\"%s\",\"telemetry_sequence\":%d,"
+      "\"timestamp_utc\":\"%s\",\"server_time_seconds\":%.2f,\"map_name\":\"%s\","
+      "\"default_bot_skill_level\":%d,\"active_bot_count\":%d,\"applied_bot_count_delta\":%d,"
+      "\"pause_frequency_scale\":%.3f,\"battle_strafe_scale\":%.3f}",
+      escaped_match_id,
+      escaped_patch_id,
+      patch->telemetry_sequence,
+      timestamp,
+      gpGlobals ? gpGlobals->time : 0.0f,
+      escaped_map_name,
+      effective_skill_level,
+      UTIL_GetBotCount(),
+      applied_bot_delta,
+      g_ai_balance.pause_frequency_scale,
+      g_ai_balance.battle_strafe_scale);
+
+   AiBalanceAppendLine(history_path, history_json);
 }
 
 static qboolean AiBalanceWriteFileAtomic(const char *path, const char *contents)
@@ -504,6 +751,8 @@ static void AiBalanceWriteTelemetry(void)
    char timestamp[64];
    char telemetry_path[512];
    char telemetry_json[4096];
+   char telemetry_history_path[512];
+   char telemetry_history_json[2048];
    int human_count;
    int bot_count;
    int top_human_frags;
@@ -589,6 +838,42 @@ static void AiBalanceWriteTelemetry(void)
 
    if (!AiBalanceWriteFileAtomic(telemetry_path, telemetry_json))
       AiBalanceDebug("failed to write telemetry to %s", telemetry_path);
+
+   if (!AiBalanceEnsureHistoryDir())
+      return;
+
+   AiBalanceBuildHistoryPath(telemetry_history_path, sizeof(telemetry_history_path), "telemetry");
+   safevoid_snprintf(telemetry_history_json, sizeof(telemetry_history_json),
+      "{\"schema_version\":1,\"event_type\":\"telemetry\",\"match_id\":\"%s\","
+      "\"telemetry_sequence\":%d,\"timestamp_utc\":\"%s\",\"server_time_seconds\":%.2f,"
+      "\"map_name\":\"%s\",\"human_player_count\":%d,\"bot_count\":%d,"
+      "\"top_human_frags\":%d,\"top_human_deaths\":%d,\"top_bot_frags\":%d,\"top_bot_deaths\":%d,"
+      "\"recent_human_kills_per_minute\":%d,\"recent_bot_kills_per_minute\":%d,"
+      "\"frag_gap_top_human_minus_top_bot\":%d,\"current_default_bot_skill_level\":%d,"
+      "\"active_balance\":{\"pause_frequency_scale\":%.3f,\"battle_strafe_scale\":%.3f,"
+      "\"interval_seconds\":%.1f,\"cooldown_seconds\":%.1f,\"enabled\":%d}}",
+      g_ai_balance.match_id,
+      g_ai_balance.telemetry_sequence,
+      timestamp,
+      gpGlobals->time,
+      STRING(gpGlobals->mapname),
+      human_count,
+      bot_count,
+      top_human_frags,
+      top_human_deaths,
+      top_bot_frags,
+      top_bot_deaths,
+      human_kpm,
+      bot_kpm,
+      frag_gap,
+      AiBalanceClampInt(default_bot_skill, 1, 5),
+      g_ai_balance.pause_frequency_scale,
+      g_ai_balance.battle_strafe_scale,
+      interval_seconds,
+      cooldown_seconds,
+      CVAR_GET_FLOAT("jk_ai_balance_enabled") != 0.0f ? 1 : 0);
+
+   AiBalanceAppendLine(telemetry_history_path, telemetry_history_json);
 }
 
 static qboolean AiBalanceParsePatch(const char *json, ai_balance_patch_t *patch)
@@ -715,10 +1000,15 @@ static int AiBalanceApplyBotCountDelta(const int bot_count_delta)
 static void AiBalanceApplyPatch(const ai_balance_patch_t *patch)
 {
    int applied_skill_level;
+   int previous_skill_level;
+   int effective_skill_level;
    int applied_bot_delta;
+   float cooldown_seconds;
 
+   previous_skill_level = AiBalanceClampInt(default_bot_skill, 1, 5);
    applied_skill_level = AiBalanceApplySkillPatchStep(patch->target_skill_level);
    applied_bot_delta = AiBalanceApplyBotCountDelta(patch->bot_count_delta);
+   effective_skill_level = applied_skill_level ? applied_skill_level : AiBalanceClampInt(default_bot_skill, 1, 5);
 
    g_ai_balance.pause_frequency_scale = patch->pause_frequency_scale;
    g_ai_balance.battle_strafe_scale = patch->battle_strafe_scale;
@@ -726,16 +1016,20 @@ static void AiBalanceApplyPatch(const ai_balance_patch_t *patch)
 
    safe_strcopy(g_ai_balance.last_applied_patch_id, sizeof(g_ai_balance.last_applied_patch_id), patch->patch_id);
    g_ai_balance.last_apply_time = gpGlobals ? gpGlobals->time : 0.0f;
+   cooldown_seconds = AiBalanceClampFloat(CVAR_GET_FLOAT("jk_ai_balance_cooldown"), 20.0f, 60.0f);
 
    AiBalanceLog("[ai_balance] ",
       "applied patch=%s target_skill=%d effective_skill=%d bot_delta=%d pause_scale=%.2f battle_strafe_scale=%.2f reason=%s",
       patch->patch_id,
       patch->target_skill_level,
-      applied_skill_level ? applied_skill_level : AiBalanceClampInt(default_bot_skill, 1, 5),
+      effective_skill_level,
       applied_bot_delta,
       g_ai_balance.pause_frequency_scale,
       g_ai_balance.battle_strafe_scale,
       patch->reason[0] ? patch->reason : "n/a");
+
+   AiBalanceAppendPatchApplyHistory(patch, previous_skill_level, effective_skill_level, applied_bot_delta, cooldown_seconds);
+   AiBalanceAppendBotSettingsHistory(patch, effective_skill_level, applied_bot_delta);
 }
 
 static void AiBalancePollPatch(void)
@@ -870,9 +1164,6 @@ void AiBalanceStartFrame(void)
    if (!gpGlobals || !g_ai_balance.cvars_registered)
       return;
 
-   if (CVAR_GET_FLOAT("jk_ai_balance_enabled") == 0.0f)
-      return;
-
    interval_seconds = AiBalanceClampFloat(CVAR_GET_FLOAT("jk_ai_balance_interval"), 5.0f, 120.0f);
 
    if (g_ai_balance.next_telemetry_time <= gpGlobals->time)
@@ -880,6 +1171,9 @@ void AiBalanceStartFrame(void)
       AiBalanceWriteTelemetry();
       g_ai_balance.next_telemetry_time = gpGlobals->time + interval_seconds;
    }
+
+   if (CVAR_GET_FLOAT("jk_ai_balance_enabled") == 0.0f)
+      return;
 
    if (g_ai_balance.next_patch_poll_time <= gpGlobals->time)
    {

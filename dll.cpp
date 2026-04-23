@@ -29,6 +29,8 @@
 #include "bot_trace.h"
 
 #include "ai_balance.h"
+#include "bootstrap_log.h"
+#include "safe_snprintf.h"
 
 extern enginefuncs_t g_engfuncs;
 extern globalvars_t  *gpGlobals;
@@ -900,9 +902,15 @@ plugin_info_t Plugin_info = {
 
 C_DLLEXPORT int Meta_Query (char *ifvers, plugin_info_t **pPlugInfo, mutil_funcs_t *pMetaUtilFuncs)
 {
+   char bootstrap_detail[256];
+
    // this function is the first function ever called by metamod in the plugin DLL. Its purpose
    // is for metamod to retrieve basic information about the plugin, such as its meta-interface
    // version, for ensuring compatibility with the current version of the running metamod.
+
+   safevoid_snprintf(bootstrap_detail, sizeof(bootstrap_detail), "result=entered ifvers=%s",
+      ifvers ? ifvers : "(null)");
+   BootstrapLogStage("Meta_Query", bootstrap_detail);
 
    // keep track of the pointers to metamod function tables metamod gives us
    gpMetaUtilFuncs = pMetaUtilFuncs;
@@ -925,6 +933,7 @@ C_DLLEXPORT int Meta_Query (char *ifvers, plugin_info_t **pPlugInfo, mutil_funcs
 
       if ((pmajor > mmajor) || ((pmajor == mmajor) && (pminor > mminor)))
       {
+         BootstrapLogStage("Meta_Query", "result=failure reason=metamod_too_old");
          LOG_CONSOLE (PLID, "%s", "metamod version is too old for this plugin; update metamod");
          LOG_ERROR (PLID, "%s", "metamod version is too old for this plugin; update metamod");
          return (FALSE);
@@ -933,25 +942,36 @@ C_DLLEXPORT int Meta_Query (char *ifvers, plugin_info_t **pPlugInfo, mutil_funcs
       // if plugin has older major interface version, it's incompatible (update plugin)
       else if (pmajor < mmajor)
       {
+         BootstrapLogStage("Meta_Query", "result=failure reason=plugin_outdated_for_metamod");
          LOG_CONSOLE (PLID, "%s", "metamod version is incompatible with this plugin; please find a newer version of this plugin");
          LOG_ERROR (PLID, "%s", "metamod version is incompatible with this plugin; please find a newer version of this plugin");
          return (FALSE);
       }
    }
 
+   BootstrapLogStage("Meta_Query", "result=success");
    return (TRUE); // tell metamod this plugin looks safe
 }
 
 
 C_DLLEXPORT int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, meta_globals_t *pMGlobals, gamedll_funcs_t *pGamedllFuncs)
 {
+   char bootstrap_detail[128];
+
    // this function is called when metamod attempts to load the plugin. Since it's the place
    // where we can tell if the plugin will be allowed to run or not, we wait until here to make
    // our initialization stuff, like registering CVARs and dedicated server commands.
 
+   safevoid_snprintf(bootstrap_detail, sizeof(bootstrap_detail), "result=entered now=%d", (int)now);
+   BootstrapLogStage("Meta_Attach", bootstrap_detail);
+
    // are we allowed to load this plugin now ?
    if (now > Plugin_info.loadable)
    {
+      safevoid_snprintf(bootstrap_detail, sizeof(bootstrap_detail),
+         "result=failure reason=loadtime_too_late now=%d loadable=%d",
+         (int)now, (int)Plugin_info.loadable);
+      BootstrapLogStage("Meta_Attach", bootstrap_detail);
       LOG_CONSOLE (PLID, "%s: plugin NOT attaching (can't load plugin right now)", Plugin_info.name);
       LOG_ERROR (PLID, "%s: plugin NOT attaching (can't load plugin right now)", Plugin_info.name);
       return (FALSE); // returning FALSE prevents metamod from attaching this plugin
@@ -978,18 +998,29 @@ C_DLLEXPORT int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, 
    BotTraceRegisterCvar();
    AiBalanceRegisterCvars();
 
+    BootstrapLogStage("Meta_Attach", "result=success");
    return (TRUE); // returning TRUE enables metamod to attach this plugin
 }
 
 
 C_DLLEXPORT int Meta_Detach (PLUG_LOADTIME now, PL_UNLOAD_REASON reason)
 {
+   char bootstrap_detail[128];
+
    // this function is called when metamod unloads the plugin. A basic check is made in order
    // to prevent unloading the plugin if its processing should not be interrupted.
+
+   safevoid_snprintf(bootstrap_detail, sizeof(bootstrap_detail), "result=entered now=%d reason=%d",
+      (int)now, (int)reason);
+   BootstrapLogStage("Meta_Detach", bootstrap_detail);
 
    // is metamod allowed to unload the plugin ?
    if ((now > Plugin_info.unloadable) && (reason != PNL_CMD_FORCED))
    {
+      safevoid_snprintf(bootstrap_detail, sizeof(bootstrap_detail),
+         "result=failure reason=unloadtime_too_early now=%d unloadable=%d",
+         (int)now, (int)Plugin_info.unloadable);
+      BootstrapLogStage("Meta_Detach", bootstrap_detail);
       LOG_CONSOLE (PLID, "%s: plugin NOT detaching (can't unload plugin right now)", Plugin_info.name);
       LOG_ERROR (PLID, "%s: plugin NOT detaching (can't unload plugin right now)", Plugin_info.name);
       return (FALSE); // returning FALSE prevents metamod from unloading this plugin
@@ -1013,7 +1044,11 @@ C_DLLEXPORT int Meta_Detach (PLUG_LOADTIME now, PL_UNLOAD_REASON reason)
 
    // try remove hook
    if(!unhook_sendto_function())
+   {
+      BootstrapLogStage("Meta_Detach", "result=failure reason=unhook_sendto_function");
       return(FALSE);
+   }
 
+   BootstrapLogStage("Meta_Detach", "result=success");
    return (TRUE); // returning TRUE enables metamod to unload this plugin
 }
