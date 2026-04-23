@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-68
+HLDM-JKBOTTI-AI-STAND-20260415-69
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -18,6 +18,12 @@ The new no-AI baseline launcher is for standard jk_botti testing on `crossfire` 
 
 ```bat
 scripts\run_standard_bots_crossfire.bat
+```
+
+The new product-minimum public launcher is for a public-facing `crossfire` server with bots only while no humans are present:
+
+```bat
+scripts\run_public_crossfire_server.bat
 ```
 
 Legacy positional arguments for `scripts\run_test_stand_with_bots.bat`:
@@ -61,6 +67,7 @@ scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -
 scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 6 -BotSkill 2 -LabRoot D:\Labs\hl-bots-ai -Port 27018 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_test_stand_with_bots.bat -Map stalkyard -BotCount 6 -BotSkill 2 -LabRoot D:\Labs\hl-bots-ai -Port 27019 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_public_crossfire_server.bat -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_control_treatment_pair.bat -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
@@ -81,6 +88,45 @@ The no-AI batch file wraps `scripts\run_standard_bots_crossfire.ps1`, which runs
 4. `scripts\run_server.ps1`
 
 This baseline launcher automates the existing manual crossfire flow, uses `.\lab` by default, writes logs under `lab\logs`, sets `jk_ai_balance_enabled 0`, and does not start `scripts\run_ai_director.ps1`.
+
+`scripts\run_public_crossfire_server.ps1` is separate from both lab launchers. It still reuses the healthy HLDS + Metamod + jk_botti path, but it is meant for product-minimum public operation instead of control/treatment capture:
+
+1. `scripts\build_vs2022.ps1`
+2. `scripts\setup_test_stand.ps1`
+3. writes a public `server.cfg` with `sv_lan 0`, a generated RCON password, and no research-only runtime requirements
+4. writes `jk_botti_<map>.cfg` from `addons\jk_botti\public_crossfire.cfg`
+5. starts HLDS through `scripts\run_server.ps1`
+6. monitors authoritative human count from GoldSrc `status` over RCON and applies the public bot policy
+
+## Public Crossfire Mode
+
+Start the product-minimum public server like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_public_crossfire_server.ps1 -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+The public-mode bot policy is intentionally narrow:
+
+- when no real humans are present, set `jk_botti min_bots` and `max_bots` to the configured empty-server target so the server is not empty
+- when one or more real humans are present, set the target to `0`, issue `jk_botti kickall`, and keep bots out while humans remain
+- when the server becomes empty again, wait the bounded repopulate delay and restore the configured target
+
+The public runner reports one clear policy state at a time:
+
+- `waiting-human-join-grace`
+- `waiting-empty-server-repopulate`
+- `bots-active-empty-server`
+- `bots-disconnected-humans-present`
+
+The public runner writes status artifacts under `lab\logs\public_server\...`:
+
+- `public_server_status.json`
+- `public_server_status.md`
+
+These files are the operator-facing source of truth for public mode. They include the map, port, human count, bot count, current commanded bot target, last policy action, and whether advanced AI balance is enabled.
+
+Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
 
 ## Fast Local Iteration
 

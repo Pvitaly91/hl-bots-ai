@@ -2,6 +2,36 @@
 
 Use this checklist before spending a real human session on the control-vs-treatment workflow.
 
+## Product-Minimum Public Server Mode
+
+Use the public launcher when the goal is a usable public `crossfire` server, not a control/treatment evidence session:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_public_crossfire_server.ps1 -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Public mode is intentionally separate from the lab workflow:
+
+- default map is `crossfire`
+- advanced AI balance is disabled by default
+- control/treatment, strong-signal, registry, and responsive-gate workflows stay off unless you opt in later
+- authoritative human count comes from server-side GoldSrc `status` over RCON
+
+The public bot policy is explicit:
+
+- no humans: restore the configured empty-server bot target
+- humans present: set the bot target to `0`, issue `jk_botti kickall`, and keep bots out
+- empty again: wait the bounded repopulate delay, then restore the empty-server target
+
+Read `public_server_status.json` / `.md` under `lab\logs\public_server\...` as the operator-facing source of truth for:
+
+- map, port, and current commanded bot target
+- human player count and bot player count
+- current policy state
+- whether advanced AI balance is enabled
+
+`next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
+
 ## Prerequisites
 
 - Windows lab machine with `hl-bots-ai.sln` building as `Release|Win32`

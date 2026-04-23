@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-68
+HLDM-JKBOTTI-AI-STAND-20260415-69
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -127,6 +127,12 @@ The new no-AI baseline launcher for standard jk_botti crossfire testing is:
 scripts\run_standard_bots_crossfire.bat
 ```
 
+The product-minimum public crossfire launcher is:
+
+```bat
+scripts\run_public_crossfire_server.bat
+```
+
 Legacy positional examples:
 
 ```bat
@@ -148,6 +154,7 @@ The `.bat` wrappers also accept direct PowerShell-style passthrough arguments, w
 ```bat
 scripts\run_standard_bots_crossfire.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27016 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Port 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_public_crossfire_server.bat -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
 scripts\run_control_treatment_pair.bat -Map crossfire -BotCount 4 -BotSkill 3 -ControlPort 27016 -TreatmentPort 27017 -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
@@ -202,6 +209,36 @@ scripts\run_test_stand_with_bots.bat -Map crossfire -BotCount 4 -BotSkill 3 -Por
 ```
 
 Both wrappers remain backward-compatible with the old positional arguments, but if the first argument starts with `-` they pass all arguments directly through to the PowerShell implementation. The useful repeat-test knobs are `-Map`, `-BotCount`, `-BotSkill`, `-LabRoot`, `-Port`, `-SkipSteamCmdUpdate`, and `-SkipMetamodDownload`.
+
+## Public Crossfire Server Mode
+
+Use the public-mode runner when the goal is a usable HLDM `crossfire` server, not another control/treatment lab session:
+
+```bat
+scripts\run_public_crossfire_server.bat -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Public mode is intentionally simple:
+
+- default map is `crossfire`
+- advanced AI balance is disabled by default
+- control/treatment, registry, strong-signal, and responsive-gate workflows stay out of the runtime path
+- the server uses one grounded human-count source: GoldSrc `status` over RCON
+
+The public bot policy is explicit:
+
+- if human player count is `0`, public mode sets `jk_botti min_bots` and `max_bots` to the configured empty-server target
+- if human player count is greater than `0`, public mode sets the target to `0`, issues `jk_botti kickall`, and keeps bots out while humans remain
+- if human player count returns to `0`, public mode waits for the bounded repopulate delay and then restores the configured target
+
+Public mode writes operator-facing status artifacts under `lab\logs\public_server\...`:
+
+- `public_server_status.json`
+- `public_server_status.md`
+
+These status files report the current map, port, human count, bot count, current commanded bot target, policy state, and whether advanced AI balance is enabled.
+
+To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
 
 ## Balance Evaluation Harness
 

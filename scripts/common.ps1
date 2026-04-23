@@ -934,6 +934,40 @@ function Write-StandardBotTestConfig {
     return $configPath
 }
 
+function Get-PublicCrossfireConfigTemplatePath {
+    return Join-Path (Get-RepoRoot) "addons\jk_botti\public_crossfire.cfg"
+}
+
+function Write-PublicCrossfireConfig {
+    param(
+        [string]$HldsRoot,
+        [string]$Map,
+        [int]$BotSkill,
+        [bool]$EnableAdvancedAIBalance = $false
+    )
+
+    if ($BotSkill -lt 1 -or $BotSkill -gt 5) {
+        throw "BotSkill must be between 1 and 5. Actual value: $BotSkill"
+    }
+
+    $templatePath = Get-PublicCrossfireConfigTemplatePath
+    if (-not (Test-Path -LiteralPath $templatePath)) {
+        throw "Public crossfire config template was not found at $templatePath"
+    }
+
+    $modRoot = Ensure-Directory -Path (Get-ServerModRoot -HldsRoot $HldsRoot)
+    $botAddonsRoot = Ensure-Directory -Path (Join-Path $modRoot "addons\jk_botti")
+    $configPath = Join-Path $botAddonsRoot (Split-Path -Leaf (Get-BotTestConfigPath -ModRoot $modRoot -Map $Map))
+    $template = Get-Content -LiteralPath $templatePath -Raw
+
+    $rendered = $template.Replace("__MAP_NAME__", $Map)
+    $rendered = $rendered.Replace("__BOT_SKILL__", [string]$BotSkill)
+    $rendered = $rendered.Replace("__AI_BALANCE_ENABLED__", $(if ($EnableAdvancedAIBalance) { "1" } else { "0" }))
+
+    Set-Content -LiteralPath $configPath -Value $rendered -Encoding ASCII
+    return $configPath
+}
+
 function Get-LabProcesses {
     param([string]$HldsRoot)
 
@@ -1102,16 +1136,30 @@ function Write-MetamodPluginsIni {
 }
 
 function Write-ServerCfg {
-    param([string]$ModRoot)
+    param(
+        [string]$ModRoot,
+        [string]$Hostname = "HLDM JK_Botti AI Lab",
+        [ValidateRange(0, 1)][int]$SvLan = 1,
+        [bool]$LogEnabled = $true,
+        [int]$FragLimit = 30,
+        [int]$TimeLimit = 10,
+        [string]$RconPassword = ""
+    )
 
     $serverCfg = Join-Path $ModRoot "server.cfg"
-    @(
-        'hostname "HLDM JK_Botti AI Lab"'
-        "sv_lan 1"
-        "log on"
-        "mp_fraglimit 30"
-        "mp_timelimit 10"
-    ) | Set-Content -LiteralPath $serverCfg -Encoding ASCII
+    $lines = @(
+        ('hostname "{0}"' -f $Hostname.Replace('"', ''))
+        ("sv_lan {0}" -f $SvLan)
+        ("log {0}" -f $(if ($LogEnabled) { "on" } else { "off" }))
+        ("mp_fraglimit {0}" -f $FragLimit)
+        ("mp_timelimit {0}" -f $TimeLimit)
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RconPassword)) {
+        $lines += ('rcon_password "{0}"' -f $RconPassword.Replace('"', ''))
+    }
+
+    $lines | Set-Content -LiteralPath $serverCfg -Encoding ASCII
 }
 
 function Get-ConfiguredMetamodPluginRelativePath {
