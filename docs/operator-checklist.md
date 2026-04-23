@@ -44,7 +44,21 @@ Use `public_human_trigger_validation.json` / `.md` as the authoritative public-m
 - `waiting-empty-server-repopulate`
 - `bots-repopulated-empty-server`
 
-If the validator says the public human-trigger path is still blocked before server admission, read the saved `qconsole.log` tail and Steam `connection_log_<port>.txt` tail before changing the public server policy. That blocker is narrower than the server bot policy itself.
+Launch one explicit public admission attempt like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\launch_public_hldm_client.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root> -UseSteamLaunchPath
+```
+
+Diagnose a failed public admission attempt like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\diagnose_public_client_admission.ps1 -AttemptJsonPath D:\DEV\CPP\HL-Bots\lab\logs\public_server\client_admissions\<attempt-root>\public_client_admission_attempt.json
+```
+
+These public admission helpers are separate from `join_live_pair_lane.ps1`: they are for product-minimum `sv_lan 0` admission checks, not for control/treatment lane work.
+
+If the validator says the public human-trigger path is still blocked before server admission, read the saved `public_client_admission_diagnosis.json`, `qconsole.log` tail, and Steam `connection_log_<port>.txt` tail before changing the public server policy. That blocker is narrower than the server bot policy itself.
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
 

@@ -796,6 +796,96 @@ function Get-HalfLifeClientLaunchPlan {
     }
 }
 
+function Get-PublicHldmClientAdmissionPlan {
+    param(
+        [string]$PreferredSteamPath = "",
+        [string]$PreferredClientPath = "",
+        [string]$ServerAddress = "127.0.0.1",
+        [int]$ServerPort,
+        [string]$Game = "valve"
+    )
+
+    $resolvedServerAddress = if ([string]::IsNullOrWhiteSpace($ServerAddress)) {
+        "127.0.0.1"
+    }
+    else {
+        $ServerAddress.Trim()
+    }
+
+    $directLaunchPlan = Get-HalfLifeClientLaunchPlan -PreferredClientPath $PreferredClientPath -ServerHost $resolvedServerAddress -Port $ServerPort -Game $Game
+    $joinInfo = $directLaunchPlan.join_info
+
+    $steamExePath = if ([string]::IsNullOrWhiteSpace($PreferredSteamPath)) {
+        Get-SteamExecutablePath
+    }
+    else {
+        $resolvedSteamPath = Resolve-NormalizedPathCandidate -Path $PreferredSteamPath
+        if (-not [string]::IsNullOrWhiteSpace($resolvedSteamPath) -and (Test-Path -LiteralPath $resolvedSteamPath -PathType Leaf)) {
+            try {
+                (Resolve-Path -LiteralPath $resolvedSteamPath).Path
+            }
+            catch {
+                $resolvedSteamPath
+            }
+        }
+        else {
+            ""
+        }
+    }
+
+    $steamWorkingDirectory = if ([string]::IsNullOrWhiteSpace($steamExePath)) {
+        ""
+    }
+    else {
+        Split-Path -Path $steamExePath -Parent
+    }
+
+    $steamLaunchArguments = @(
+        "-applaunch", "70",
+        "-game", $Game,
+        "+connect", $joinInfo.LoopbackAddress
+    )
+
+    $steamLaunchCommandText = ""
+    if (-not [string]::IsNullOrWhiteSpace($steamExePath)) {
+        $steamCommandParts = @((Format-ProcessArgumentText -Value $steamExePath))
+        $steamCommandParts += @($steamLaunchArguments | ForEach-Object { Format-ProcessArgumentText -Value ([string]$_) })
+        $steamLaunchCommandText = $steamCommandParts -join " "
+    }
+
+    $steamConnectUriCommandText = ""
+    if (-not [string]::IsNullOrWhiteSpace($steamExePath) -and -not [string]::IsNullOrWhiteSpace($joinInfo.SteamConnectUri)) {
+        $steamConnectUriCommandText = "{0} {1}" -f `
+            (Format-ProcessArgumentText -Value $steamExePath), `
+            (Format-ProcessArgumentText -Value $joinInfo.SteamConnectUri)
+    }
+
+    $preferredLaunchPath = if (-not [string]::IsNullOrWhiteSpace($steamExePath)) {
+        "steam-native-applaunch"
+    }
+    elseif ([bool]$directLaunchPlan.launchable) {
+        "direct-hl-exe"
+    }
+    else {
+        "none"
+    }
+
+    return [pscustomobject]@{
+        server_address = $resolvedServerAddress
+        server_port = $ServerPort
+        game = $Game
+        join_info = $joinInfo
+        steam_exe_path = $steamExePath
+        steam_working_directory = $steamWorkingDirectory
+        steam_launch_arguments = $steamLaunchArguments
+        steam_launch_command_text = $steamLaunchCommandText
+        steam_connect_uri = $joinInfo.SteamConnectUri
+        steam_connect_uri_command_text = $steamConnectUriCommandText
+        direct_launch_plan = $directLaunchPlan
+        preferred_launch_path = $preferredLaunchPath
+    }
+}
+
 function Get-ServerModRoot {
     param([string]$HldsRoot)
     return Join-Path $HldsRoot "valve"

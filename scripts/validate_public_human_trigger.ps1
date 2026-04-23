@@ -8,6 +8,7 @@ param(
     [string]$OutputRoot = "",
     [string]$PublicServerOutputRoot = "",
     [string]$ClientExePath = "",
+    [string]$SteamExePath = "",
     [int]$HumanJoinGraceSeconds = 15,
     [int]$EmptyServerRepopulateDelaySeconds = 10,
     [int]$StatusPollSeconds = 2,
@@ -115,6 +116,16 @@ function Stop-TrackedHlProcesses {
             Stop-Process -Id $processId -Force -ErrorAction Stop
         }
         catch {
+        }
+    }
+}
+
+function Add-TrackedHlProcessIds {
+    param([int[]]$ProcessIds = @())
+
+    foreach ($processId in @($ProcessIds)) {
+        if ([int]$processId -gt 0) {
+            [void]$script:launchedClientProcessIds.Add([int]$processId)
         }
     }
 }
@@ -303,88 +314,66 @@ function Invoke-HumanJoinAttempt {
         [string]$ExplanationIfUnavailable = ""
     )
 
-    $attemptStartedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
-    $beforeHlIds = @(Get-HlProcessIds)
-    $launched = $false
-    $launcherProcessId = 0
-    $launcherProcess = $null
-    $launchExplanation = ""
+    $attemptOutputRoot = Ensure-Directory -Path (Join-Path $resolvedOutputRoot ("client_attempt_{0}" -f ($Method -replace "[^A-Za-z0-9._-]", "_")))
+    $launchScriptPath = Join-Path $PSScriptRoot "launch_public_hldm_client.ps1"
+    $diagnoseScriptPath = Join-Path $PSScriptRoot "diagnose_public_client_admission.ps1"
+    $launchParams = @{
+        ServerAddress = "127.0.0.1"
+        ServerPort = $Port
+        OutputRoot = $attemptOutputRoot
+        PublicServerOutputRoot = $resolvedPublicServerOutputRoot
+        PublicServerStatusJsonPath = $StatusJsonPath
+        ServerLogPath = $ServerLogPath
+        AdmissionWaitSeconds = $TimeoutSeconds
+        StatusPollSeconds = $script:statusPollSeconds
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ClientExePath)) {
+        $launchParams["ClientExePath"] = $ClientExePath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($steamExePath)) {
+        $launchParams["SteamExePath"] = $steamExePath
+    }
 
-    if ($null -eq $LaunchAction) {
-        $launchExplanation = $ExplanationIfUnavailable
+    if ($Method -match "steam") {
+        $launchParams["UseSteamLaunchPath"] = $true
     }
     else {
-        try {
-            $launcherProcess = & $LaunchAction
-            $launched = $true
-            if ($null -ne $launcherProcess) {
-                $launcherProcessId = [int](Get-ObjectPropertyValue -Object $launcherProcess -Name "Id" -Default 0)
+        $launchParams["UseDirectClientLaunchPath"] = $true
+    }
+
+    & $launchScriptPath @launchParams | Out-Null
+
+    $attemptJsonPath = Join-Path $attemptOutputRoot "public_client_admission_attempt.json"
+    $attempt = Read-JsonFile -Path $attemptJsonPath
+    if ($null -eq $attempt) {
+        return [pscustomobject]@{
+            method = $Method
+            attempt_path_kind = if ($Method -match "steam") { "steam-native-applaunch" } else { "direct-hl-exe" }
+            launched = $false
+            authoritative_human_seen = $false
+            server_connect_seen = $false
+            server_entered_game_seen = $false
+            explanation = $ExplanationIfUnavailable
+            artifacts = [ordered]@{
+                public_client_admission_attempt_json = $attemptJsonPath
             }
-            $launchExplanation = "Launch attempt started."
-        }
-        catch {
-            $launchExplanation = $_.Exception.Message
         }
     }
 
-    if ($launched) {
-        Start-Sleep -Seconds 2
-    }
+    Add-TrackedHlProcessIds -ProcessIds @((Get-ObjectPropertyValue -Object $attempt -Name "launched_hl_process_ids" -Default @()))
+    & $diagnoseScriptPath -AttemptRoot $attemptOutputRoot -OutputRoot $attemptOutputRoot | Out-Null
+    $diagnosisJsonPath = Join-Path $attemptOutputRoot "public_client_admission_diagnosis.json"
+    $diagnosis = Read-JsonFile -Path $diagnosisJsonPath
 
-    Add-NewHlProcessIds -BeforeIds $beforeHlIds
-    $waitResult = Wait-ForPublicCondition `
-        -Description ("human join via {0}" -f $Method) `
-        -StatusJsonPath $StatusJsonPath `
-        -TimeoutSeconds $TimeoutSeconds `
-        -PollSeconds $script:statusPollSeconds `
-        -Condition { param($status) [int]$status.human_player_count -gt 0 }
+    Add-Member -InputObject $attempt -NotePropertyName "method" -NotePropertyValue $Method -Force
+    Add-Member -InputObject $attempt -NotePropertyName "launched" -NotePropertyValue ([bool](Get-ObjectPropertyValue -Object $attempt -Name "launcher_process_started" -Default $false)) -Force
+    Add-Member -InputObject $attempt -NotePropertyName "authoritative_bot_count_when_finished" -NotePropertyValue ([int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $attempt -Name "public_server_latest_status" -Default $null) -Name "bot_player_count" -Default -1)) -Force
+    Add-Member -InputObject $attempt -NotePropertyName "qconsole_contains_steam_init_failure" -NotePropertyValue ([bool]([string](Get-ObjectPropertyValue -Object $attempt -Name "qconsole_tail" -Default "") -match "Unable to initialize Steam")) -Force
+    Add-Member -InputObject $attempt -NotePropertyName "steam_connection_log_contains_cm_failure" -NotePropertyValue ([bool]([string](Get-ObjectPropertyValue -Object $attempt -Name "steam_connection_log_tail" -Default "") -match "GetCMListForConnect -- web API call failed|failed talking to cm|ConnectFailed\(|StartAutoReconnect")) -Force
+    Add-Member -InputObject $attempt -NotePropertyName "public_client_admission_diagnosis_json_path" -NotePropertyValue $diagnosisJsonPath -Force
+    Add-Member -InputObject $attempt -NotePropertyName "diagnosis_stage_verdict" -NotePropertyValue ([string](Get-ObjectPropertyValue -Object $diagnosis -Name "stage_verdict" -Default "")) -Force
 
-    Add-NewHlProcessIds -BeforeIds $beforeHlIds
-
-    $latestStatus = $waitResult.latest_status
-    $authoritativeHumanSeen = $false
-    $authoritativeBotCount = -1
-    if ($null -ne $latestStatus) {
-        $authoritativeHumanSeen = [int]$latestStatus.human_player_count -gt 0
-        $authoritativeBotCount = [int]$latestStatus.bot_player_count
-    }
-
-    $serverConnectSeen = [bool](Test-ServerHumanEvent -LogPath $ServerLogPath -Kind "connect")
-    $serverEnteredSeen = [bool](Test-ServerHumanEvent -LogPath $ServerLogPath -Kind "entered")
-    $qconsoleTail = Get-FileTailText -Path $ClientQConsolePath -LineCount 80
-    $steamLogTail = Get-FileTailText -Path $SteamConnectionLogPath -LineCount 80
-    $qconsoleSteamInitFailure = $qconsoleTail -match "Unable to initialize Steam"
-    $steamConnectionCmFailure = $steamLogTail -match "GetCMListForConnect -- web API call failed|failed talking to cm|ConnectFailed\("
-
-    $attemptExplanation = if ($authoritativeHumanSeen) {
-        "The public-mode authoritative human count increased above zero during this attempt."
-    }
-    elseif ($launched) {
-        "The client launch started, but the authoritative public-mode human count never rose above zero."
-    }
-    else {
-        $launchExplanation
-    }
-
-    return [pscustomobject]@{
-        method = $Method
-        attempt_started_at_utc = $attemptStartedAtUtc
-        launched = $launched
-        launcher_process_id = $launcherProcessId
-        working_directory = $WorkingDirectory
-        command_text = $CommandText
-        authoritative_human_seen = $authoritativeHumanSeen
-        authoritative_bot_count_when_finished = $authoritativeBotCount
-        server_connect_seen = $serverConnectSeen
-        server_entered_game_seen = $serverEnteredSeen
-        qconsole_path = $ClientQConsolePath
-        qconsole_tail = $qconsoleTail
-        qconsole_contains_steam_init_failure = $qconsoleSteamInitFailure
-        steam_connection_log_path = $SteamConnectionLogPath
-        steam_connection_log_tail = $steamLogTail
-        steam_connection_log_contains_cm_failure = $steamConnectionCmFailure
-        explanation = $attemptExplanation
-    }
+    return $attempt
 }
 
 function Get-ValidationMarkdown {
@@ -433,7 +422,7 @@ function Get-ValidationMarkdown {
         )
 
         foreach ($attempt in @($Report.human_join_attempts)) {
-            $lines += "- $($attempt.method): launched=$($attempt.launched); authoritative_human_seen=$($attempt.authoritative_human_seen); server_connect_seen=$($attempt.server_connect_seen); server_entered_game_seen=$($attempt.server_entered_game_seen); explanation=$($attempt.explanation)"
+            $lines += "- $($attempt.method): path=$($attempt.attempt_path_kind); launched=$($attempt.launched); authoritative_human_seen=$($attempt.authoritative_human_seen); server_connect_seen=$($attempt.server_connect_seen); server_entered_game_seen=$($attempt.server_entered_game_seen); diagnosis=$($attempt.diagnosis_stage_verdict); explanation=$($attempt.explanation)"
         }
     }
 
@@ -527,7 +516,7 @@ $publicRunnerProcess = $null
 $publicRunnerStartedByValidator = $false
 $launchPlan = Get-HalfLifeClientLaunchPlan -PreferredClientPath $ClientExePath -ServerHost "127.0.0.1" -Port $Port
 $joinInfo = $launchPlan.join_info
-$steamExePath = Get-SteamExecutablePath
+$steamExePath = if ([string]::IsNullOrWhiteSpace($SteamExePath)) { Get-SteamExecutablePath } else { $SteamExePath }
 $steamConnectionLogPath = Get-SteamConnectionLogPath -Port $Port
 $serverLogPath = Join-Path $resolvedLogsRoot "hlds.stdout.log"
 
@@ -595,58 +584,34 @@ try {
     $returnToEmptyValidated = $false
     $remainingBlocker = ""
 
-    $directLaunchAction = $null
-    if ($launchPlan.launchable -and -not [string]::IsNullOrWhiteSpace($launchPlan.client_exe_path)) {
-        $directLaunchAction = {
-            $startProcessParams = @{
-                FilePath = $launchPlan.client_exe_path
-                ArgumentList = $launchPlan.arguments
-                PassThru = $true
-            }
-            if (-not [string]::IsNullOrWhiteSpace($launchPlan.client_working_directory)) {
-                $startProcessParams["WorkingDirectory"] = $launchPlan.client_working_directory
-            }
-            return Start-Process @startProcessParams
-        }
-    }
-
     $humanJoinAttempts.Add((Invoke-HumanJoinAttempt `
-        -Method "direct-hl-exe-connect" `
+        -Method "steam-native-applaunch" `
         -StatusJsonPath $publicStatusJsonPath `
         -ServerLogPath $serverLogPath `
         -ClientQConsolePath $launchPlan.qconsole_path `
         -SteamConnectionLogPath $steamConnectionLogPath `
         -TimeoutSeconds $HumanJoinAttemptWaitSeconds `
-        -LaunchAction $directLaunchAction `
-        -CommandText $launchPlan.command_text `
-        -WorkingDirectory $launchPlan.client_working_directory `
-        -ExplanationIfUnavailable [string]$launchPlan.client_discovery.explanation)) | Out-Null
+        -LaunchAction $null `
+        -CommandText "" `
+        -WorkingDirectory "" `
+        -ExplanationIfUnavailable "Steam.exe was not discoverable for the public-mode primary admission attempt.")) | Out-Null
 
     $latestAttempt = $humanJoinAttempts[$humanJoinAttempts.Count - 1]
     if (-not $latestAttempt.authoritative_human_seen) {
         Stop-TrackedHlProcesses
         Start-Sleep -Seconds 2
 
-        $steamLaunchAction = $null
-        $steamCommandText = Get-SteamConnectLaunchCommandText -SteamExePath $steamExePath -SteamConnectUri $joinInfo.SteamConnectUri
-        $steamWorkingDirectory = if ($steamExePath) { Split-Path -Path $steamExePath -Parent } else { "" }
-        if (-not [string]::IsNullOrWhiteSpace($steamExePath) -and -not [string]::IsNullOrWhiteSpace($joinInfo.SteamConnectUri)) {
-            $steamLaunchAction = {
-                return Start-Process -FilePath $steamExePath -ArgumentList $joinInfo.SteamConnectUri -PassThru
-            }
-        }
-
         $humanJoinAttempts.Add((Invoke-HumanJoinAttempt `
-            -Method "steam-connect-uri" `
+            -Method "direct-hl-exe-connect" `
             -StatusJsonPath $publicStatusJsonPath `
             -ServerLogPath $serverLogPath `
             -ClientQConsolePath $launchPlan.qconsole_path `
             -SteamConnectionLogPath $steamConnectionLogPath `
             -TimeoutSeconds ([Math]::Max(20, [Math]::Floor($HumanJoinAttemptWaitSeconds / 2))) `
-            -LaunchAction $steamLaunchAction `
-            -CommandText $steamCommandText `
-            -WorkingDirectory $steamWorkingDirectory `
-            -ExplanationIfUnavailable "Steam.exe was not discoverable for the public-mode fallback attempt.")) | Out-Null
+            -LaunchAction $null `
+            -CommandText "" `
+            -WorkingDirectory "" `
+            -ExplanationIfUnavailable [string]$launchPlan.client_discovery.explanation)) | Out-Null
     }
 
     $latestStatus = Get-PublicStatusSnapshot -StatusJsonPath $publicStatusJsonPath

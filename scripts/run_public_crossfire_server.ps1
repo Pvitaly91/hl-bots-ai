@@ -52,6 +52,9 @@ function Write-PublicStatusFiles {
         "- Loopback join target: $($Status.join_targets.loopback_address)",
         "- LAN join target: $($Status.join_targets.lan_address)",
         "- Steam connect URI: $($Status.join_targets.steam_connect_uri)",
+        "- Preferred public client launch path: $($Status.client_admission_plan.preferred_launch_path)",
+        "- Steam-native admission command: $($Status.client_admission_plan.steam_native_helper_command)",
+        "- Direct-client admission command: $($Status.client_admission_plan.direct_helper_command)",
         "- Max players: $($Status.max_players)",
         "- Bot target when empty: $($Status.bot_count_target_when_empty)",
         "- Current commanded bot target: $($Status.current_bot_target)",
@@ -298,6 +301,7 @@ $advancedAiEnabled = $EnableAdvancedAIBalance.IsPresent
 $humanCountSource = "goldsrc-rcon-status"
 $serverHost = "127.0.0.1"
 $joinInfo = Get-HldsJoinInfo -Port $Port -ServerHost $serverHost
+$publicClientAdmissionPlan = Get-PublicHldmClientAdmissionPlan -ServerAddress $serverHost -ServerPort $Port
 $policyCommandSettleSeconds = [Math]::Max(3, $StatusPollSeconds)
 
 Write-Host "Resolved public crossfire server settings:"
@@ -502,6 +506,19 @@ try {
                 console_command = $joinInfo.ConsoleCommand
                 lan_console_command = $joinInfo.LanConsoleCommand
                 steam_connect_uri = $joinInfo.SteamConnectUri
+            }
+            client_admission_plan = [ordered]@{
+                preferred_launch_path = [string]$publicClientAdmissionPlan.preferred_launch_path
+                steam_native_helper_command = ("powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\launch_public_hldm_client.ps1 -ServerAddress {0} -ServerPort {1} -PublicServerOutputRoot {2} -UseSteamLaunchPath" -f `
+                    (Format-ProcessArgumentText -Value $serverHost), `
+                    $Port, `
+                    (Format-ProcessArgumentText -Value $resolvedOutputRoot))
+                direct_helper_command = ("powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\launch_public_hldm_client.ps1 -ServerAddress {0} -ServerPort {1} -PublicServerOutputRoot {2} -UseDirectClientLaunchPath" -f `
+                    (Format-ProcessArgumentText -Value $serverHost), `
+                    $Port, `
+                    (Format-ProcessArgumentText -Value $resolvedOutputRoot))
+                steam_exe_path = [string]$publicClientAdmissionPlan.steam_exe_path
+                client_exe_path = [string]$publicClientAdmissionPlan.direct_launch_plan.client_exe_path
             }
             public_config_path = $publicConfigPath
             bootstrap_log_path = $deployment.BootstrapLogPath
