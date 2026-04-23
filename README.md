@@ -321,6 +321,13 @@ The full public human-trigger validation is complete only when one validator run
 - `bots-disconnected-humans-present` while that human remains
 - `bots-repopulated-empty-server` after humans leave
 
+Current local status on `main`:
+
+- empty-server public mode is working on `crossfire`
+- advanced AI balance remains off by default
+- the remaining blocker on this machine is still `steam-admission-failed-before-server-connect`
+- the latest main-state validator shows Steam-backed admission failing in the CM reconnect stage before any real server-side human `connected` event appears
+
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
 
 ## Balance Evaluation Harness

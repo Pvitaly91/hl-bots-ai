@@ -78,6 +78,13 @@ If the validator says the public human-trigger path is still blocked before serv
 
 Treat the public human-trigger validation as complete only when one validator run shows a real authoritative human admission, `bots-disconnected-humans-present`, and later `bots-repopulated-empty-server`.
 
+Current local status on `main`:
+
+- empty-server public mode is working on `crossfire`
+- advanced AI balance remains off by default
+- the remaining blocker on this machine is still `steam-admission-failed-before-server-connect`
+- the latest main-state validator shows Steam-backed admission failing in the CM reconnect stage before any real server-side human `connected` event appears
+
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
 
 ## Prerequisites
