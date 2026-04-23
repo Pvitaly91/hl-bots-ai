@@ -40,6 +40,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\run_control_phase_accumulation_probe.ps1` is available so the operator can prove the full control-only phase can actually clear the stronger control target before spending another treatment-phase strong-signal session
 - `scripts\audit_full_session_handoff.ps1` is available so a full strong-signal session that already proved control readiness can be audited specifically for the later control-ready -> treatment-join -> closeout chain
 - `scripts\audit_treatment_strong_signal_gap.ps1` is available so a valid grounded full rerun that still missed strong-signal capture can be audited specifically for treatment-side evidence shortfall vs wrapper drift
+- `scripts\audit_treatment_dwell_and_patch_consistency.ps1` is available so the latest better treatment run can be compared directly against the latest regressed treatment run before another live spend is justified
 - `scripts\run_treatment_patch_completion_attempt.ps1` is available so the next justified conservative live spend can target the one remaining treatment-side patch event instead of rerunning a generic strong-signal wrapper blindly
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
@@ -240,6 +241,11 @@ Default ports and lanes:
 94. Treat `treatment-patch-target-still-short` as a real live miss, not as wrapper drift. The run stayed honest, but treatment still ended below the patch-event target.
 95. Treat `treatment-phase-insufficient-human-signal` as an even earlier failure. The run did not preserve enough treatment-side human signal to answer the patch-completion question honestly.
 96. `responsive` stays closed unless that saved attempt really changes the counted strong-signal evidence state. This completion wrapper is narrower than the generic strong-signal attempt, but it still must not be treated as permission to open responsive by narrative alone.
+97. If the latest treatment completion attempt regresses from the earlier better `5 / 100` treatment run to a shorter `4 / 80` run, stop and run `powershell -NoProfile -File .\scripts\audit_treatment_dwell_and_patch_consistency.ps1` before another live spend.
+98. Read `treatment_dwell_patch_audit.json` / `.md` as the comparison between the better and regressed pair roots: canonical treatment dwell, counted patch events, join and closeout timing, and whether the regression is real or only secondary artifact drift.
+99. Treat `real-treatment-dwell-regression` as the primary branch. It means the later run really ended treatment too soon to land the next human sample, so refresh-only cleanup is not enough and the next step remains treatment-hold hardening.
+100. Treat `derived-layer-patch-undercount-only` as the refresh-only branch. It means canonical treatment evidence stayed stable and only the secondary outputs need a safe rebuild.
+101. Another full strong-signal conservative session is justified only after this dwell/patch audit either isolates a safe secondary-only cleanup or explains the real treatment-hold regression clearly enough that a narrow operational fix is in place first.
 
 ## What Counts As Insufficient Data
 

@@ -380,8 +380,8 @@ def compute_status(
     treatment_human_presence_seconds = float((treatment_summary or {}).get("seconds_with_human_presence", 0.0))
     treatment_patch_events_while_humans_present = int(
         (treatment_summary or {}).get(
-            "patch_apply_count_while_humans_present",
-            (treatment_summary or {}).get("patch_events_while_humans_present_count", 0),
+            "patch_events_while_humans_present_count",
+            (treatment_summary or {}).get("patch_apply_count_while_humans_present", 0),
         )
     )
     treatment_response_windows = int(

@@ -854,12 +854,9 @@ function Get-SwitchStatus {
         $controlActualSeconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "control_lane" -Default $null) -Name "seconds_with_human_presence" -Default (Get-ObjectPropertyValue -Object $controlSummary -Name "seconds_with_human_presence" -Default 0.0))
         $treatmentActualSnapshots = [int](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "human_snapshots_count" -Default (Get-ObjectPropertyValue -Object $treatmentSummary -Name "human_snapshots_count" -Default 0))
         $treatmentActualSeconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "seconds_with_human_presence" -Default (Get-ObjectPropertyValue -Object $treatmentSummary -Name "seconds_with_human_presence" -Default 0.0))
-        $patchActual = [int](Get-ObjectPropertyValue -Object $treatmentSummary -Name "patch_apply_count_while_humans_present" -Default -1)
+        $patchActual = [int](Get-ObjectPropertyValue -Object $treatmentSummary -Name "patch_events_while_humans_present_count" -Default -1)
         if ($patchActual -lt 0) {
-            $patchActual = [int](Get-ObjectPropertyValue -Object $treatmentSummary -Name "patch_events_while_humans_present_count" -Default (Get-ObjectPropertyValue -Object $historyProgress -Name "PatchEventsMax" -Default 0))
-        }
-        if ($patchActual -lt 1 -and [bool](Get-ObjectPropertyValue -Object $comparison -Name "treatment_patched_while_humans_present" -Default $false)) {
-            $patchActual = 1
+            $patchActual = [int](Get-ObjectPropertyValue -Object $historyProgress -Name "PatchEventsMax" -Default 0)
         }
 
         $treatmentLaneRoot = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $pairSummary -Name "treatment_lane" -Default $null) -Name "lane_root" -Default ""))

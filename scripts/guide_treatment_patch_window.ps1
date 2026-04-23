@@ -322,14 +322,7 @@ function Get-FirstHumanPresentPatchEvidence {
         } |
         Select-Object -First 1
 
-    $patchApplyCountWhileHumansPresent = [int](Get-ObjectPropertyValue -Object $TreatmentSummary -Name "patch_apply_count_while_humans_present" -Default 0)
-    $patchEventCountWhileHumansPresent = [int](Get-ObjectPropertyValue -Object $TreatmentSummary -Name "patch_events_while_humans_present_count" -Default 0)
-    $preferPatchApplySource = $patchApplyCountWhileHumansPresent -gt $patchEventCountWhileHumansPresent -and $null -ne $firstPatchApplyDuringPresence
-
-    $sourceKind = if ($preferPatchApplySource) {
-        "patch-apply-during-human-window"
-    }
-    elseif ($null -ne $firstCountedPatch) {
+    $sourceKind = if ($null -ne $firstCountedPatch) {
         "counted-patch-event"
     }
     elseif ($null -ne $firstPatchApplyDuringPresence) {
@@ -339,18 +332,18 @@ function Get-FirstHumanPresentPatchEvidence {
         "none"
     }
 
-    $firstHumanPresentPatchTimestampUtc = if ($preferPatchApplySource -and $null -ne $firstPatchApplyDuringPresence) {
-        [string](Get-ObjectPropertyValue -Object $firstPatchApplyDuringPresence -Name "timestamp_utc" -Default "")
-    }
-    else {
+    $firstHumanPresentPatchTimestampUtc = if ($null -ne $firstCountedPatch) {
         [string](Get-ObjectPropertyValue -Object $firstCountedPatch -Name "timestamp_utc" -Default "")
     }
+    else {
+        [string](Get-ObjectPropertyValue -Object $firstPatchApplyDuringPresence -Name "timestamp_utc" -Default "")
+    }
 
-    $firstHumanPresentPatchOffsetSeconds = if ($preferPatchApplySource -and $null -ne $firstPatchApplyDuringPresence) {
-        [double](Get-ObjectPropertyValue -Object $firstPatchApplyDuringPresence -Name "server_time_seconds" -Default 0.0)
+    $firstHumanPresentPatchOffsetSeconds = if ($null -ne $firstCountedPatch) {
+        [double](Get-ObjectPropertyValue -Object $firstCountedPatch -Name "server_time_seconds" -Default 0.0)
     }
     else {
-        [double](Get-ObjectPropertyValue -Object $firstCountedPatch -Name "server_time_seconds" -Default 0.0)
+        [double](Get-ObjectPropertyValue -Object $firstPatchApplyDuringPresence -Name "server_time_seconds" -Default 0.0)
     }
 
     return [pscustomobject]@{

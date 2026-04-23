@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-65
+HLDM-JKBOTTI-AI-STAND-20260415-66
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -52,6 +52,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_control_phase_accumulation_probe.ps1` and `scripts/run_control_phase_accumulation_probe.bat` for the control-only strong-signal proof that keeps the human in the no-AI control lane until the stronger control target is either met or still proven short before another full control+treatment session is spent.
 - `scripts/audit_full_session_handoff.ps1` and `scripts/audit_full_session_handoff.bat` for the later full-session audit that reads the control-ready, treatment-join, treatment-phase, and closeout chain when a full conservative run already proved control readiness but still failed to finish treatment or final artifacts cleanly.
 - `scripts/audit_treatment_strong_signal_gap.ps1` and `scripts/audit_treatment_strong_signal_gap.bat` for the later treatment-side audit that distinguishes a real strong-signal evidence shortfall from stale secondary wrapper drift after a valid grounded full rerun already exists.
+- `scripts/audit_treatment_dwell_and_patch_consistency.ps1` and `scripts/audit_treatment_dwell_and_patch_consistency.bat` for the narrower comparison between the latest better treatment run and the latest regressed one, with explicit separation between real treatment dwell loss and secondary patch-count drift.
 - `scripts/run_treatment_patch_completion_attempt.ps1` and `scripts/run_treatment_patch_completion_attempt.bat` for the next narrow live milestone after that audit, where the explicit goal is to capture the missing third treatment patch-while-humans-present event and determine whether the first strong-signal conservative evidence pack was finally produced.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
@@ -1204,6 +1205,20 @@ powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -Use
 - secondary sources are `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, `strong_signal_conservative_attempt.json`, and other wrapper narratives
 - `strong-signal-gap-real-treatment-still-short` means the canonical treatment evidence is still below the mission target, so another full conservative session must still capture the missing human-present patch event or whatever exact metric remains short
 - `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, or `strong-signal-criteria-met-but-wrapper-stale` mean refresh-only branches; use `-DryRun` first and `-ExecuteRefresh` only when the helper says the secondary refresh is safe and promotion state remains unchanged
+
+When the later treatment completion run regresses from a better `5 / 100` treatment window down to a shorter `4 / 80` treatment window, compare those two pair roots directly before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_treatment_dwell_and_patch_consistency.ps1
+powershell -NoProfile -File .\scripts\audit_treatment_dwell_and_patch_consistency.ps1 -BetterPairRoot .\lab\logs\eval\ssca53-live\<better-pair> -RegressedPairRoot .\lab\logs\eval\ssca53-live\<regressed-pair>
+```
+
+- this helper is narrower than `audit_treatment_strong_signal_gap.ps1`: the earlier audit asks whether the latest grounded rerun truly stayed short of strong-signal, while this one asks why a later treatment run became shorter and whether the remaining mismatch is real dwell loss, an early treatment cutoff, or only secondary artifact drift
+- canonical sources stay the same: treatment `summary.json`, `pair_summary.json`, `grounded_evidence_certificate.json`, patch history, patch-apply history, telemetry history, and the saved human-presence timeline
+- secondary sources stay explicitly secondary: `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, and wrapper narratives such as `human_participation_conservative_attempt.json` and `strong_signal_conservative_attempt.json`
+- `real-treatment-dwell-regression` means the later run really lost treatment time before the next human sample could land, so refresh-only cleanup is not enough and the next step remains treatment-hold hardening
+- `derived-layer-patch-undercount-only` means canonical treatment evidence stayed stable and only the secondary layer needs a safe refresh
+- use refresh-only cleanup only when the helper says the disagreement is confined to secondary artifacts; otherwise explain the dwell loss first and delay another live spend
 
 When that audit already proves the remaining blocker is one missing treatment patch-while-humans-present event, spend the next conservative run through the dedicated completion helper:
 

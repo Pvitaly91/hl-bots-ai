@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-65
+HLDM-JKBOTTI-AI-STAND-20260415-66
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1181,6 +1181,20 @@ powershell -NoProfile -File .\scripts\audit_treatment_strong_signal_gap.ps1 -Pai
 - secondary sources are `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, `strong_signal_conservative_attempt.json`, and related wrapper summaries
 - `strong-signal-gap-real-treatment-still-short` means the next full conservative session must still capture the missing treatment-side event or window
 - `patch-event-under-count-in-derived-layer`, `post-patch-window-under-count-in-derived-layer`, and `strong-signal-criteria-met-but-wrapper-stale` are refresh-only branches; dry-run first and execute only the listed safe secondary refresh commands when the helper says promotion state stays unchanged
+
+When a later treatment completion run regresses from a better `5 / 100` window down to a shorter `4 / 80` window, compare the better and regressed pair roots directly before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_treatment_dwell_and_patch_consistency.ps1
+powershell -NoProfile -File .\scripts\audit_treatment_dwell_and_patch_consistency.ps1 -BetterPairRoot .\lab\logs\eval\ssca53-live\<better-pair> -RegressedPairRoot .\lab\logs\eval\ssca53-live\<regressed-pair>
+```
+
+- this helper differs from the earlier treatment strong-signal gap audit because it is not asking whether the latest grounded rerun truly met strong-signal; it is asking why a later run became shorter and whether that regression is real or only secondary artifact drift
+- canonical sources remain treatment `summary.json`, `pair_summary.json`, `grounded_evidence_certificate.json`, patch history, patch-apply history, telemetry history, and the saved human-presence timeline
+- secondary sources remain `treatment_patch_window.json`, `conservative_phase_flow.json`, `live_monitor_status.json`, `mission_attainment.json`, and wrapper narratives such as `human_participation_conservative_attempt.json` and `strong_signal_conservative_attempt.json`
+- `real-treatment-dwell-regression` means the later run really lost treatment time before the next human sample could land, so refresh-only cleanup is not enough and the next step remains treatment-hold hardening
+- `derived-layer-patch-undercount-only` means canonical treatment evidence stayed stable and only the secondary layer needs a safe refresh
+- use refresh-only cleanup only when the helper says the disagreement is confined to secondary artifacts; otherwise explain the dwell loss first and delay another full strong-signal conservative spend
 
 When that audit already proves the remaining blocker is one missing treatment patch-while-humans-present event, use the dedicated completion helper for the next real conservative spend:
 
