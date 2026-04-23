@@ -462,6 +462,73 @@ function Get-SteamRegistryInstallRoots {
     return @($roots | Select-Object -Unique)
 }
 
+function Get-SteamInstallRoots {
+    $roots = New-Object System.Collections.Generic.List[string]
+
+    $standardRoots = @(
+        (Resolve-NormalizedPathCandidate -Path (Join-Path ${env:ProgramFiles(x86)} "Steam")),
+        (Resolve-NormalizedPathCandidate -Path (Join-Path ${env:ProgramFiles} "Steam")),
+        (Resolve-NormalizedPathCandidate -Path "D:\Steam"),
+        "C:\Program Files (x86)\Steam",
+        "C:\Program Files\Steam"
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($root in @($standardRoots) + @(Get-SteamRegistryInstallRoots)) {
+        if ([string]::IsNullOrWhiteSpace($root)) {
+            continue
+        }
+
+        $candidate = Resolve-NormalizedPathCandidate -Path $root
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $roots.Add($candidate) | Out-Null
+    }
+
+    return @($roots | Select-Object -Unique)
+}
+
+function Get-SteamExecutablePath {
+    foreach ($root in Get-SteamInstallRoots) {
+        $candidate = Join-Path $root "steam.exe"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    return ""
+}
+
+function Get-SteamLogsRoot {
+    $steamExePath = Get-SteamExecutablePath
+    if ([string]::IsNullOrWhiteSpace($steamExePath)) {
+        return ""
+    }
+
+    $steamRoot = Split-Path -Path $steamExePath -Parent
+    if ([string]::IsNullOrWhiteSpace($steamRoot)) {
+        return ""
+    }
+
+    return Join-Path $steamRoot "logs"
+}
+
+function Get-SteamConnectionLogPath {
+    param([int]$Port)
+
+    if ($Port -lt 1 -or $Port -gt 65535) {
+        return ""
+    }
+
+    $logsRoot = Get-SteamLogsRoot
+    if ([string]::IsNullOrWhiteSpace($logsRoot)) {
+        return ""
+    }
+
+    return Join-Path $logsRoot ("connection_log_{0}.txt" -f $Port)
+}
+
 function Get-HalfLifeClientDiscovery {
     param([string]$PreferredPath = "")
 

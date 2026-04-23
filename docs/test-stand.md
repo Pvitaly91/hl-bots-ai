@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-69
+HLDM-JKBOTTI-AI-STAND-20260415-70
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -124,7 +124,28 @@ The public runner writes status artifacts under `lab\logs\public_server\...`:
 - `public_server_status.json`
 - `public_server_status.md`
 
-These files are the operator-facing source of truth for public mode. They include the map, port, human count, bot count, current commanded bot target, last policy action, and whether advanced AI balance is enabled.
+These files are the operator-facing source of truth for public mode. They include the map, port, join targets, human count, bot count, current commanded bot target, last policy action, and whether advanced AI balance is enabled.
+
+Validate the public human-trigger path like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\validate_public_human_trigger.ps1 -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+The validator reuses the same authoritative human-count source as public mode itself: GoldSrc `status` over RCON. It writes:
+
+- `public_human_trigger_validation.json`
+- `public_human_trigger_validation.md`
+
+The validator records whether these public states were actually observed:
+
+- `waiting-human-join-grace`
+- `bots-active-empty-server`
+- `bots-disconnected-humans-present`
+- `waiting-empty-server-repopulate`
+- `bots-repopulated-empty-server`
+
+If a local public join still fails before real server admission, the validator preserves the exact blocker with the latest public status snapshot, `qconsole.log` tail, and Steam `connection_log_<port>.txt` tail instead of pretending the human-trigger path was fully exercised.
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
 

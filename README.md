@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-69
+HLDM-JKBOTTI-AI-STAND-20260415-70
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -58,6 +58,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/run_treatment_patch_completion_attempt.ps1` and `scripts/run_treatment_patch_completion_attempt.bat` for the next narrow live milestone after that audit, where the explicit goal is to capture the missing third treatment patch-while-humans-present event and determine whether the first strong-signal conservative evidence pack was finally produced.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
+- `scripts/validate_public_human_trigger.ps1` and `scripts/validate_public_human_trigger.bat` for the product-minimum public-mode validation pass that starts or attaches to the public `crossfire` server, observes the authoritative public policy state transitions, and records whether a local human actually triggered bot removal and later repopulation.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
 - `scripts/analyze_latest_grounded_session.ps1` and `scripts/analyze_latest_grounded_session.bat` for the post-session delta layer that compares the registry state with and without the latest pair counted and explains exactly what changed.
 - `scripts/run_guided_pair_rehearsal.ps1` for deterministic guided-workflow sufficiency rehearsal that drives the existing live monitor semantics without spending a real human-rich session.
@@ -236,7 +237,23 @@ Public mode writes operator-facing status artifacts under `lab\logs\public_serve
 - `public_server_status.json`
 - `public_server_status.md`
 
-These status files report the current map, port, human count, bot count, current commanded bot target, policy state, and whether advanced AI balance is enabled.
+These status files report the current map, port, join targets, human count, bot count, current commanded bot target, policy state, and whether advanced AI balance is enabled.
+
+Validate the human-trigger path like this:
+
+```bat
+scripts\validate_public_human_trigger.bat -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+The validator uses the same authoritative human-count source as public mode itself: GoldSrc `status` over RCON. It records the public policy states:
+
+- `waiting-human-join-grace`
+- `bots-active-empty-server`
+- `bots-disconnected-humans-present`
+- `waiting-empty-server-repopulate`
+- `bots-repopulated-empty-server`
+
+If the local public join still fails before server admission, the validator preserves the narrowest blocker instead of guessing. In this environment that currently means checking the client `qconsole.log`, the Steam per-port `connection_log_<port>.txt`, and the public server status history before claiming the human-trigger path is really broken.
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
 

@@ -30,6 +30,22 @@ Read `public_server_status.json` / `.md` under `lab\logs\public_server\...` as t
 - current policy state
 - whether advanced AI balance is enabled
 
+Validate the public human-trigger flow like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\validate_public_human_trigger.ps1 -Map crossfire -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -Port 27015 -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+Use `public_human_trigger_validation.json` / `.md` as the authoritative public-mode check for:
+
+- `waiting-human-join-grace`
+- `bots-active-empty-server`
+- `bots-disconnected-humans-present`
+- `waiting-empty-server-repopulate`
+- `bots-repopulated-empty-server`
+
+If the validator says the public human-trigger path is still blocked before server admission, read the saved `qconsole.log` tail and Steam `connection_log_<port>.txt` tail before changing the public server policy. That blocker is narrower than the server bot policy itself.
+
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
 
 ## Prerequisites

@@ -49,6 +49,9 @@ function Write-PublicStatusFiles {
         "- Server PID: $($Status.server_pid)",
         "- Map: $($Status.map)",
         "- Port: $($Status.port)",
+        "- Loopback join target: $($Status.join_targets.loopback_address)",
+        "- LAN join target: $($Status.join_targets.lan_address)",
+        "- Steam connect URI: $($Status.join_targets.steam_connect_uri)",
         "- Max players: $($Status.max_players)",
         "- Bot target when empty: $($Status.bot_count_target_when_empty)",
         "- Current commanded bot target: $($Status.current_bot_target)",
@@ -294,7 +297,8 @@ $maxPlayersResolved = [Math]::Max($MaxPlayers, [Math]::Max(8, ($BotCountWhenEmpt
 $advancedAiEnabled = $EnableAdvancedAIBalance.IsPresent
 $humanCountSource = "goldsrc-rcon-status"
 $serverHost = "127.0.0.1"
-    $policyCommandSettleSeconds = [Math]::Max(3, $StatusPollSeconds)
+$joinInfo = Get-HldsJoinInfo -Port $Port -ServerHost $serverHost
+$policyCommandSettleSeconds = [Math]::Max(3, $StatusPollSeconds)
 
 Write-Host "Resolved public crossfire server settings:"
 Write-Host "  Map: $Map"
@@ -492,6 +496,13 @@ try {
             map = $Map
             hostname = $Hostname
             max_players = $maxPlayersResolved
+            join_targets = [ordered]@{
+                loopback_address = $joinInfo.LoopbackAddress
+                lan_address = $joinInfo.LanAddress
+                console_command = $joinInfo.ConsoleCommand
+                lan_console_command = $joinInfo.LanConsoleCommand
+                steam_connect_uri = $joinInfo.SteamConnectUri
+            }
             public_config_path = $publicConfigPath
             bootstrap_log_path = $deployment.BootstrapLogPath
             plugin_relative_path = $deployment.PluginRelativePath
