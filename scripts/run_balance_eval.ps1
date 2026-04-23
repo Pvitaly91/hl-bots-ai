@@ -274,6 +274,164 @@ function Get-HumanSignalStats {
     }
 }
 
+function Convert-ToUtcDateTimeOrNull {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    try {
+        return [datetime]::Parse(
+            $Value,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        )
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-HumanSampleCadenceState {
+    param([object[]]$TelemetryRecords)
+
+    $result = [ordered]@{
+        sample_cadence_seconds = 20.0
+        last_observed_human_snapshot_at_utc = $null
+        expected_next_human_snapshot_at_utc = $null
+        latest_sample_human_present = $false
+        latest_sample_timestamp_at_utc = $null
+        human_sample_count = 0
+    }
+
+    if (-not $TelemetryRecords -or $TelemetryRecords.Count -eq 0) {
+        return [pscustomobject]$result
+    }
+
+    $latestRecord = $TelemetryRecords[$TelemetryRecords.Count - 1]
+    $latestSampleTimestamp = Convert-ToUtcDateTimeOrNull -Value ([string](Get-ObjectPropertyValue -Object $latestRecord -Name "timestamp_utc" -Default ""))
+    $latestSampleHumanCount = [int](Get-ObjectPropertyValue -Object $latestRecord -Name "human_player_count" -Default 0)
+    $result.latest_sample_human_present = $latestSampleHumanCount -gt 0
+    $result.latest_sample_timestamp_at_utc = $latestSampleTimestamp
+
+    $humanRecords = @($TelemetryRecords | Where-Object {
+        [int](Get-ObjectPropertyValue -Object $_ -Name "human_player_count" -Default 0) -gt 0
+    })
+
+    $result.human_sample_count = $humanRecords.Count
+    if ($humanRecords.Count -eq 0) {
+        return [pscustomobject]$result
+    }
+
+    $lastHumanRecord = $humanRecords[$humanRecords.Count - 1]
+    $lastHumanTimestamp = Convert-ToUtcDateTimeOrNull -Value ([string](Get-ObjectPropertyValue -Object $lastHumanRecord -Name "timestamp_utc" -Default ""))
+    $result.last_observed_human_snapshot_at_utc = $lastHumanTimestamp
+
+    $cadenceCandidates = New-Object System.Collections.Generic.List[double]
+    for ($index = 1; $index -lt $humanRecords.Count; $index++) {
+        $currentTimestamp = Convert-ToUtcDateTimeOrNull -Value ([string](Get-ObjectPropertyValue -Object $humanRecords[$index] -Name "timestamp_utc" -Default ""))
+        $previousTimestamp = Convert-ToUtcDateTimeOrNull -Value ([string](Get-ObjectPropertyValue -Object $humanRecords[$index - 1] -Name "timestamp_utc" -Default ""))
+        if ($null -eq $currentTimestamp -or $null -eq $previousTimestamp) {
+            continue
+        }
+
+        $deltaSeconds = ($currentTimestamp - $previousTimestamp).TotalSeconds
+        if ($deltaSeconds -gt 0.0) {
+            $cadenceCandidates.Add($deltaSeconds) | Out-Null
+        }
+    }
+
+    if ($cadenceCandidates.Count -gt 0) {
+        $orderedCadence = @($cadenceCandidates | Sort-Object)
+        $medianIndex = [int][Math]::Floor(($orderedCadence.Count - 1) / 2)
+        $result.sample_cadence_seconds = [Math]::Round([double]$orderedCadence[$medianIndex], 2)
+    }
+    else {
+        $intervalSeconds = [double](Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $lastHumanRecord -Name "active_balance" -Default $null) -Name "interval_seconds" -Default 20.0)
+        if ($intervalSeconds -gt 0.0) {
+            $result.sample_cadence_seconds = [Math]::Round($intervalSeconds, 2)
+        }
+    }
+
+    if ($null -ne $lastHumanTimestamp) {
+        $result.expected_next_human_snapshot_at_utc = $lastHumanTimestamp.AddSeconds([Math]::Max(1.0, $result.sample_cadence_seconds))
+    }
+
+    return [pscustomobject]$result
+}
+
+function Get-ImminentHumanSampleCloseoutGuardState {
+    param(
+        [object[]]$TelemetryRecords,
+        [object]$HumanSignalPreview,
+        [int]$MinHumanSnapshots,
+        [double]$MinHumanPresenceSeconds,
+        [datetime]$NowUtc,
+        [int]$GraceWindowSeconds
+    )
+
+    $cadenceState = Get-HumanSampleCadenceState -TelemetryRecords $TelemetryRecords
+    $actualSnapshots = [int](Get-ObjectPropertyValue -Object $HumanSignalPreview -Name "HumanSnapshotsCount" -Default 0)
+    $actualSeconds = [double](Get-ObjectPropertyValue -Object $HumanSignalPreview -Name "SecondsWithHumanPresence" -Default 0.0)
+    $remainingSnapshots = [Math]::Max(0, $MinHumanSnapshots - $actualSnapshots)
+    $remainingSeconds = [Math]::Round([Math]::Max(0.0, $MinHumanPresenceSeconds - $actualSeconds), 2)
+    $expectedNextSampleAtUtc = Get-ObjectPropertyValue -Object $cadenceState -Name "expected_next_human_snapshot_at_utc" -Default $null
+    $secondsUntilNextSample = if ($null -ne $expectedNextSampleAtUtc) {
+        [Math]::Round(($expectedNextSampleAtUtc - $NowUtc).TotalSeconds, 2)
+    }
+    else {
+        $null
+    }
+
+    $eligible = $false
+    $explanation = ""
+
+    if ($null -eq $HumanSignalPreview) {
+        $explanation = "No human-signal preview was available, so the imminent-sample closeout guard could not be evaluated."
+    }
+    elseif ([int](Get-ObjectPropertyValue -Object $cadenceState -Name "human_sample_count" -Default 0) -eq 0) {
+        $explanation = "No human-present treatment samples were recorded, so there is no imminent next human sample to wait for."
+    }
+    elseif (-not [bool](Get-ObjectPropertyValue -Object $cadenceState -Name "latest_sample_human_present" -Default $false)) {
+        $explanation = "The latest treatment telemetry sample no longer shows a human in-lane, so holding open for one more human sample would be speculative."
+    }
+    elseif ($remainingSnapshots -le 0 -and $remainingSeconds -le 0.0) {
+        $explanation = "Treatment already cleared the human dwell target, so no imminent-sample guard is needed."
+    }
+    elseif ($remainingSnapshots -gt 1 -or $remainingSeconds -gt ([double](Get-ObjectPropertyValue -Object $cadenceState -Name "sample_cadence_seconds" -Default 20.0) + 1.0)) {
+        $explanation = "Treatment is still too far from the dwell target for one more expected human sample to plausibly fix it."
+    }
+    elseif ($null -eq $expectedNextSampleAtUtc) {
+        $explanation = "The next expected human sample timestamp could not be inferred from treatment telemetry."
+    }
+    elseif ($secondsUntilNextSample -lt -2.0) {
+        $explanation = "The next expected human sample was already missed by more than 2 seconds, so the imminent-sample guard is no longer trustworthy."
+    }
+    elseif ($secondsUntilNextSample -gt $GraceWindowSeconds) {
+        $explanation = "The next expected human sample is not imminent enough for the bounded closeout guard."
+    }
+    else {
+        $eligible = $true
+        $explanation = "Treatment is short by $remainingSnapshots snapshot(s) and $remainingSeconds second(s), and the next expected human sample is due in $secondsUntilNextSample second(s). Hold the lane open for one bounded grace window."
+    }
+
+    return [pscustomobject]@{
+        eligible = $eligible
+        explanation = $explanation
+        sample_cadence_seconds = [double](Get-ObjectPropertyValue -Object $cadenceState -Name "sample_cadence_seconds" -Default 20.0)
+        last_observed_human_snapshot_at_utc = Get-ObjectPropertyValue -Object $cadenceState -Name "last_observed_human_snapshot_at_utc" -Default $null
+        expected_next_human_snapshot_at_utc = $expectedNextSampleAtUtc
+        seconds_until_next_expected_human_sample = $secondsUntilNextSample
+        actual_human_snapshots = $actualSnapshots
+        actual_human_presence_seconds = $actualSeconds
+        remaining_human_snapshots = $remainingSnapshots
+        remaining_human_presence_seconds = $remainingSeconds
+        latest_sample_human_present = [bool](Get-ObjectPropertyValue -Object $cadenceState -Name "latest_sample_human_present" -Default $false)
+        latest_sample_timestamp_at_utc = Get-ObjectPropertyValue -Object $cadenceState -Name "latest_sample_timestamp_at_utc" -Default $null
+    }
+}
+
 function New-HumanPresenceTimelineRecords {
     param([object[]]$TelemetryRecords)
 
@@ -389,6 +547,23 @@ $meaningfulImbalanceMomentumForPreview = if ($null -ne $resolvedTuningProfile) {
 else {
     4.0
 }
+$closeoutGuardGraceWindowSeconds = 25
+$closeoutGuardEnabled = $false
+$closeoutGuardArmed = $false
+$closeoutGuardFired = $false
+$closeoutGuardExplanation = ""
+$closeoutGuardArmedAtUtc = $null
+$closeoutGuardLastObservedHumanSnapshotAtUtc = $null
+$closeoutGuardExpectedNextHumanSnapshotAtUtc = $null
+$closeoutGuardSampleCadenceSeconds = 0.0
+$closeoutGuardSecondsUntilNextSampleAtFire = $null
+$closeoutGuardActualSnapshotsAtFire = 0
+$closeoutGuardActualSecondsAtFire = 0.0
+$closeoutGuardRemainingSnapshotsAtFire = 0
+$closeoutGuardRemainingSecondsAtFire = 0.0
+$closeoutGuardNextSampleArrived = $false
+$closeoutGuardNextSampleArrivedAtUtc = $null
+$closeoutGuardCrossedHumanTargetAfterGuard = $false
 
 Assert-BotLaunchSettings -BotCount $BotCount -BotSkill $BotSkill
 
@@ -412,6 +587,7 @@ $waitForHumanJoinEnabled = $false
 if ($PSBoundParameters.ContainsKey("WaitForHumanJoin")) {
     $waitForHumanJoinEnabled = [bool]$WaitForHumanJoin
 }
+$closeoutGuardEnabled = $Mode -eq "AI" -and $waitForHumanJoinEnabled
 $LaneLabel = if ($LaneLabel) {
     $LaneLabel.Trim()
 }
@@ -566,6 +742,7 @@ try {
         if ($matchId) {
             $telemetryHistoryPath = Get-AiRuntimeHistoryFilePath -HldsRoot $HldsRoot -Kind "telemetry" -MatchId $matchId
             $patchHistoryPath = Get-AiRuntimeHistoryFilePath -HldsRoot $HldsRoot -Kind "patch" -MatchId $matchId
+            $telemetryRecords = @(Read-NdjsonFile -Path $telemetryHistoryPath)
             $humanSignalPreview = Get-HumanSignalStats `
                 -TelemetryHistoryPath $telemetryHistoryPath `
                 -PatchHistoryPath $patchHistoryPath `
@@ -576,6 +753,25 @@ try {
 
             if ($humanSignalPreview.HumanSnapshotsCount -gt 0) {
                 $humanJoinObserved = $true
+            }
+
+            if ($closeoutGuardFired -and -not $closeoutGuardNextSampleArrived) {
+                $guardCadenceState = Get-HumanSampleCadenceState -TelemetryRecords $telemetryRecords
+                $guardLastObservedHumanSnapshotAtUtc = Get-ObjectPropertyValue -Object $guardCadenceState -Name "last_observed_human_snapshot_at_utc" -Default $null
+                if (
+                    $null -ne $closeoutGuardExpectedNextHumanSnapshotAtUtc -and
+                    $null -ne $guardLastObservedHumanSnapshotAtUtc -and
+                    $guardLastObservedHumanSnapshotAtUtc -ge $closeoutGuardExpectedNextHumanSnapshotAtUtc.AddSeconds(-1.0)
+                ) {
+                    $closeoutGuardNextSampleArrived = $true
+                    $closeoutGuardNextSampleArrivedAtUtc = $guardLastObservedHumanSnapshotAtUtc
+                    if (
+                        [int](Get-ObjectPropertyValue -Object $humanSignalPreview -Name "HumanSnapshotsCount" -Default 0) -ge $MinHumanSnapshots -and
+                        [double](Get-ObjectPropertyValue -Object $humanSignalPreview -Name "SecondsWithHumanPresence" -Default 0.0) -ge $MinHumanPresenceSeconds
+                    ) {
+                        $closeoutGuardCrossedHumanTargetAfterGuard = $true
+                    }
+                }
             }
         }
 
@@ -601,6 +797,42 @@ try {
         }
 
         if ($nowUtc -ge $humanJoinDeadlineUtc) {
+            if ($closeoutGuardEnabled -and -not $externalStopRequested -and -not $closeoutGuardFired) {
+                $guardState = Get-ImminentHumanSampleCloseoutGuardState `
+                    -TelemetryRecords $telemetryRecords `
+                    -HumanSignalPreview $humanSignalPreview `
+                    -MinHumanSnapshots $MinHumanSnapshots `
+                    -MinHumanPresenceSeconds $MinHumanPresenceSeconds `
+                    -NowUtc $nowUtc `
+                    -GraceWindowSeconds $closeoutGuardGraceWindowSeconds
+
+                if ([bool](Get-ObjectPropertyValue -Object $guardState -Name "eligible" -Default $false)) {
+                    $closeoutGuardArmed = $true
+                    $closeoutGuardFired = $true
+                    $closeoutGuardArmedAtUtc = $nowUtc
+                    $closeoutGuardExplanation = [string](Get-ObjectPropertyValue -Object $guardState -Name "explanation" -Default "")
+                    $closeoutGuardLastObservedHumanSnapshotAtUtc = Get-ObjectPropertyValue -Object $guardState -Name "last_observed_human_snapshot_at_utc" -Default $null
+                    $closeoutGuardExpectedNextHumanSnapshotAtUtc = Get-ObjectPropertyValue -Object $guardState -Name "expected_next_human_snapshot_at_utc" -Default $null
+                    $closeoutGuardSampleCadenceSeconds = [double](Get-ObjectPropertyValue -Object $guardState -Name "sample_cadence_seconds" -Default 20.0)
+                    $closeoutGuardSecondsUntilNextSampleAtFire = Get-ObjectPropertyValue -Object $guardState -Name "seconds_until_next_expected_human_sample" -Default $null
+                    $closeoutGuardActualSnapshotsAtFire = [int](Get-ObjectPropertyValue -Object $guardState -Name "actual_human_snapshots" -Default 0)
+                    $closeoutGuardActualSecondsAtFire = [double](Get-ObjectPropertyValue -Object $guardState -Name "actual_human_presence_seconds" -Default 0.0)
+                    $closeoutGuardRemainingSnapshotsAtFire = [int](Get-ObjectPropertyValue -Object $guardState -Name "remaining_human_snapshots" -Default 0)
+                    $closeoutGuardRemainingSecondsAtFire = [double](Get-ObjectPropertyValue -Object $guardState -Name "remaining_human_presence_seconds" -Default 0.0)
+                    $humanJoinDeadlineUtc = $nowUtc.AddSeconds($closeoutGuardGraceWindowSeconds)
+
+                    Write-Host "  Treatment closeout guard fired."
+                    Write-Host "    Expected next human sample: $(if ($null -ne $closeoutGuardExpectedNextHumanSnapshotAtUtc) { $closeoutGuardExpectedNextHumanSnapshotAtUtc.ToString('o') } else { '' })"
+                    Write-Host "    Guard grace window seconds: $closeoutGuardGraceWindowSeconds"
+                    Write-Host "    Explanation: $closeoutGuardExplanation"
+
+                    Start-Sleep -Seconds 2
+                    continue
+                }
+
+                $closeoutGuardExplanation = [string](Get-ObjectPropertyValue -Object $guardState -Name "explanation" -Default "")
+            }
+
             $humanJoinTimedOut = -not $gateSatisfied
             break
         }
@@ -662,6 +894,99 @@ Write-NdjsonFile -Path $humanPresenceTimelinePath -Records $humanPresenceTimelin
 $copiedArtifacts["human_presence_timeline"] = $humanPresenceTimelinePath
 $copiedArtifacts["human_presence_timeline_leaf"] = $humanPresenceTimelineArtifact.leaf
 $copiedArtifacts["human_presence_timeline_used_fallback"] = [bool]$humanPresenceTimelineArtifact.used_fallback
+
+$finalCadenceState = Get-HumanSampleCadenceState -TelemetryRecords $telemetryRecords
+$finalLastObservedHumanSnapshotAtUtc = Get-ObjectPropertyValue -Object $finalCadenceState -Name "last_observed_human_snapshot_at_utc" -Default $null
+$finalExpectedNextHumanSnapshotAtUtc = Get-ObjectPropertyValue -Object $finalCadenceState -Name "expected_next_human_snapshot_at_utc" -Default $null
+$finalSampleCadenceSeconds = [double](Get-ObjectPropertyValue -Object $finalCadenceState -Name "sample_cadence_seconds" -Default 20.0)
+$finalHumanSnapshots = [int](Get-ObjectPropertyValue -Object $humanSignalPreview -Name "HumanSnapshotsCount" -Default 0)
+$finalHumanPresenceSeconds = [double](Get-ObjectPropertyValue -Object $humanSignalPreview -Name "SecondsWithHumanPresence" -Default 0.0)
+
+if (-not $closeoutGuardExplanation) {
+    if ($closeoutGuardFired) {
+        $closeoutGuardExplanation = "The bounded treatment closeout guard fired and extended the lane deadline once so the next expected human sample could arrive before the lane finalized."
+    }
+    elseif ($closeoutGuardEnabled) {
+        $closeoutGuardExplanation = "The bounded treatment closeout guard never fired because the lane did not reach an imminent one-more-sample dwell cutoff."
+    }
+    else {
+        $closeoutGuardExplanation = "The bounded treatment closeout guard is only evaluated for wait-for-human AI lanes."
+    }
+}
+
+$closeoutGuardJsonPath = Join-Path $laneRoot "closeout_guard.json"
+$closeoutGuardMarkdownPath = Join-Path $laneRoot "closeout_guard.md"
+$closeoutGuardReport = [ordered]@{
+    schema_version = 1
+    prompt_id = $currentPromptId
+    source_commit_sha = $sourceCommitSha
+    lane_root = $laneRoot
+    mode = $Mode
+    guard_enabled = $closeoutGuardEnabled
+    guard_armed = $closeoutGuardArmed
+    guard_fired = $closeoutGuardFired
+    guard_armed_at_utc = if ($null -ne $closeoutGuardArmedAtUtc) { $closeoutGuardArmedAtUtc.ToString("o") } else { "" }
+    sample_cadence_inferred_seconds = [Math]::Round($(if ($closeoutGuardSampleCadenceSeconds -gt 0.0) { $closeoutGuardSampleCadenceSeconds } else { $finalSampleCadenceSeconds }), 2)
+    last_observed_human_snapshot_timestamp_utc = if ($null -ne $finalLastObservedHumanSnapshotAtUtc) { $finalLastObservedHumanSnapshotAtUtc.ToString("o") } else { "" }
+    expected_next_human_snapshot_timestamp_utc = if ($null -ne $finalExpectedNextHumanSnapshotAtUtc) { $finalExpectedNextHumanSnapshotAtUtc.ToString("o") } else { "" }
+    last_observed_human_snapshot_at_fire_utc = if ($null -ne $closeoutGuardLastObservedHumanSnapshotAtUtc) { $closeoutGuardLastObservedHumanSnapshotAtUtc.ToString("o") } else { "" }
+    expected_next_human_snapshot_at_fire_utc = if ($null -ne $closeoutGuardExpectedNextHumanSnapshotAtUtc) { $closeoutGuardExpectedNextHumanSnapshotAtUtc.ToString("o") } else { "" }
+    seconds_until_next_expected_human_sample_at_fire = $closeoutGuardSecondsUntilNextSampleAtFire
+    grace_window_seconds = $closeoutGuardGraceWindowSeconds
+    target_human_snapshots = $MinHumanSnapshots
+    actual_human_snapshots_at_fire = $closeoutGuardActualSnapshotsAtFire
+    remaining_human_snapshots_at_fire = $closeoutGuardRemainingSnapshotsAtFire
+    target_human_presence_seconds = $MinHumanPresenceSeconds
+    actual_human_presence_seconds_at_fire = [Math]::Round($closeoutGuardActualSecondsAtFire, 2)
+    remaining_human_presence_seconds_at_fire = [Math]::Round($closeoutGuardRemainingSecondsAtFire, 2)
+    next_sample_arrived_after_guard = $closeoutGuardNextSampleArrived
+    next_sample_arrived_at_utc = if ($null -ne $closeoutGuardNextSampleArrivedAtUtc) { $closeoutGuardNextSampleArrivedAtUtc.ToString("o") } else { "" }
+    crossed_human_dwell_target_after_guard = $closeoutGuardCrossedHumanTargetAfterGuard
+    final_human_snapshots = $finalHumanSnapshots
+    final_human_presence_seconds = [Math]::Round($finalHumanPresenceSeconds, 2)
+    human_join_timed_out = $humanJoinTimedOut
+    external_stop_requested = $externalStopRequested
+    explanation = $closeoutGuardExplanation
+    artifacts = [ordered]@{
+        telemetry_history_ndjson = $copiedArtifacts["telemetry_history"]
+        human_presence_timeline_ndjson = $humanPresenceTimelinePath
+        patch_history_ndjson = $copiedArtifacts["patch_history"]
+    }
+}
+
+$closeoutGuardMarkdown = @(
+    "# Treatment Closeout Guard",
+    "",
+    "- Guard enabled: $($closeoutGuardReport.guard_enabled)",
+    "- Guard armed: $($closeoutGuardReport.guard_armed)",
+    "- Guard fired: $($closeoutGuardReport.guard_fired)",
+    "- Guard armed at: $($closeoutGuardReport.guard_armed_at_utc)",
+    "- Sample cadence inferred seconds: $($closeoutGuardReport.sample_cadence_inferred_seconds)",
+    "- Last observed human snapshot: $($closeoutGuardReport.last_observed_human_snapshot_timestamp_utc)",
+    "- Expected next human snapshot: $($closeoutGuardReport.expected_next_human_snapshot_timestamp_utc)",
+    "- Expected next human snapshot at fire: $($closeoutGuardReport.expected_next_human_snapshot_at_fire_utc)",
+    "- Seconds until next expected sample at fire: $($closeoutGuardReport.seconds_until_next_expected_human_sample_at_fire)",
+    "- Grace window seconds: $($closeoutGuardReport.grace_window_seconds)",
+    "- Human snapshots at fire: $($closeoutGuardReport.actual_human_snapshots_at_fire) / $($closeoutGuardReport.target_human_snapshots)",
+    "- Human presence seconds at fire: $($closeoutGuardReport.actual_human_presence_seconds_at_fire) / $($closeoutGuardReport.target_human_presence_seconds)",
+    "- Next sample arrived after guard: $($closeoutGuardReport.next_sample_arrived_after_guard)",
+    "- Next sample arrived at: $($closeoutGuardReport.next_sample_arrived_at_utc)",
+    "- Crossed human dwell target after guard: $($closeoutGuardReport.crossed_human_dwell_target_after_guard)",
+    "- Final human snapshots: $($closeoutGuardReport.final_human_snapshots)",
+    "- Final human presence seconds: $($closeoutGuardReport.final_human_presence_seconds)",
+    "- Explanation: $($closeoutGuardReport.explanation)",
+    "",
+    "## Artifacts",
+    "",
+    "- Telemetry history: $($closeoutGuardReport.artifacts.telemetry_history_ndjson)",
+    "- Human presence timeline: $($closeoutGuardReport.artifacts.human_presence_timeline_ndjson)",
+    "- Patch history: $($closeoutGuardReport.artifacts.patch_history_ndjson)"
+) -join [Environment]::NewLine
+
+Write-JsonFile -Path $closeoutGuardJsonPath -Value $closeoutGuardReport
+Write-TextFile -Path $closeoutGuardMarkdownPath -Value ($closeoutGuardMarkdown + [Environment]::NewLine)
+$copiedArtifacts["closeout_guard_json"] = $closeoutGuardJsonPath
+$copiedArtifacts["closeout_guard_markdown"] = $closeoutGuardMarkdownPath
 
 $joinInstructionsPath = Join-Path $laneRoot "join_instructions.txt"
 Write-TextFile -Path $joinInstructionsPath -Value (

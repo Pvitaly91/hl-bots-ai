@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-66
+HLDM-JKBOTTI-AI-STAND-20260415-67
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -53,6 +53,7 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/audit_full_session_handoff.ps1` and `scripts/audit_full_session_handoff.bat` for the later full-session audit that reads the control-ready, treatment-join, treatment-phase, and closeout chain when a full conservative run already proved control readiness but still failed to finish treatment or final artifacts cleanly.
 - `scripts/audit_treatment_strong_signal_gap.ps1` and `scripts/audit_treatment_strong_signal_gap.bat` for the later treatment-side audit that distinguishes a real strong-signal evidence shortfall from stale secondary wrapper drift after a valid grounded full rerun already exists.
 - `scripts/audit_treatment_dwell_and_patch_consistency.ps1` and `scripts/audit_treatment_dwell_and_patch_consistency.bat` for the narrower comparison between the latest better treatment run and the latest regressed one, with explicit separation between real treatment dwell loss and secondary patch-count drift.
+- `scripts/audit_treatment_closeout_cutoff.ps1` and `scripts/audit_treatment_closeout_cutoff.bat` for the narrower cutoff audit that asks whether a regressed treatment run ended just before the next expected human sample while treatment was still unsafe to leave.
 - `scripts/run_treatment_patch_completion_attempt.ps1` and `scripts/run_treatment_patch_completion_attempt.bat` for the next narrow live milestone after that audit, where the explicit goal is to capture the missing third treatment patch-while-humans-present event and determine whether the first strong-signal conservative evidence pack was finally produced.
 - `scripts/discover_hldm_client.ps1` and `scripts/discover_hldm_client.bat` for honest local `hl.exe` discovery across explicit paths, environment variables, Steam roots, discoverable Steam library folders, registry hints, and legacy local installs.
 - `scripts/join_live_pair_lane.ps1` and `scripts/join_live_pair_lane.bat` for pair-aware or port-aware local client launch into the control or treatment lane with dry-run support.
@@ -1233,6 +1234,20 @@ powershell -NoProfile -File .\scripts\run_treatment_patch_completion_attempt.ps1
 - `treatment-phase-insufficient-human-signal` means the run did not preserve enough treatment-side human presence to answer the patch-completion question honestly
 - `treatment-phase-manual-review-required` means the third patch may have been captured, but the final strong-signal result still needs explicit review before it can be treated as a clean first capture
 - `responsive` still stays closed unless the saved evidence actually changes
+
+When the latest regressed full rerun looks one human sample short, audit that cutoff directly before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1
+powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1 -PairRoot .\lab\logs\eval\ssca53-live\<regressed-pair>
+```
+
+- this helper is narrower than `audit_treatment_dwell_and_patch_consistency.ps1`: the dwell audit explains why one run regressed against another, while this one asks whether the later run actually finalized treatment before the next expected human sample could land
+- `next expected human sample` means the next treatment-side human snapshot implied by the saved 20-second human-presence cadence in the lane timeline
+- `closeout-started-before-next-expected-human-sample` means the run started finalizing while treatment was still below target and the next sample was due soon enough that one bounded hold could plausibly change the dwell result
+- `closeout-started-while-safe_to_leave_false` means treatment still was not safe to leave, but the saved timing is not tight enough to prove a one-sample cutoff
+- the closeout guard is bounded on purpose: it only holds treatment open for one short grace window so the next expected sample can arrive, then it recomputes instead of silently loosening thresholds or leaving the lane open indefinitely
+- if a guarded rerun fixes treatment dwell but the third patch event is still missing, treat that as progress but not success; another conservative session is justified only if the remaining live gap is still exactly the missing patch event rather than another dwell cutoff
 
 When you want the whole first grounded conservative attempt plus automatic local joins, prefer:
 

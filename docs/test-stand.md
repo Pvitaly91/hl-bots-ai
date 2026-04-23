@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-66
+HLDM-JKBOTTI-AI-STAND-20260415-67
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -1208,6 +1208,20 @@ powershell -NoProfile -File .\scripts\run_treatment_patch_completion_attempt.ps1
 - a successful result means treatment becomes strong-signal-ready and the first strong-signal conservative evidence pack is finally captured
 - an unsuccessful result means either treatment still stayed short of the third patch event or the session lost enough human signal that the target could not be evaluated honestly
 - `responsive` still stays closed unless the saved pair really changes the counted strong-signal evidence state
+
+When the latest regressed full rerun looks one human sample short, audit the treatment closeout cutoff directly before another live spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1
+powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1 -PairRoot .\lab\logs\eval\ssca53-live\<regressed-pair>
+```
+
+- this helper is narrower than `audit_treatment_dwell_and_patch_consistency.ps1`: the dwell audit explains why one treatment run regressed against another, while this one asks whether the later run actually started closeout before the next expected human sample could land
+- `next expected human sample` means the next treatment-side human snapshot implied by the saved treatment human-presence cadence, normally the 20-second telemetry interval
+- `closeout-started-before-next-expected-human-sample` means treatment was still below target, `safe_to_leave_treatment` was false, and the next expected sample was imminent enough that one bounded hold could plausibly change the dwell result
+- `closeout-started-while-safe_to_leave_false` means treatment still was not safe to leave, but the timing is not tight enough to prove a one-sample cutoff
+- the closeout guard is intentionally bounded: it can hold the treatment lane open for one short grace window, wait for the next expected sample or lane end, then recompute without loosening any thresholds
+- if a guarded rerun fixes treatment dwell but the third human-present patch is still missing, treat that as real progress but still not as a strong-signal capture
 
 When the goal is the first client-assisted grounded conservative attempt instead of a one-lane manual join, prefer:
 

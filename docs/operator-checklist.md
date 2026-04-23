@@ -41,6 +41,7 @@ Use this checklist before spending a real human session on the control-vs-treatm
 - `scripts\audit_full_session_handoff.ps1` is available so a full strong-signal session that already proved control readiness can be audited specifically for the later control-ready -> treatment-join -> closeout chain
 - `scripts\audit_treatment_strong_signal_gap.ps1` is available so a valid grounded full rerun that still missed strong-signal capture can be audited specifically for treatment-side evidence shortfall vs wrapper drift
 - `scripts\audit_treatment_dwell_and_patch_consistency.ps1` is available so the latest better treatment run can be compared directly against the latest regressed treatment run before another live spend is justified
+- `scripts\audit_treatment_closeout_cutoff.ps1` is available so the latest regressed full rerun can be checked for the narrower case where treatment ended just before the next expected human sample while treatment was still unsafe to leave
 - `scripts\run_treatment_patch_completion_attempt.ps1` is available so the next justified conservative live spend can target the one remaining treatment-side patch event instead of rerunning a generic strong-signal wrapper blindly
 - `scripts\evaluate_latest_session_mission.ps1` is available so the post-run mission closeout can be generated after the session
 - `scripts\run_control_treatment_pair.ps1` is available
@@ -246,6 +247,13 @@ Default ports and lanes:
 99. Treat `real-treatment-dwell-regression` as the primary branch. It means the later run really ended treatment too soon to land the next human sample, so refresh-only cleanup is not enough and the next step remains treatment-hold hardening.
 100. Treat `derived-layer-patch-undercount-only` as the refresh-only branch. It means canonical treatment evidence stayed stable and only the secondary outputs need a safe rebuild.
 101. Another full strong-signal conservative session is justified only after this dwell/patch audit either isolates a safe secondary-only cleanup or explains the real treatment-hold regression clearly enough that a narrow operational fix is in place first.
+102. If the dwell/patch audit says the regression is real and looks only one human sample short, run `powershell -NoProfile -File .\scripts\audit_treatment_closeout_cutoff.ps1 -PairRoot <regressed-pair-root>` before another full spend.
+103. Read `treatment_closeout_cutoff_audit.json` / `.md` as the narrow answer to whether treatment finalized just before the next expected human sample. That helper reports the inferred sample cadence, the last observed human snapshot, the expected next human snapshot, when closeout started, and whether treatment was still unsafe to leave.
+104. Treat `next expected human sample` literally: it is the next treatment-side human snapshot implied by the saved cadence, usually the next 20-second human-presence sample in the treatment lane timeline.
+105. Treat `closeout-started-before-next-expected-human-sample` as the guarded-retry branch. It means treatment was still below target, `safe_to_leave_treatment` was false, and one bounded hold could plausibly let the next sample land.
+106. Treat `closeout-started-while-safe_to_leave_false` as weaker evidence. Treatment still was not safe to leave, but the timing does not prove that one more sample would have fixed the dwell target.
+107. The closeout guard is intentionally bounded. It may hold treatment open for one short grace window so the next expected sample can arrive and state can be recomputed, but it must not invent samples, loosen thresholds, or leave the lane open indefinitely.
+108. If a guarded rerun fixes treatment dwell but the third human-present patch event is still missing, record that as real progress but not as a strong-signal capture. Another conservative session is justified only if the remaining live gap is now exactly the missing patch event rather than another early cutoff.
 
 ## What Counts As Insufficient Data
 

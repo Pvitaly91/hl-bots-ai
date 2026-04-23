@@ -1357,6 +1357,24 @@ function Get-HumanAttemptMarkdown {
         "- First patch apply during human window timestamp: $($Report.treatment_patch_guidance.first_patch_apply_during_human_window_timestamp_utc)",
         "- Treatment-hold explanation: $($Report.treatment_patch_guidance.explanation)",
         "",
+        "## Treatment Closeout Guard",
+        "",
+        "- Guard enabled: $($Report.treatment_closeout_guard.guard_enabled)",
+        "- Guard armed: $($Report.treatment_closeout_guard.guard_armed)",
+        "- Guard fired: $($Report.treatment_closeout_guard.guard_fired)",
+        "- Guard armed at: $($Report.treatment_closeout_guard.guard_armed_at_utc)",
+        "- Sample cadence inferred seconds: $($Report.treatment_closeout_guard.sample_cadence_inferred_seconds)",
+        "- Last observed human snapshot: $($Report.treatment_closeout_guard.last_observed_human_snapshot_timestamp_utc)",
+        "- Expected next human snapshot: $($Report.treatment_closeout_guard.expected_next_human_snapshot_timestamp_utc)",
+        "- Expected next human snapshot at fire: $($Report.treatment_closeout_guard.expected_next_human_snapshot_at_fire_utc)",
+        "- Seconds until next expected sample at fire: $($Report.treatment_closeout_guard.seconds_until_next_expected_human_sample_at_fire)",
+        "- Grace window seconds: $($Report.treatment_closeout_guard.grace_window_seconds)",
+        "- Next sample arrived after guard: $($Report.treatment_closeout_guard.next_sample_arrived_after_guard)",
+        "- Next sample arrived at: $($Report.treatment_closeout_guard.next_sample_arrived_at_utc)",
+        "- Crossed human dwell target after guard: $($Report.treatment_closeout_guard.crossed_human_dwell_target_after_guard)",
+        "- Safe to leave treatment at release: $($Report.treatment_closeout_guard.safe_to_leave_treatment_at_release)",
+        "- Guard explanation: $($Report.treatment_closeout_guard.explanation)",
+        "",
         "## Evidence Result",
         "",
         "- Control lane verdict: $($Report.control_lane_verdict)",
@@ -1395,6 +1413,7 @@ function Get-HumanAttemptMarkdown {
         "- Sequential phase flow JSON: $($Report.artifacts.conservative_phase_flow_json)",
         "- Control-first switch JSON: $($Report.artifacts.control_to_treatment_switch_json)",
         "- Treatment patch window JSON: $($Report.artifacts.treatment_patch_window_json)",
+        "- Treatment closeout guard JSON: $($Report.artifacts.treatment_closeout_guard_json)",
         "- First grounded attempt JSON: $($Report.artifacts.first_grounded_conservative_attempt_json)",
         "- Pair summary JSON: $($Report.artifacts.pair_summary_json)",
         "- Grounded evidence certificate JSON: $($Report.artifacts.grounded_evidence_certificate_json)",
@@ -1938,6 +1957,10 @@ if (-not $treatmentPatchReport -and $treatmentPatchJsonPath) {
     $treatmentPatchReport = Read-JsonFile -Path $treatmentPatchJsonPath
     $treatmentPatchArtifacts = Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "artifacts" -Default $null
 }
+$treatmentLaneRootPath = Resolve-ExistingPath -Path ([string](Get-ObjectPropertyValue -Object $treatmentLane -Name "lane_root" -Default ""))
+$treatmentCloseoutGuardJsonPath = if ($treatmentLaneRootPath) { Resolve-ExistingPath -Path (Join-Path $treatmentLaneRootPath "closeout_guard.json") } else { "" }
+$treatmentCloseoutGuardMarkdownPath = if ($treatmentLaneRootPath) { Resolve-ExistingPath -Path (Join-Path $treatmentLaneRootPath "closeout_guard.md") } else { "" }
+$treatmentCloseoutGuardReport = if ($treatmentCloseoutGuardJsonPath) { Read-JsonFile -Path $treatmentCloseoutGuardJsonPath } else { $null }
 $phaseFlowJsonFallback = if ($pairRoot) { Join-Path $pairRoot "conservative_phase_flow.json" } else { "" }
 $phaseFlowMarkdownFallback = if ($pairRoot) { Join-Path $pairRoot "conservative_phase_flow.md" } else { "" }
 if (-not $phaseFlowReport -and $pairRoot) {
@@ -2124,6 +2147,23 @@ $report = [ordered]@{
         minimum_stay_seconds = $resolvedTreatmentStayMinimum
         poll_seconds = $TreatmentGatePollSeconds
     }
+    treatment_closeout_guard = [ordered]@{
+        guard_enabled = [bool](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "guard_enabled" -Default $false)
+        guard_armed = [bool](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "guard_armed" -Default $false)
+        guard_fired = [bool](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "guard_fired" -Default $false)
+        guard_armed_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "guard_armed_at_utc" -Default "")
+        sample_cadence_inferred_seconds = Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "sample_cadence_inferred_seconds" -Default $null
+        last_observed_human_snapshot_timestamp_utc = [string](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "last_observed_human_snapshot_timestamp_utc" -Default "")
+        expected_next_human_snapshot_timestamp_utc = [string](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "expected_next_human_snapshot_timestamp_utc" -Default "")
+        expected_next_human_snapshot_at_fire_utc = [string](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "expected_next_human_snapshot_at_fire_utc" -Default "")
+        seconds_until_next_expected_human_sample_at_fire = Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "seconds_until_next_expected_human_sample_at_fire" -Default $null
+        grace_window_seconds = [int](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "grace_window_seconds" -Default 0)
+        next_sample_arrived_after_guard = [bool](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "next_sample_arrived_after_guard" -Default $false)
+        next_sample_arrived_at_utc = [string](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "next_sample_arrived_at_utc" -Default "")
+        crossed_human_dwell_target_after_guard = [bool](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "crossed_human_dwell_target_after_guard" -Default $false)
+        safe_to_leave_treatment_at_release = [bool](Get-ObjectPropertyValue -Object $treatmentPatchReport -Name "treatment_safe_to_leave" -Default $false)
+        explanation = [string](Get-ObjectPropertyValue -Object $treatmentCloseoutGuardReport -Name "explanation" -Default "")
+    }
     control_lane_verdict = [string](Get-ObjectPropertyValue -Object $controlLane -Name "lane_verdict" -Default "")
     treatment_lane_verdict = [string](Get-ObjectPropertyValue -Object $treatmentLane -Name "lane_verdict" -Default "")
     pair_classification = [string](Get-ObjectPropertyValue -Object $pairSummary -Name "operator_note_classification" -Default "")
@@ -2166,6 +2206,8 @@ $report = [ordered]@{
         control_to_treatment_switch_markdown = $controlSwitchMarkdownPath
         treatment_patch_window_json = $treatmentPatchJsonPath
         treatment_patch_window_markdown = $treatmentPatchMarkdownPath
+        treatment_closeout_guard_json = $treatmentCloseoutGuardJsonPath
+        treatment_closeout_guard_markdown = $treatmentCloseoutGuardMarkdownPath
         first_grounded_conservative_attempt_json = $firstAttemptJsonPath
         first_grounded_conservative_attempt_markdown = $firstAttemptMarkdownPath
         pair_summary_json = $pairSummaryPath
