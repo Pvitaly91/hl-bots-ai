@@ -130,7 +130,7 @@ Run the network exposure preflight before asking the tester to spend time:
 powershell -NoProfile -File .\scripts\preflight_public_network_exposure.ps1 -Port 27015 -AdvertisedAddress <public-or-lan-address> -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
 ```
 
-This writes `public_network_exposure_preflight.json` / `.md`. Check `matching_firewall_allow_rule_exists`, local public status/RCON evidence, LAN IP candidates, and the NAT/router caveat. If no firewall allow rule is present, review the dry-run plan:
+This writes `public_network_exposure_preflight.json` / `.md`. Check `readiness_classification`, `matching_firewall_allow_rule_exists`, local public status/RCON evidence, LAN IP candidates, and the NAT/router caveat. `ready-for-external-test` means local server/RCON/UDP/firewall prerequisites are present, `ready-with-warnings` means the live server is locally usable but something like firewall verification is still unproven, and `blocked` means the local public server path itself is not ready. If no firewall allow rule is present, review the dry-run plan:
 
 ```powershell
 powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015
@@ -144,6 +144,8 @@ Explicit dry-run and elevated apply examples:
 powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -DryRun
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -HldsExePath D:\DEV\CPP\HL-Bots\lab\hlds\hlds.exe -RuleName "HLDM Public Crossfire UDP 27015" -Apply
 ```
+
+`firewall-apply-blocked-not-elevated` means `-Apply` was requested from a non-elevated shell and no firewall change was made. Open PowerShell as Administrator and rerun the printed command if you intend to create or update the narrow UDP rule.
 
 Prepare the external tester package:
 
@@ -184,6 +186,7 @@ Current local status on `main`:
 - the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
 - the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
+- the prompt-79 elevation gate still found a non-elevated shell, so firewall apply remains blocked locally unless an Administrator shell runs the printed narrow UDP rule command
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.

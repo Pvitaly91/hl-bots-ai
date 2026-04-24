@@ -272,6 +272,7 @@ function Get-Markdown {
         "- Generated at UTC: $($Report.generated_at_utc)",
         "- Prompt ID: $($Report.prompt_id)",
         "- Verdict: $($Report.verdict)",
+        "- Readiness classification: $($Report.readiness_classification)",
         "- Explanation: $($Report.explanation)",
         "- Port: $($Report.port)",
         "- Protocol: $($Report.protocol)",
@@ -417,6 +418,14 @@ elseif (-not $localAuthoritativeStatusUsable -and [bool]$firewall.matching_allow
     $explanation = "A matching firewall allow rule appears present, but local public server status/RCON was not confirmed."
 }
 
+$readinessClassification = "blocked"
+if ($localAuthoritativeStatusUsable -and $udpListenerObserved -and [bool]$firewall.matching_allow_rule_exists -and -not [string]::IsNullOrWhiteSpace($AdvertisedAddress)) {
+    $readinessClassification = "ready-for-external-test"
+}
+elseif ($localAuthoritativeStatusUsable -and $udpListenerObserved) {
+    $readinessClassification = "ready-with-warnings"
+}
+
 $jsonPath = Join-Path $resolvedOutputRoot "public_network_exposure_preflight.json"
 $markdownPath = Join-Path $resolvedOutputRoot "public_network_exposure_preflight.md"
 $report = [ordered]@{
@@ -425,6 +434,7 @@ $report = [ordered]@{
     generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     source_commit_sha = Get-RepoHeadCommitSha
     verdict = $verdict
+    readiness_classification = $readinessClassification
     explanation = $explanation
     port = $Port
     protocol = "UDP"
@@ -470,5 +480,6 @@ Write-TextFile -Path $markdownPath -Value (Get-Markdown -Report $markdownReport)
 
 Write-Host "Public network exposure preflight:"
 Write-Host "  Verdict: $verdict"
+Write-Host "  Readiness: $readinessClassification"
 Write-Host "  JSON: $jsonPath"
 Write-Host "  Markdown: $markdownPath"

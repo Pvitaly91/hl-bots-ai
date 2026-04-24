@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-78
+HLDM-JKBOTTI-AI-STAND-20260415-79
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -354,7 +354,7 @@ Run the network exposure preflight before tester handoff:
 scripts\preflight_public_network_exposure.bat -Port 27015 -AdvertisedAddress <public-or-lan-address> -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
 ```
 
-It writes `public_network_exposure_preflight.json` and `.md`. It checks the selected UDP port, visible `hlds.exe` process, local public status/RCON evidence, UDP listener evidence when available, LAN IP candidates, relevant Windows Firewall rules, whether a matching enabled inbound allow rule exists, and the limits of same-machine testing. It never claims Internet reachability unless an actual external check proves it.
+It writes `public_network_exposure_preflight.json` and `.md`. It checks the selected UDP port, visible `hlds.exe` process, local public status/RCON evidence, UDP listener evidence when available, LAN IP candidates, relevant Windows Firewall rules, whether a matching enabled inbound allow rule exists, and the limits of same-machine testing. It also reports `readiness_classification`: `ready-for-external-test` means local server/RCON/UDP/firewall prerequisites are present, `ready-with-warnings` means the live server is locally usable but at least one exposure prerequisite is unverified, and `blocked` means the local public server path itself is not ready. It never claims Internet reachability unless an actual external check proves it.
 
 Use the firewall helper in dry-run mode first:
 
@@ -370,6 +370,8 @@ Explicit dry-run and elevated apply examples:
 scripts\configure_public_hlds_firewall.bat -Port 27015 -DryRun
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -HldsExePath D:\DEV\CPP\HL-Bots\lab\hlds\hlds.exe -RuleName "HLDM Public Crossfire UDP 27015" -Apply
 ```
+
+`firewall-apply-blocked-not-elevated` means `-Apply` was requested from a non-elevated shell and no firewall change was made. Open PowerShell as Administrator and rerun the printed command if you intend to create or update the narrow UDP rule.
 
 Prepare a tester handoff package:
 
@@ -472,6 +474,7 @@ Current local status on `main`:
 - the prompt-76 external watcher confirmed `bots-active-empty-server` on `crossfire` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
 - the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
+- the prompt-79 elevation gate still found a non-elevated shell, so firewall apply remains blocked locally unless an Administrator shell runs the printed narrow UDP rule command
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
