@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-74
+HLDM-JKBOTTI-AI-STAND-20260415-75
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -62,6 +62,9 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/diagnose_public_client_admission.ps1` and `scripts/diagnose_public_client_admission.bat` for the narrow public admission diagnosis that separates Steam-launch failure, client-start-without-admission, pre-connect Steam failure, server-connect-without-entered-game, and real admitted-human outcomes.
 - `scripts/compare_public_admission_paths.ps1` and `scripts/compare_public_admission_paths.bat` for the side-by-side comparison of Steam app launch, Steam URI, and direct `hl.exe` public admission paths against one live public server.
 - `scripts/run_public_steam_admission_drill.ps1` and `scripts/run_public_steam_admission_drill.bat` for the consolidated prompt-74 Steam/public admission drill that reuses the Steam environment audit and path comparison, then classifies the remaining machine-local blocker.
+- `scripts/preflight_public_steam_session.ps1` and `scripts/preflight_public_steam_session.bat` for prompt-75 Steam session readiness checks before spending public admission attempts.
+- `scripts/test_public_hldm_launch_variants.ps1` and `scripts/test_public_hldm_launch_variants.bat` for bounded concrete public client launch-variant tests, including Steam app launch, Steam connect URI, Steam run URI, and direct `hl.exe`.
+- `scripts/print_public_external_validation_plan.ps1` and `scripts/print_public_external_validation_plan.bat` for an operator-facing external real-client validation plan when local Steam admission remains blocked.
 - `scripts/audit_steam_public_admission.ps1` and `scripts/audit_steam_public_admission.bat` for the Steam-backed admission-stage audit that narrows failures to steam path resolution, launch, client materialization, CM admission, server connect, or entered-the-game.
 - `scripts/validate_public_human_trigger.ps1` and `scripts/validate_public_human_trigger.bat` for the product-minimum public-mode validation pass that starts or attaches to the public `crossfire` server, observes the authoritative public policy state transitions, and records whether a local human actually triggered bot removal and later repopulation.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -308,6 +311,30 @@ The drill writes:
 
 Read `machine_local_blocker_classification` first. `steam-session-not-ready` points at local Steam/Half-Life session state. `steam-app-launch-path-broken` means Steam accepted a launch attempt but no `hl.exe` materialized. `hl-client-launches-but-public-admission-never-starts` means `hl.exe` appeared locally but HLDS never saw a non-BOT connect. `public-admission-blocked-before-server-connect` means Steam/public admission evidence failed before server connect. `server-connect-seen-but-entered-game-not-seen` means the blocker moved later than raw server connect. `public-admission-working` is the only verdict that proves enough server-side human admission to spend a full public human-trigger rerun immediately.
 
+Run the Steam session preflight before spending more public admission attempts:
+
+```bat
+scripts\preflight_public_steam_session.bat -ServerPort 27015
+```
+
+It writes `public_steam_session_preflight.json` and `.md`. `steam-session-blocked-cm-failure` means Steam and Half-Life are discoverable, but Steam logs still show CM/no-connection evidence that can block public admission before HLDS ever sees a human. `steam-session-blocked-app-missing` means app 70 is not fully present locally. `steam-session-ready-with-warnings` means the prerequisites mostly exist, but the helper did not see a clean online/session signal.
+
+Test concrete launch variants against a live public server like this:
+
+```bat
+scripts\test_public_hldm_launch_variants.bat -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+It writes `public_hldm_launch_variants.json` and `.md`, comparing `steam-native-applaunch`, `steam-connect-uri`, `steam-run-connect-uri`, and `direct-hl-exe-connect`. `steam-app-launch-path-broken` means all available Steam-backed variants issued a launch but no new `hl.exe` appeared. `hl-client-launches-but-public-admission-never-starts` means a local client process appeared, but no server-side non-BOT connect followed.
+
+If local Steam/client admission remains blocked, print the external validation plan:
+
+```bat
+scripts\print_public_external_validation_plan.bat -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+It writes `public_external_validation_plan.json` and `.md` with the server target, expected public status states, server-log evidence to watch, bot disconnect/repopulate checks, and artifacts to save from a real external Half-Life client.
+
 Audit one Steam-backed public admission failure like this:
 
 ```bat
@@ -360,13 +387,14 @@ The full public human-trigger validation is complete only when one validator run
 
 `blocked-before-server-admission` means the local client launch path never crossed the authoritative server-side human boundary. If the environment audit ends `steam-environment-blocked-before-admission` and the best Steam-backed comparison path still fails before server connect, the remaining blocker is likely external to repo-side public server logic on that machine.
 
-Treat the public bot policy as done for product-minimum purposes when empty-server public mode is working, advanced AI remains off by default, and the drill still stops before a non-BOT server connect. A full `validate_public_human_trigger.ps1` rerun is justified when the drill returns `public-admission-working`, or when `server-connect-seen-but-entered-game-not-seen` gives you a fresh reason to spend a longer validator window. It is not justified for `steam-session-not-ready`, `steam-app-launch-path-broken`, `hl-client-launches-but-public-admission-never-starts`, or `public-admission-blocked-before-server-connect` until the local blocker changes.
+Treat the public bot policy as done for product-minimum purposes when empty-server public mode is working, advanced AI remains off by default, and the drill or launch-variant helper still stops before a non-BOT server connect. A full `validate_public_human_trigger.ps1` rerun is justified when the drill or variant report returns `public-admission-working`, or when `server-connect-seen-but-entered-game-not-seen` gives you a fresh reason to spend a longer validator window. It is not justified for `steam-session-blocked-cm-failure`, `steam-session-not-ready`, `steam-app-launch-path-broken`, `hl-client-launches-but-public-admission-never-starts`, or `public-admission-blocked-before-server-connect` until the local blocker changes.
 
 Current local status on `main`:
 
 - empty-server public mode is working on `crossfire`
 - advanced AI balance remains off by default
-- the prompt-74 drill is the current machine-local public admission classifier
+- the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
+- the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.

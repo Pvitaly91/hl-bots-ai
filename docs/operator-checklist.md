@@ -92,6 +92,30 @@ powershell -NoProfile -File .\scripts\run_public_steam_admission_drill.ps1 -Serv
 
 It compares `steam-native-applaunch`, `steam-connect-uri`, and `direct-hl-exe-connect`, then writes `public_steam_admission_drill.json` / `.md`. Use `machine_local_blocker_classification` as the next-action gate: before-connect verdicts are local Steam/public admission blockers, `server-connect-seen-but-entered-game-not-seen` is a later admission blocker, and `public-admission-working` justifies the full public human-trigger validator.
 
+Run Steam session preflight before another local admission spend:
+
+```powershell
+powershell -NoProfile -File .\scripts\preflight_public_steam_session.ps1 -ServerPort 27015
+```
+
+`steam-session-blocked-cm-failure` means Steam/Half-Life are present but Steam CM or no-connection evidence is still blocking local public admission. `steam-session-blocked-app-missing` means app 70 or `hl.exe` is missing. `steam-session-ready-with-warnings` means the helper could not prove a clean online Steam session.
+
+Run concrete launch variants against the live public server:
+
+```powershell
+powershell -NoProfile -File .\scripts\test_public_hldm_launch_variants.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+This compares `steam-native-applaunch`, `steam-connect-uri`, `steam-run-connect-uri`, and `direct-hl-exe-connect`. `steam-app-launch-path-broken` means the Steam-backed commands were issued but did not materialize `hl.exe`; `hl-client-launches-but-public-admission-never-starts` means `hl.exe` appeared but HLDS still saw no non-BOT connect.
+
+If local admission remains blocked, print the external-client fallback plan:
+
+```powershell
+powershell -NoProfile -File .\scripts\print_public_external_validation_plan.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+Use that plan to validate with a real external Half-Life client by watching `public_server_status.json`, the server log, bot disconnect while a human remains, and bot repopulation after the human leaves.
+
 `steam-admission-failed-before-server-connect` means the Steam-backed path failed before HLDS ever counted a real human. `server-connect-seen-no-entered-game` means HLDS saw the human connect but the run still never crossed the entered-the-game boundary.
 
 `blocked-before-server-admission` means the local client launch path never crossed the authoritative server-side human boundary at all. If the environment audit says `steam-environment-blocked-before-admission` and the comparison helper still shows CM reconnect failure before any non-BOT `connected` event, more repo-side server changes are not justified until the machine-local Steam admission problem changes.
@@ -100,13 +124,14 @@ If the validator says the public human-trigger path is still blocked before serv
 
 Treat the public human-trigger validation as complete only when one validator run shows a real authoritative human admission, `bots-disconnected-humans-present`, and later `bots-repopulated-empty-server`.
 
-Treat the public bot policy as done for product-minimum purposes when empty-server public mode works, advanced AI stays disabled by default, and the drill still fails before non-BOT server connect. Rerun the full validator only after `public-admission-working`, or after `server-connect-seen-but-entered-game-not-seen` if you need to spend a longer run on the later boundary.
+Treat the public bot policy as done for product-minimum purposes when empty-server public mode works, advanced AI stays disabled by default, and the drill or launch-variant helper still fails before non-BOT server connect. Rerun the full validator only after `public-admission-working`, or after `server-connect-seen-but-entered-game-not-seen` if you need to spend a longer run on the later boundary.
 
 Current local status on `main`:
 
 - empty-server public mode is working on `crossfire`
 - advanced AI balance remains off by default
-- the prompt-74 drill is the current machine-local public admission classifier
+- the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
+- the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
