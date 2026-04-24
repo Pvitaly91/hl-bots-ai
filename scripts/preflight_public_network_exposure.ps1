@@ -442,6 +442,9 @@ $report = [ordered]@{
     advertised_address = $AdvertisedAddress
     external_join_target = $externalJoinTarget
     external_connect_command = "connect $externalJoinTarget"
+    lan_join_target = [string]$joinInfo.LanAddress
+    lan_connect_command = [string]$joinInfo.LanConsoleCommand
+    loopback_join_target = [string]$joinInfo.LoopbackAddress
     hlds_exe_path = $resolvedHldsExePath
     lab_root = $resolvedLabRoot
     output_root = $resolvedOutputRoot
@@ -452,14 +455,17 @@ $report = [ordered]@{
     hlds_processes = @($hldsProcesses)
     matching_hlds_processes = @($matchingHldsProcesses)
     udp_listener_observed_locally = $udpListenerObserved
+    udp_listener_evidence = @($udpEndpoints)
     udp_endpoints = @($udpEndpoints)
     local_authoritative_status_usable = $localAuthoritativeStatusUsable
+    local_rcon_status_result = if ($localAuthoritativeStatusUsable) { "success" } elseif ($statusReportsRconSuccess) { "partial" } else { "not-confirmed" }
     status_artifact_reports_rcon_success = $statusReportsRconSuccess
     status_artifact_reports_server_ready = $serverReady
     local_ipv4_addresses = @($localAddresses)
     firewall_profiles = @($firewallProfiles)
     firewall = $firewall
     internet_reachability_proven = $false
+    nat_router_isp_caveat = "Local checks cannot prove router NAT/port forwarding, ISP inbound UDP filtering, or real Internet reachability without an external client."
     cannot_be_proven_locally = @(
         "Router/NAT port forwarding",
         "ISP inbound UDP filtering",

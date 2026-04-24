@@ -91,10 +91,14 @@ function Get-PackageMarkdown {
         "- Generated at UTC: $($Package.generated_at_utc)",
         "- Prompt ID: $($Package.prompt_id)",
         "- Server target: $($Package.external_join_target)",
+        "- LAN join target: $($Package.lan_join_target)",
+        "- External/public placeholder target: $($Package.external_public_placeholder_target)",
         "- Map: $($Package.map)",
         "- Port: $($Package.port)",
         "- Expected tester name: $($Package.expected_external_tester_name)",
         "- Client command: $($Package.client_console_command)",
+        "- LAN command: $($Package.lan_client_console_command)",
+        "- External/public placeholder command: $($Package.external_public_placeholder_command)",
         "- Steam URI: $($Package.steam_connect_uri)",
         "- Human hold seconds: $($Package.human_hold_seconds)",
         "- Public status JSON: $($Package.public_server_status_json_path)",
@@ -137,6 +141,8 @@ function Get-JoinStepsText {
         "External Half-Life tester join steps",
         "",
         "Server: $($Package.external_join_target)",
+        "LAN command: $($Package.lan_client_console_command)",
+        "External/public placeholder command: $($Package.external_public_placeholder_command)",
         "Map: $($Package.map)",
         "Command: $($Package.client_console_command)",
         "",
@@ -203,6 +209,10 @@ $package = [ordered]@{
     advertised_address = $AdvertisedAddress
     external_join_target = $externalJoinTarget
     client_console_command = "connect $externalJoinTarget"
+    lan_join_target = [string]$joinInfo.LanAddress
+    lan_client_console_command = if ([string]::IsNullOrWhiteSpace([string]$joinInfo.LanAddress)) { "" } else { "connect $($joinInfo.LanAddress)" }
+    external_public_placeholder_target = "<PUBLIC_IP>:$Port"
+    external_public_placeholder_command = "connect <PUBLIC_IP>:$Port"
     steam_connect_uri = "steam://connect/$externalJoinTarget"
     expected_external_tester_name = $ExpectedExternalTesterName
     wait_for_human_seconds = $WaitForHumanSeconds
@@ -216,7 +226,9 @@ $package = [ordered]@{
     validation_output_root = $resolvedValidationOutputRoot
     tester_steps = @(
         "Start a real external Half-Life Deathmatch client from a different machine or network.",
-        "Open the client console and run: connect $externalJoinTarget",
+        "If the tester is on the same LAN, use: connect $($joinInfo.LanAddress)",
+        "If the tester is outside the network, replace the placeholder and use: connect <PUBLIC_IP>:$Port",
+        "Otherwise open the client console and run: connect $externalJoinTarget",
         "Stay connected for at least $HumanHoldSeconds seconds after entering the game.",
         "Wait for the operator to confirm bots disconnected before leaving.",
         "Leave when the operator asks so bot repopulation can be checked.",

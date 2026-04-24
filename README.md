@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-80
+HLDM-JKBOTTI-AI-STAND-20260415-84
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -476,6 +476,7 @@ Current local status on `main`:
 - the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
 - the prompt-79 elevation gate still found a non-elevated shell, so firewall apply remains blocked locally unless an Administrator shell runs the printed narrow UDP rule command
 - the prompt-80 elevation gate again found a non-elevated shell, so the firewall helper recorded `firewall-apply-blocked-not-elevated`; public network preflight and the external watcher should be rerun after the printed Administrator command is applied
+- the prompt-84 public rerun stayed on `crossfire` / `27044` with 0 humans, 4 bots, `policy_state = bots-active-empty-server`, and advanced AI off; the manually added `HLDM Public Crossfire UDP 27044` rule exists outside this non-elevated shell, the repo helper still reported `firewall-check-not-verified-not-elevated`, network exposure classified `ready-with-warnings` on LAN target `192.168.0.102:27044` with the standard NAT/router/ISP caveat, the tester package now spells out both `connect 192.168.0.102:27044` and `connect <PUBLIC_IP>:27044`, and the watcher again honestly reported `external-human-admission-not-observed`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
