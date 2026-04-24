@@ -136,7 +136,14 @@ This writes `public_network_exposure_preflight.json` / `.md`. Check `matching_fi
 powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015
 ```
 
-Only use `-Apply` from an elevated shell when you intentionally want to create the inbound UDP rule. The helper does not delete existing rules.
+This writes `public_hlds_firewall_check.json` / `.md`. If the shell is not elevated, treat the firewall verdict as unverified and run the printed elevated command only when you intend to create or update the narrow inbound UDP rule. The helper does not delete existing rules or make broad firewall changes.
+
+Explicit dry-run and elevated apply examples:
+
+```powershell
+powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -HldsExePath D:\DEV\CPP\HL-Bots\lab\hlds\hlds.exe -RuleName "HLDM Public Crossfire UDP 27015" -Apply
+```
 
 Prepare the external tester package:
 
@@ -176,6 +183,7 @@ Current local status on `main`:
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
+- the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.

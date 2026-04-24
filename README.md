@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-77
+HLDM-JKBOTTI-AI-STAND-20260415-78
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -362,7 +362,14 @@ Use the firewall helper in dry-run mode first:
 scripts\configure_public_hlds_firewall.bat -Port 27015
 ```
 
-It writes `public_hlds_firewall_rule.json` and `.md` with the proposed rule name and command. It does not create or delete firewall rules unless `-Apply` is explicitly supplied from an elevated shell.
+It writes `public_hlds_firewall_check.json` and `.md`, plus legacy `public_hlds_firewall_rule.json` / `.md` aliases. If the shell is not elevated, the verdict is not treated as verified and the helper prints the exact elevated command to run. It does not create, delete, or broaden firewall rules unless `-Apply` is explicitly supplied from an elevated shell.
+
+Explicit dry-run and elevated apply examples:
+
+```bat
+scripts\configure_public_hlds_firewall.bat -Port 27015 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -HldsExePath D:\DEV\CPP\HL-Bots\lab\hlds\hlds.exe -RuleName "HLDM Public Crossfire UDP 27015" -Apply
+```
 
 Prepare a tester handoff package:
 
@@ -464,6 +471,7 @@ Current local status on `main`:
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-76 external watcher confirmed `bots-active-empty-server` on `crossfire` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
+- the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.

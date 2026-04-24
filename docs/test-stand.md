@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-77
+HLDM-JKBOTTI-AI-STAND-20260415-78
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -265,7 +265,14 @@ Review the firewall plan in dry-run mode:
 powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015
 ```
 
-This writes `public_hlds_firewall_rule.json` / `.md` and prints the proposed rule name. It is print-only by default. Use `-Apply` only from an elevated shell when you intentionally want to create the inbound UDP allow rule. The helper does not delete existing firewall rules or make unrelated firewall changes.
+This writes `public_hlds_firewall_check.json` / `.md` and keeps `public_hlds_firewall_rule.json` / `.md` as compatibility aliases. It is print-only by default. If the shell is not elevated, the helper reports that firewall verification is blocked and prints the exact elevated command for the narrow UDP rule. Use `-Apply` only from an elevated shell when you intentionally want to create or update that inbound UDP allow rule. The helper does not delete existing firewall rules or make unrelated firewall changes.
+
+Explicit dry-run and elevated apply examples:
+
+```powershell
+powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015 -HldsExePath D:\DEV\CPP\HL-Bots\lab\hlds\hlds.exe -RuleName "HLDM Public Crossfire UDP 27015" -Apply
+```
 
 Prepare the external tester handoff package:
 
@@ -381,6 +388,7 @@ Current local status on `main`:
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
+- the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
