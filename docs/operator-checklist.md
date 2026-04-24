@@ -116,6 +116,26 @@ powershell -NoProfile -File .\scripts\print_public_external_validation_plan.ps1 
 
 Use that plan to validate with a real external Half-Life client by watching `public_server_status.json`, the server log, bot disconnect while a human remains, and bot repopulation after the human leaves.
 
+Run the external access preflight before sharing the join target:
+
+```powershell
+powershell -NoProfile -File .\scripts\preflight_public_external_access.ps1 -Port 27015 -AdvertisedAddress <public-or-lan-address>
+```
+
+This writes `public_external_access_preflight.json` / `.md` and reports visible `hlds.exe` state, local UDP listener evidence, local/LAN addresses, public status/RCON freshness, and NAT/firewall warnings. It is a local readiness check only; it cannot prove that a router, ISP, or remote network will pass inbound UDP.
+
+Run the external human-trigger watcher when another real client is ready:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_public_external_human_trigger_validation.ps1 -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+It starts public mode unless `-AttachToExistingServer` is supplied, writes `public_external_join_instructions.txt` / `.md` / `.json`, then watches authoritative GoldSrc `status` over RCON through `public_server_status.json`.
+
+Share the join instruction artifact with the tester. They should run `connect <address>:<port>`, stay connected through the hold window, leave when asked, and report client-side errors. The server-side validation artifact should show these states when the product-minimum path works: `bots-active-empty-server`, `waiting-external-human`, `external-human-admitted`, `bots-disconnected-humans-present`, `humans-hold-bots-out`, `waiting-empty-server-repopulate`, and `bots-repopulated-empty-server`.
+
+The external validation verdict is honest by construction: `external-human-trigger-validated` requires a real non-BOT human in authoritative status plus bot disconnect and later repopulation. `external-human-admission-not-observed` means no external client reached server status during the wait. `public-server-not-reachable-locally` means local public status/RCON was not usable. Local Steam admission remains a separate diagnostic path; a local Steam CM failure does not invalidate the public bot policy.
+
 `steam-admission-failed-before-server-connect` means the Steam-backed path failed before HLDS ever counted a real human. `server-connect-seen-no-entered-game` means HLDS saw the human connect but the run still never crossed the entered-the-game boundary.
 
 `blocked-before-server-admission` means the local client launch path never crossed the authoritative server-side human boundary at all. If the environment audit says `steam-environment-blocked-before-admission` and the comparison helper still shows CM reconnect failure before any non-BOT `connected` event, more repo-side server changes are not justified until the machine-local Steam admission problem changes.
@@ -132,6 +152,7 @@ Current local status on `main`:
 - advanced AI balance remains off by default
 - the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
+- the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.

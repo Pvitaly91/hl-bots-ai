@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-75
+HLDM-JKBOTTI-AI-STAND-20260415-76
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -233,6 +233,51 @@ It writes:
 
 The plan lists the join target, expected `public_server_status.json` state transitions, server-log evidence, bot disconnect and repopulate checks, and artifacts to save when validating with a real external Half-Life client.
 
+Before involving the external tester, run the local external-access preflight:
+
+```powershell
+powershell -NoProfile -File .\scripts\preflight_public_external_access.ps1 -Port 27015 -AdvertisedAddress <public-or-lan-address>
+```
+
+It writes:
+
+- `public_external_access_preflight.json`
+- `public_external_access_preflight.md`
+
+The preflight reports the selected port, advertised address, local/LAN addresses, visible `hlds.exe` processes, local UDP listener evidence when Windows exposes it, public status/RCON freshness from `public_server_status.json`, and firewall/NAT warnings. It cannot prove Internet-side UDP reachability from inside the server machine.
+
+Run the external real-client human-trigger validation like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_public_external_human_trigger_validation.ps1 -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+By default this starts public mode, writes join instructions, watches authoritative status, and stops the lab server it started. Use `-AttachToExistingServer` when a public runner is already active. It writes:
+
+- `public_external_human_trigger_validation.json`
+- `public_external_human_trigger_validation.md`
+- `public_external_join_instructions.txt`
+- `public_external_join_instructions.md`
+- `public_external_join_instructions.json`
+
+Share the join instruction file with the external tester. The expected client command is `connect <address>:<port>`. The tester should join from a real external Half-Life client, stay connected through the hold window, leave when asked, and report any client-side errors.
+
+The external validation lifecycle states are:
+
+- `bots-active-empty-server`: authoritative status shows no humans and the configured bot pool is active
+- `waiting-external-human`: the watcher is waiting for a non-BOT player in server status
+- `external-human-admitted`: GoldSrc status over RCON shows at least one real human
+- `bots-disconnected-humans-present`: public mode commanded bot target `0` and bots are gone while a human remains
+- `humans-hold-bots-out`: the human stayed through the hold window and bots stayed out
+- `waiting-empty-server-repopulate`: the human left and the watcher is waiting for the bounded empty-server repopulate path
+- `bots-repopulated-empty-server`: no humans remain and the configured bot pool returned
+- `validation-timeout`: local public status/RCON did not become usable in time
+- `validation-blocked-no-external-admission`: no real external human reached authoritative status
+
+The final verdict is `external-human-trigger-validated` only when a real non-BOT human is observed by authoritative server status, bots disconnect while the human remains, and bots repopulate after the server becomes empty again. `external-human-admission-not-observed` means no external client reached the server during the wait. `bots-failed-to-disconnect-on-human` and `bots-failed-to-repopulate-after-empty` are server-side policy failures worth investigating. `public-server-not-reachable-locally` means the local public runner/status path was not ready enough to validate anything.
+
+Local Steam admission diagnostics remain separate from external validation. A local `steam-session-blocked-cm-failure`, `steam-app-launch-path-broken`, or `hl-client-launches-but-public-admission-never-starts` verdict does not by itself justify changing the public bot policy. Use the external runner once another real client or environment can reach the server.
+
 Audit one Steam-backed public admission failure like this:
 
 ```powershell
@@ -299,6 +344,7 @@ Current local status on `main`:
 - advanced AI balance remains off by default
 - the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
+- the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.

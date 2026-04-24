@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-75
+HLDM-JKBOTTI-AI-STAND-20260415-76
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -65,6 +65,8 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/preflight_public_steam_session.ps1` and `scripts/preflight_public_steam_session.bat` for prompt-75 Steam session readiness checks before spending public admission attempts.
 - `scripts/test_public_hldm_launch_variants.ps1` and `scripts/test_public_hldm_launch_variants.bat` for bounded concrete public client launch-variant tests, including Steam app launch, Steam connect URI, Steam run URI, and direct `hl.exe`.
 - `scripts/print_public_external_validation_plan.ps1` and `scripts/print_public_external_validation_plan.bat` for an operator-facing external real-client validation plan when local Steam admission remains blocked.
+- `scripts/preflight_public_external_access.ps1` and `scripts/preflight_public_external_access.bat` for local public-server reachability checks before involving an external tester.
+- `scripts/run_public_external_human_trigger_validation.ps1` and `scripts/run_public_external_human_trigger_validation.bat` for the external real-client human-trigger watcher that starts or attaches to public mode, writes join instructions, and reports whether bots disconnect and repopulate from authoritative status.
 - `scripts/audit_steam_public_admission.ps1` and `scripts/audit_steam_public_admission.bat` for the Steam-backed admission-stage audit that narrows failures to steam path resolution, launch, client materialization, CM admission, server connect, or entered-the-game.
 - `scripts/validate_public_human_trigger.ps1` and `scripts/validate_public_human_trigger.bat` for the product-minimum public-mode validation pass that starts or attaches to the public `crossfire` server, observes the authoritative public policy state transitions, and records whether a local human actually triggered bot removal and later repopulation.
 - `scripts/evaluate_latest_session_mission.ps1` and `scripts/evaluate_latest_session_mission.bat` for the post-run mission-attainment closeout that compares the saved mission brief against the actual captured evidence and says whether the session achieved its stated purpose.
@@ -335,6 +337,44 @@ scripts\print_public_external_validation_plan.bat -ServerAddress 127.0.0.1 -Serv
 
 It writes `public_external_validation_plan.json` and `.md` with the server target, expected public status states, server-log evidence to watch, bot disconnect/repopulate checks, and artifacts to save from a real external Half-Life client.
 
+Preflight external access before asking another client to join:
+
+```bat
+scripts\preflight_public_external_access.bat -Port 27015 -AdvertisedAddress <public-or-lan-address>
+```
+
+It writes `public_external_access_preflight.json` and `.md`. The helper reports the selected local address and port, LAN addresses, any visible `hlds.exe` process, local UDP listener evidence, public status/RCON freshness when `public_server_status.json` is available, and a NAT/firewall warning. It cannot prove Internet-side UDP reachability from inside the server machine.
+
+Run the external real-client human-trigger watcher like this:
+
+```bat
+scripts\run_public_external_human_trigger_validation.bat -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -SkipSteamCmdUpdate -SkipMetamodDownload
+```
+
+The watcher starts public mode unless `-AttachToExistingServer` is supplied. It writes:
+
+- `public_external_human_trigger_validation.json`
+- `public_external_human_trigger_validation.md`
+- `public_external_join_instructions.txt`
+- `public_external_join_instructions.md`
+- `public_external_join_instructions.json`
+
+Share the join instruction file with the external tester. The client command is `connect <address>:<port>`. The tester should join, stay connected through the hold window, leave when asked, and report any client-side error text.
+
+The external watcher uses the same source of truth as public mode: GoldSrc `status` over RCON, surfaced through `public_server_status.json`. It records these lifecycle states when evidence exists:
+
+- `bots-active-empty-server`
+- `waiting-external-human`
+- `external-human-admitted`
+- `bots-disconnected-humans-present`
+- `humans-hold-bots-out`
+- `waiting-empty-server-repopulate`
+- `bots-repopulated-empty-server`
+- `validation-timeout`
+- `validation-blocked-no-external-admission`
+
+The verdict is `external-human-trigger-validated` only after a real non-BOT human is observed by authoritative server status, bots are removed while the human remains, and bots return after the server becomes empty. `external-human-admission-not-observed` means the watcher ran but no external human reached authoritative server status. `public-server-not-reachable-locally` means local public status/RCON was not available enough to validate anything. Local Steam admission remains a separate machine-local diagnostic path; do not treat local Steam CM failure as evidence against the public bot policy.
+
 Audit one Steam-backed public admission failure like this:
 
 ```bat
@@ -395,6 +435,7 @@ Current local status on `main`:
 - advanced AI balance remains off by default
 - the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
+- the prompt-76 external watcher confirmed `bots-active-empty-server` on `crossfire` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.
