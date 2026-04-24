@@ -9,6 +9,7 @@ param(
     [switch]$SkipMetamodDownload,
     [string]$ServerAddress = "127.0.0.1",
     [string]$AdvertisedAddress = "",
+    [string]$ExpectedExternalTesterName = "",
     [int]$WaitForHumanSeconds = 180,
     [int]$HumanHoldSeconds = 30,
     [int]$WaitForEmptySeconds = 120,
@@ -212,6 +213,7 @@ function Get-JoinInstructionText {
         "",
         "Server: $($Instructions.external_join_target)",
         "Map: $($Instructions.map)",
+        "Expected tester name: $($Instructions.expected_external_tester_name)",
         "Console command: $($Instructions.client_console_command)",
         "Steam URI: $($Instructions.steam_connect_uri)",
         "",
@@ -240,6 +242,7 @@ function Get-JoinInstructionMarkdown {
         "",
         "- Server: $($Instructions.external_join_target)",
         "- Map: $($Instructions.map)",
+        "- Expected tester name: $($Instructions.expected_external_tester_name)",
         "- Client console command: $($Instructions.client_console_command)",
         "- Steam URI: $($Instructions.steam_connect_uri)",
         "- Authoritative source of truth: $($Instructions.authoritative_count_source)",
@@ -278,6 +281,7 @@ function Get-ValidationMarkdown {
         "- Map: $($Report.map)",
         "- Port: $($Report.port)",
         "- External join target: $($Report.external_join_target)",
+        "- Expected external tester name: $($Report.expected_external_tester_name)",
         "- Client command: $($Report.client_console_command)",
         "- Attach to existing server: $($Report.attach_to_existing_server)",
         "- Dry run: $($Report.dry_run)",
@@ -323,6 +327,7 @@ function New-ValidationReport {
         port = $Port
         server_address = $ServerAddress
         advertised_address = $AdvertisedAddress
+        expected_external_tester_name = $ExpectedExternalTesterName
         external_join_target = $externalJoinTarget
         client_console_command = "connect $externalJoinTarget"
         steam_connect_uri = "steam://connect/$externalJoinTarget"
@@ -401,6 +406,7 @@ $joinInstructions = [ordered]@{
     port = $Port
     server_address = $ServerAddress
     advertised_address = $AdvertisedAddress
+    expected_external_tester_name = $ExpectedExternalTesterName
     external_join_target = $externalJoinTarget
     client_console_command = "connect $externalJoinTarget"
     steam_connect_uri = "steam://connect/$externalJoinTarget"
@@ -427,6 +433,9 @@ $latestStatus = $null
 try {
     Write-Host "Public external validation target:"
     Write-Host "  Join target: $externalJoinTarget"
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedExternalTesterName)) {
+        Write-Host "  Expected tester name: $ExpectedExternalTesterName"
+    }
     Write-Host "  Client command: connect $externalJoinTarget"
     Write-Host "  Join instructions: $joinMarkdownPath"
 

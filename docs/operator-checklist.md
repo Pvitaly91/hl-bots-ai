@@ -124,10 +124,32 @@ powershell -NoProfile -File .\scripts\preflight_public_external_access.ps1 -Port
 
 This writes `public_external_access_preflight.json` / `.md` and reports visible `hlds.exe` state, local UDP listener evidence, local/LAN addresses, public status/RCON freshness, and NAT/firewall warnings. It is a local readiness check only; it cannot prove that a router, ISP, or remote network will pass inbound UDP.
 
+Run the network exposure preflight before asking the tester to spend time:
+
+```powershell
+powershell -NoProfile -File .\scripts\preflight_public_network_exposure.ps1 -Port 27015 -AdvertisedAddress <public-or-lan-address> -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+This writes `public_network_exposure_preflight.json` / `.md`. Check `matching_firewall_allow_rule_exists`, local public status/RCON evidence, LAN IP candidates, and the NAT/router caveat. If no firewall allow rule is present, review the dry-run plan:
+
+```powershell
+powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015
+```
+
+Only use `-Apply` from an elevated shell when you intentionally want to create the inbound UDP rule. The helper does not delete existing rules.
+
+Prepare the external tester package:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_external_tester_package.ps1 -Map crossfire -Port 27015 -AdvertisedAddress <public-or-lan-address> -ExpectedExternalTesterName <name>
+```
+
+Send `external_tester_join_steps.txt` to the tester. It includes the command `connect <address>:<port>`, how long to stay connected, when to leave, what client errors to report, what the operator should watch, and the expected bot behavior: bots present before join, bots disconnect on join, bots stay absent while the tester remains, and bots return after the tester leaves.
+
 Run the external human-trigger watcher when another real client is ready:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_public_external_human_trigger_validation.ps1 -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_public_external_human_trigger_validation.ps1 -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -ExpectedExternalTesterName <name> -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 It starts public mode unless `-AttachToExistingServer` is supplied, writes `public_external_join_instructions.txt` / `.md` / `.json`, then watches authoritative GoldSrc `status` over RCON through `public_server_status.json`.
@@ -153,6 +175,7 @@ Current local status on `main`:
 - the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
+- the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.

@@ -1,7 +1,7 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-76
+HLDM-JKBOTTI-AI-STAND-20260415-77
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
@@ -66,6 +66,9 @@ The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, 
 - `scripts/test_public_hldm_launch_variants.ps1` and `scripts/test_public_hldm_launch_variants.bat` for bounded concrete public client launch-variant tests, including Steam app launch, Steam connect URI, Steam run URI, and direct `hl.exe`.
 - `scripts/print_public_external_validation_plan.ps1` and `scripts/print_public_external_validation_plan.bat` for an operator-facing external real-client validation plan when local Steam admission remains blocked.
 - `scripts/preflight_public_external_access.ps1` and `scripts/preflight_public_external_access.bat` for local public-server reachability checks before involving an external tester.
+- `scripts/preflight_public_network_exposure.ps1` and `scripts/preflight_public_network_exposure.bat` for local UDP, firewall, LAN-address, and public status readiness checks before external tester handoff.
+- `scripts/configure_public_hlds_firewall.ps1` and `scripts/configure_public_hlds_firewall.bat` for dry-run-first Windows Firewall allow-rule planning, with rule creation only when `-Apply` is explicitly supplied.
+- `scripts/prepare_external_tester_package.ps1` and `scripts/prepare_external_tester_package.bat` for a complete external tester handoff package with join command, tester steps, operator watch list, and expected bot behavior.
 - `scripts/run_public_external_human_trigger_validation.ps1` and `scripts/run_public_external_human_trigger_validation.bat` for the external real-client human-trigger watcher that starts or attaches to public mode, writes join instructions, and reports whether bots disconnect and repopulate from authoritative status.
 - `scripts/audit_steam_public_admission.ps1` and `scripts/audit_steam_public_admission.bat` for the Steam-backed admission-stage audit that narrows failures to steam path resolution, launch, client materialization, CM admission, server connect, or entered-the-game.
 - `scripts/validate_public_human_trigger.ps1` and `scripts/validate_public_human_trigger.bat` for the product-minimum public-mode validation pass that starts or attaches to the public `crossfire` server, observes the authoritative public policy state transitions, and records whether a local human actually triggered bot removal and later repopulation.
@@ -345,10 +348,34 @@ scripts\preflight_public_external_access.bat -Port 27015 -AdvertisedAddress <pub
 
 It writes `public_external_access_preflight.json` and `.md`. The helper reports the selected local address and port, LAN addresses, any visible `hlds.exe` process, local UDP listener evidence, public status/RCON freshness when `public_server_status.json` is available, and a NAT/firewall warning. It cannot prove Internet-side UDP reachability from inside the server machine.
 
+Run the network exposure preflight before tester handoff:
+
+```bat
+scripts\preflight_public_network_exposure.bat -Port 27015 -AdvertisedAddress <public-or-lan-address> -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+It writes `public_network_exposure_preflight.json` and `.md`. It checks the selected UDP port, visible `hlds.exe` process, local public status/RCON evidence, UDP listener evidence when available, LAN IP candidates, relevant Windows Firewall rules, whether a matching enabled inbound allow rule exists, and the limits of same-machine testing. It never claims Internet reachability unless an actual external check proves it.
+
+Use the firewall helper in dry-run mode first:
+
+```bat
+scripts\configure_public_hlds_firewall.bat -Port 27015
+```
+
+It writes `public_hlds_firewall_rule.json` and `.md` with the proposed rule name and command. It does not create or delete firewall rules unless `-Apply` is explicitly supplied from an elevated shell.
+
+Prepare a tester handoff package:
+
+```bat
+scripts\prepare_external_tester_package.bat -Map crossfire -Port 27015 -AdvertisedAddress <public-or-lan-address> -ExpectedExternalTesterName <name>
+```
+
+It writes `external_tester_package.json`, `external_tester_package.md`, and `external_tester_join_steps.txt`. Send the tester the join steps: the expected client command is `connect <address>:<port>`, they should stay connected through the hold window, leave when the operator asks, and report timeout, version, password, disconnect, or other client-side errors.
+
 Run the external real-client human-trigger watcher like this:
 
 ```bat
-scripts\run_public_external_human_trigger_validation.bat -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -SkipSteamCmdUpdate -SkipMetamodDownload
+scripts\run_public_external_human_trigger_validation.bat -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -ExpectedExternalTesterName <name> -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 The watcher starts public mode unless `-AttachToExistingServer` is supplied. It writes:
@@ -436,6 +463,7 @@ Current local status on `main`:
 - the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-76 external watcher confirmed `bots-active-empty-server` on `crossfire` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
+- the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 To opt into the existing advanced path later, use `-EnableAdvancedAIBalance`. The public runner keeps that disabled by default so the product minimum does not depend on the Python sidecar or the evidence stack.

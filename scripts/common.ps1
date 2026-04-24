@@ -1143,7 +1143,15 @@ function Stop-LabProcesses {
     $existingProcesses = Get-LabProcesses -HldsRoot $HldsRoot
     foreach ($existing in $existingProcesses) {
         Write-Host "Stopping existing lab process $($existing.Name) PID=$($existing.ProcessId)"
-        Stop-Process -Id $existing.ProcessId -Force
+        try {
+            Stop-Process -Id $existing.ProcessId -Force -ErrorAction Stop
+        }
+        catch {
+            if ($_.Exception.Message -notmatch "Cannot find a process") {
+                throw
+            }
+            Write-Warning "Lab process PID=$($existing.ProcessId) was already gone by the time cleanup tried to stop it."
+        }
     }
 }
 

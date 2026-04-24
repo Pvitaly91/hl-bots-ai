@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-76
+HLDM-JKBOTTI-AI-STAND-20260415-77
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -246,10 +246,45 @@ It writes:
 
 The preflight reports the selected port, advertised address, local/LAN addresses, visible `hlds.exe` processes, local UDP listener evidence when Windows exposes it, public status/RCON freshness from `public_server_status.json`, and firewall/NAT warnings. It cannot prove Internet-side UDP reachability from inside the server machine.
 
+Run the more detailed public network exposure preflight before tester handoff:
+
+```powershell
+powershell -NoProfile -File .\scripts\preflight_public_network_exposure.ps1 -Port 27015 -AdvertisedAddress <public-or-lan-address> -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+It writes:
+
+- `public_network_exposure_preflight.json`
+- `public_network_exposure_preflight.md`
+
+This checks the selected UDP port, visible server process, local public status/RCON evidence, UDP listener evidence, LAN IP candidates, relevant Windows Firewall rules, and whether a matching enabled inbound allow rule exists. It still cannot prove router/NAT, ISP filtering, or remote-client reachability from inside the same machine.
+
+Review the firewall plan in dry-run mode:
+
+```powershell
+powershell -NoProfile -File .\scripts\configure_public_hlds_firewall.ps1 -Port 27015
+```
+
+This writes `public_hlds_firewall_rule.json` / `.md` and prints the proposed rule name. It is print-only by default. Use `-Apply` only from an elevated shell when you intentionally want to create the inbound UDP allow rule. The helper does not delete existing firewall rules or make unrelated firewall changes.
+
+Prepare the external tester handoff package:
+
+```powershell
+powershell -NoProfile -File .\scripts\prepare_external_tester_package.ps1 -Map crossfire -Port 27015 -AdvertisedAddress <public-or-lan-address> -ExpectedExternalTesterName <name>
+```
+
+It writes:
+
+- `external_tester_package.json`
+- `external_tester_package.md`
+- `external_tester_join_steps.txt`
+
+Send the tester the join steps. They should run `connect <address>:<port>`, stay connected through the hold window, leave when asked, and report any timeout, version mismatch, password prompt, disconnect, or other client-side error text.
+
 Run the external real-client human-trigger validation like this:
 
 ```powershell
-powershell -NoProfile -File .\scripts\run_public_external_human_trigger_validation.ps1 -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -SkipSteamCmdUpdate -SkipMetamodDownload
+powershell -NoProfile -File .\scripts\run_public_external_human_trigger_validation.ps1 -Map crossfire -Port 27015 -BotCountWhenEmpty 4 -BotSkillWhenEmpty 3 -AdvertisedAddress <public-or-lan-address> -ExpectedExternalTesterName <name> -SkipSteamCmdUpdate -SkipMetamodDownload
 ```
 
 By default this starts public mode, writes join instructions, watches authoritative status, and stops the lab server it started. Use `-AttachToExistingServer` when a public runner is already active. It writes:
@@ -345,6 +380,7 @@ Current local status on `main`:
 - the prompt-75 Steam session preflight classifies this machine as `steam-session-blocked-cm-failure`
 - the prompt-75 launch-variant run materialized `hl.exe` through Steam-backed and direct paths, but still stopped at `hl-client-launches-but-public-admission-never-starts` before any non-BOT server connect
 - the prompt-76 external watcher confirmed `bots-active-empty-server` with 0 humans, 4 bots, target 4, and advanced AI off, then reported `external-human-admission-not-observed` because no external client joined during the wait
+- the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
