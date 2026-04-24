@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-79
+HLDM-JKBOTTI-AI-STAND-20260415-80
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -392,6 +392,7 @@ Current local status on `main`:
 - the prompt-77 network exposure preflight confirmed local public status/RCON and UDP listener evidence for the live public server but classified firewall enumeration as `public-network-exposure-firewall-query-blocked` because Windows returned access denied; the tester package was produced for `connect 192.168.0.102:27041`
 - the prompt-78 firewall helper produced `firewall-check-not-verified-not-elevated` from the current shell, printed the elevated `-Apply` command for the narrow UDP rule, refreshed network exposure on `192.168.0.102:27043`, and the external watcher again reported `external-human-admission-not-observed`
 - the prompt-79 elevation gate still found a non-elevated shell, so firewall apply remains blocked locally unless an Administrator shell runs the printed narrow UDP rule command
+- the prompt-80 elevation gate again found a non-elevated shell, so the firewall helper recorded `firewall-apply-blocked-not-elevated`; public network preflight and the external watcher should be rerun after the printed Administrator command is applied
 - the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
