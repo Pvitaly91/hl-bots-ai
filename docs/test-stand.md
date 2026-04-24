@@ -1,7 +1,7 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-73
+HLDM-JKBOTTI-AI-STAND-20260415-74
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
@@ -165,6 +165,35 @@ This comparison helper writes:
 
 It compares the Steam app-launch path, the Steam `steam://connect/...` URI path, and the direct `hl.exe` path when those are available on the current machine. Use it for public-mode admission diagnostics, not for control/treatment lane work.
 
+Run the consolidated Steam/public admission drill like this:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_public_steam_admission_drill.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+The drill reuses the Steam environment audit and the public path comparison, then writes:
+
+- `public_steam_admission_drill.json`
+- `public_steam_admission_drill.md`
+
+It compares:
+
+- `steam-native-applaunch`: Steam app `70` launch with the public `+connect` target
+- `steam-connect-uri`: Steam handling of `steam://connect/<host>:<port>`
+- `direct-hl-exe-connect`: direct discovered `hl.exe` launch with `+connect`
+
+Each path records the exact command line, working directory, Steam launcher status, observed `hl.exe` PID, process exit state, Steam log freshness, server connect, entered-the-game, authoritative human status, narrowest failure stage, and artifact paths.
+
+Read `machine_local_blocker_classification` first:
+
+- `steam-session-not-ready`: local Steam/Half-Life session prerequisites are missing
+- `steam-app-launch-path-broken`: Steam launches were attempted but no `hl.exe` materialized
+- `hl-client-launches-but-public-admission-never-starts`: `hl.exe` launched but HLDS never saw a non-BOT connect
+- `public-admission-blocked-before-server-connect`: Steam/public admission failed before server connect
+- `server-connect-seen-but-entered-game-not-seen`: the blocker moved later than raw server connect
+- `admission-inconclusive-external-environment`: the drill lacks enough fresh evidence for a repo-side conclusion
+- `public-admission-working`: server-side human admission was proved
+
 Audit one Steam-backed public admission failure like this:
 
 ```powershell
@@ -223,12 +252,14 @@ The full public human-trigger validation is complete only when one validator run
 
 `blocked-before-server-admission` means the local client never crossed the authoritative server-side human boundary. If the environment audit ends `steam-environment-blocked-before-admission` and the best compared Steam-backed path still fails before server connect, the remaining blocker is likely external to repo-side public server logic on that machine.
 
+Treat the public bot policy as done for product-minimum purposes when empty-server public mode works on `crossfire`, advanced AI remains disabled by default, and the drill still fails before non-BOT server connect. Rerun `validate_public_human_trigger.ps1` when the drill returns `public-admission-working`, or when `server-connect-seen-but-entered-game-not-seen` gives a fresh server-side connect signal worth spending a longer validator run on. Do not spend another full validator run for before-connect classifications until the local Steam/public admission blocker changes.
+
 Current local status on `main`:
 
 - empty-server public mode is working on `crossfire`
 - advanced AI balance remains off by default
-- the prompt-73 environment audit now classifies this machine as `steam-environment-blocked-before-admission`
-- the latest prompt-73 comparison shows both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` can materialize locally but still does not create authoritative public admission under `sv_lan 0`
+- the prompt-74 drill is the current machine-local public admission classifier
+- the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 Advanced AI / LLM-based learning remains present in the repository, but public mode keeps it off by default. Use `-EnableAdvancedAIBalance` only when you intentionally want to opt back into the sidecar-backed path later.
 

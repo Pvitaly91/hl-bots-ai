@@ -64,7 +64,7 @@ Compare the available public admission paths like this:
 powershell -NoProfile -File .\scripts\compare_public_admission_paths.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
 ```
 
-Or use the prompt-73 alias:
+Or use the compatibility alias:
 
 ```powershell
 powershell -NoProfile -File .\scripts\compare_public_client_admission_paths.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
@@ -84,6 +84,14 @@ powershell -NoProfile -File .\scripts\audit_steam_public_admission.ps1 -Comparis
 
 Use the comparison helper when you need to know which public admission path is best. Use the Steam audit helper when you already know the failure is on a Steam-backed path and need the exact stage. Use the environment audit when you need to know whether the remaining blocker is likely outside repo-side public server logic on this machine.
 
+Run the consolidated prompt-74 drill when you need one machine-local blocker verdict:
+
+```powershell
+powershell -NoProfile -File .\scripts\run_public_steam_admission_drill.ps1 -ServerAddress 127.0.0.1 -ServerPort 27015 -PublicServerOutputRoot D:\DEV\CPP\HL-Bots\lab\logs\public_server\<run-root>
+```
+
+It compares `steam-native-applaunch`, `steam-connect-uri`, and `direct-hl-exe-connect`, then writes `public_steam_admission_drill.json` / `.md`. Use `machine_local_blocker_classification` as the next-action gate: before-connect verdicts are local Steam/public admission blockers, `server-connect-seen-but-entered-game-not-seen` is a later admission blocker, and `public-admission-working` justifies the full public human-trigger validator.
+
 `steam-admission-failed-before-server-connect` means the Steam-backed path failed before HLDS ever counted a real human. `server-connect-seen-no-entered-game` means HLDS saw the human connect but the run still never crossed the entered-the-game boundary.
 
 `blocked-before-server-admission` means the local client launch path never crossed the authoritative server-side human boundary at all. If the environment audit says `steam-environment-blocked-before-admission` and the comparison helper still shows CM reconnect failure before any non-BOT `connected` event, more repo-side server changes are not justified until the machine-local Steam admission problem changes.
@@ -92,12 +100,14 @@ If the validator says the public human-trigger path is still blocked before serv
 
 Treat the public human-trigger validation as complete only when one validator run shows a real authoritative human admission, `bots-disconnected-humans-present`, and later `bots-repopulated-empty-server`.
 
+Treat the public bot policy as done for product-minimum purposes when empty-server public mode works, advanced AI stays disabled by default, and the drill still fails before non-BOT server connect. Rerun the full validator only after `public-admission-working`, or after `server-connect-seen-but-entered-game-not-seen` if you need to spend a longer run on the later boundary.
+
 Current local status on `main`:
 
 - empty-server public mode is working on `crossfire`
 - advanced AI balance remains off by default
-- the prompt-73 environment audit now classifies this machine as `steam-environment-blocked-before-admission`
-- the latest prompt-73 comparison shows both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` can materialize locally but still does not create authoritative public admission under `sv_lan 0`
+- the prompt-74 drill is the current machine-local public admission classifier
+- the prompt-73 baseline showed both Steam-backed paths still failing before any real server-side `connected` event, while direct `hl.exe` could materialize locally but still did not create authoritative public admission under `sv_lan 0`
 
 `next expected human sample`, closeout guards, strong-signal missions, and recovery tooling belong to the research workflow below, not to the default public server mode.
 
