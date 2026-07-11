@@ -800,6 +800,30 @@ qboolean BotHasOnlyWeakWeapons(bot_t &pBot)
    return TRUE;
 }
 
+qboolean BotShouldUseCrowbarAtCloseRange(bot_t &pBot, float distance)
+{
+   if(distance > 64.0f || !BotIsCarryingWeapon(pBot, VALVE_WEAPON_CROWBAR))
+      return FALSE;
+
+   qboolean has_glock = FALSE;
+   bot_weapon_select_t *pSelect = &weapon_select[0];
+   int select_index = -1;
+   while(pSelect[++select_index].iId)
+   {
+      if((pSelect[select_index].type & WEAPON_FIRE) != WEAPON_FIRE ||
+         !BotIsCarryingWeapon(pBot, pSelect[select_index].iId) ||
+         !IsValidWeaponChoose(pBot, pSelect[select_index]))
+         continue;
+
+      if(pSelect[select_index].iId != VALVE_WEAPON_GLOCK)
+         return FALSE;
+
+      has_glock = TRUE;
+   }
+
+   return has_glock;
+}
+
 // Check if want to change to better weapon
 int BotGetBetterWeaponChoice(bot_t &pBot, const bot_weapon_select_t &current, const bot_weapon_select_t *pSelect, const float distance, const float height, qboolean *use_primary, qboolean *use_secondary) {
    int select_index;

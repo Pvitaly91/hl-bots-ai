@@ -1230,6 +1230,44 @@ static int test_BotHasOnlyWeakWeapons(void)
    return 0;
 }
 
+static int test_BotShouldUseCrowbarAtCloseRange(void)
+{
+   printf("BotShouldUseCrowbarAtCloseRange:\n");
+
+   mock_reset();
+   submod_id = SUBMOD_HLDM;
+   submod_weaponflag = WEAPON_SUBMOD_HLDM;
+   InitWeaponSelect(SUBMOD_HLDM);
+   setup_weapon_defs_valve();
+
+   edict_t *pe = mock_alloc_edict();
+   bot_t bot;
+   setup_bot(bot, pe);
+   bot.m_rgAmmo[1] = 50;
+
+   TEST("crowbar + Glock at melee range -> TRUE");
+   pe->v.weapons = (1u << VALVE_WEAPON_CROWBAR) | (1u << VALVE_WEAPON_GLOCK);
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), TRUE);
+   PASS();
+
+   TEST("crowbar + Glock outside melee range -> FALSE");
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 96.0f), FALSE);
+   PASS();
+
+   TEST("strong firearm available -> FALSE");
+   pe->v.weapons |= (1u << VALVE_WEAPON_SHOTGUN);
+   bot.m_rgAmmo[3] = 20;
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), FALSE);
+   PASS();
+
+   TEST("Glock without crowbar -> FALSE");
+   pe->v.weapons = (1u << VALVE_WEAPON_GLOCK);
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), FALSE);
+   PASS();
+
+   return 0;
+}
+
 // ============================================================
 // 16. Arena submod weapon tests
 // ============================================================
@@ -1389,6 +1427,8 @@ int main(void)
    rc |= test_BotIsWeakWeapon();
    printf("\n");
    rc |= test_BotHasOnlyWeakWeapons();
+   printf("\n");
+   rc |= test_BotShouldUseCrowbarAtCloseRange();
    printf("\n");
    rc |= test_arena_weapons();
 

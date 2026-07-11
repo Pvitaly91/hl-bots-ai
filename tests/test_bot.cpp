@@ -160,6 +160,8 @@ void BotOnLadder(bot_t &pBot, float moved_distance) { (void)pBot; (void)moved_di
 void BotUnderWater(bot_t &pBot) { (void)pBot; }
 void BotUseLift(bot_t &pBot, float moved_distance) { (void)pBot; (void)moved_distance; }
 void BotTurnAtWall(bot_t &pBot, TraceResult *tr, qboolean negative) { (void)pBot; (void)tr; (void)negative; }
+int BotSkillGetPauseFrequency(int skill) { return skill_settings[skill].pause_frequency; }
+float BotSkillGetBattleStrafe(int skill) { return skill_settings[skill].battle_strafe; }
 static int mock_BotRandomTurn_count = 0;
 void BotRandomTurn(bot_t &pBot) { (void)pBot; mock_BotRandomTurn_count++; }
 
@@ -1673,6 +1675,62 @@ static int test_BotFindItem_battery(void)
 
    ASSERT_PTR_EQ(bot.pBotPickupItem, battery);
 
+   PASS();
+   return 0;
+}
+
+static int test_BotFindItem_battery_priority(void)
+{
+   TEST("BotFindItem: visible battery has priority over closer health");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.health = 50;
+   e->v.armorvalue = 20;
+   bot.f_find_item = 0;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+
+   edict_t *health = mock_alloc_edict();
+   mock_set_classname(health, "item_healthkit");
+   health->v.origin = Vector(40, 0, 0);
+
+   edict_t *battery = mock_alloc_edict();
+   mock_set_classname(battery, "item_battery");
+   battery->v.origin = Vector(120, 0, 0);
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, battery);
+   PASS();
+   return 0;
+}
+
+static int test_BotFindItem_spawn_weapon_priority(void)
+{
+   TEST("BotFindItem: recently spawned bot prioritizes visible weapon");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_CROWBAR) | (1u << VALVE_WEAPON_GLOCK);
+   e->v.armorvalue = 20;
+   bot.f_find_item = 0;
+   bot.f_bot_spawn_time = gpGlobals->time - 2.0f;
+
+   edict_t *battery = mock_alloc_edict();
+   mock_set_classname(battery, "item_battery");
+   battery->v.origin = Vector(40, 0, 0);
+
+   edict_t *weapon = mock_alloc_edict();
+   mock_set_classname(weapon, "weapon_shotgun");
+   weapon->v.origin = Vector(120, 0, 0);
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, weapon);
    PASS();
    return 0;
 }
@@ -5453,6 +5511,8 @@ int main(void)
    fail |= test_BotFindItem_healthkit();
    fail |= test_BotFindItem_healthkit_full_hp();
    fail |= test_BotFindItem_battery();
+   fail |= test_BotFindItem_battery_priority();
+   fail |= test_BotFindItem_spawn_weapon_priority();
    fail |= test_BotFindItem_weaponbox();
    fail |= test_BotFindItem_tripmine();
    fail |= test_BotFindItem_tripmine_shootable();

@@ -1868,6 +1868,9 @@ static qboolean BotFireWeapon(const Vector & v_enemy, bot_t &pBot, int weapon_ch
    float distance = v_enemy.Length();  // how far away is the enemy?
    float height = v_enemy.z; // how high is enemy?
 
+   if(weapon_choice == 0 && BotShouldUseCrowbarAtCloseRange(pBot, distance))
+      weapon_choice = VALVE_WEAPON_CROWBAR;
+
    const bot_weapon_select_t *pSelect = &weapon_select[0];
    const bot_fire_delay_t *pDelay = &fire_delay[0];
 

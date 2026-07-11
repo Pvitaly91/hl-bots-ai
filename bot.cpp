@@ -1532,6 +1532,21 @@ static void BotFindItem_SetPickupTarget(bot_t &pBot, edict_t *pPickupEntity,
    pBot.pBotPickupItem = pPickupEntity;  // save the item bot is trying to get
 }
 
+static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name)
+{
+   // Armor in sight should not lose to ordinary nearby pickups.
+   if(strcmp("item_battery", item_name) == 0)
+      return 2;
+
+   // Immediately after spawning, securing a real weapon is the primary task.
+   float time_since_spawn = gpGlobals->time - pBot.f_bot_spawn_time;
+   if(time_since_spawn >= 0.0f && time_since_spawn <= 12.0f &&
+      (GetWeaponItemFlag(item_name) != 0 || strcmp("weaponbox", item_name) == 0))
+      return 3;
+
+   return 1;
+}
+
 
 static void BotFindItem( bot_t &pBot )
 {
@@ -1542,6 +1557,7 @@ static void BotFindItem( bot_t &pBot )
    float radius = 500;
    qboolean can_pickup;
    float min_distance;
+   int best_priority = 0;
    char item_name[40];
    Vector vecStart;
    Vector vecEnd;
@@ -1621,10 +1637,13 @@ static void BotFindItem( bot_t &pBot )
       if (can_pickup) // if the bot found something it can pickup...
       {
          float distance = (entity_origin - pEdict->v.origin).Length( );
+         int priority = BotFindItem_GetPriority(pBot, item_name);
 
-         // see if it's the closest item so far...
-         if (distance < min_distance)
+         // Prefer tactical pickups, then the closest item at that priority.
+         if (priority > best_priority ||
+             (priority == best_priority && distance < min_distance))
          {
+            best_priority = priority;
             min_distance = distance;        // update the minimum distance
             pPickupEntity = pent;        // remember this entity
             pickup_origin = entity_origin;  // remember location of entity
