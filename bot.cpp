@@ -2975,6 +2975,12 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 
    BotThinkHandleEnemy_FindAndAim(pBot);
 
+   if (CrossfireTacticsShouldYieldToStrategicMovement(pBot))
+   {
+      pBot.f_pause_time = 0.0f;
+      return FALSE;
+   }
+
    BotDetonateSatchel(pBot);
 
    qboolean DidShootAtEnemy = FALSE;
@@ -3013,7 +3019,11 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
 
    // Combat may skip waypoint movement for this frame, but the strategic
    // destination must remain the bunker throughout the strike.
-   CrossfireTacticsEnsureBunkerGoal(pBot);
+   if (CrossfireTacticsEnsureStrategicGoal(pBot))
+      pBot.f_pause_time = 0.0f;
+
+   if (CrossfireTacticsHandleStrikeActivatorMovement(pBot))
+      return;
 
    if(did_shoot)
    {

@@ -2446,7 +2446,7 @@ static int test_find_waypoint_goal_crossfire_strike_prioritizes_bunker(void)
    bot.curr_waypoint_index = 0;
 
    setup_waypoint(0, Vector(0.0f, 0.0f, 0.0f));
-   setup_waypoint(1, Vector(0.0f, -2350.0f, -1820.0f));
+   setup_waypoint(1, Vector(0.0f, -2520.0f, -1820.0f));
    mock_WaypointDistanceFromTo_result = 100.0f;
 
    CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);

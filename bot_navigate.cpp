@@ -321,7 +321,8 @@ static void BotEvaluateGoal( bot_t &pBot )
    // we're dying!  Forget about our goal
    if (pBot.waypoint_goal != -1 && pEdict->v.health <= 25 &&
        pBot.wpt_goal_type != WPT_GOAL_HEALTH &&
-       pBot.wpt_goal_type != WPT_GOAL_BUNKER)
+       pBot.wpt_goal_type != WPT_GOAL_BUNKER &&
+       pBot.wpt_goal_type != WPT_GOAL_STRIKE_BUTTON)
    {
       //if(pBot.waypoint_goal != -1)
       //   UTIL_ConsolePrintf("[%s] Dying, forget goal: %d -> %d", pBot.name, pBot.waypoint_goal, -1);
@@ -673,12 +674,13 @@ static qboolean BotFindWaypointGoalEnemy(bot_t &pBot)
 }
 
 
-static qboolean BotFindWaypointGoalCrossfireBunker(bot_t &pBot)
+static qboolean BotFindWaypointGoalCrossfireTactic(bot_t &pBot)
 {
-   if (!CrossfireTacticsEnsureBunkerGoal(pBot))
+   if (!CrossfireTacticsEnsureStrategicGoal(pBot))
       return FALSE;
 
-   BotTrace(pBot, "goal set: bunker wpt=%d", pBot.waypoint_goal);
+   BotTrace(pBot, "goal set: %s wpt=%d",
+      BotTraceGoalTypeName(pBot.wpt_goal_type), pBot.waypoint_goal);
 
    return TRUE;
 }
@@ -688,7 +690,7 @@ static void BotFindWaypointGoal( bot_t &pBot )
 {
    int index = -1;
 
-   if (BotFindWaypointGoalCrossfireBunker(pBot))
+   if (BotFindWaypointGoalCrossfireTactic(pBot))
       return;
 
    // look for health if we're pretty dead

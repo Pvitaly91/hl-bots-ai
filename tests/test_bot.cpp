@@ -5284,7 +5284,7 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    bot.m_rgAmmo[weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1] = 50;
 
    num_waypoints = 1;
-   waypoints[0].origin = Vector(0.0f, -2350.0f, -1820.0f);
+   waypoints[0].origin = Vector(0.0f, -2520.0f, -1820.0f);
 
    CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);
 
@@ -5296,6 +5296,29 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
    ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(bot.waypoint_goal, 0);
+
+   // Outside the short combat window, a distant enemy remains tracked while
+   // movement toward the bunker takes precedence.
+   gpGlobals->time = 100.5f;
+   mock_BotShootAtEnemy_count = 0;
+   const qboolean yielded_to_movement = BotThinkHandleEnemy(bot);
+
+   ASSERT_FALSE(yielded_to_movement);
+   ASSERT_INT(mock_BotShootAtEnemy_count, 0);
+   ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+
+   // Point-blank threats get a larger combat window, but still cannot block
+   // evacuation indefinitely.
+   enemy->v.origin = Vector(100.0f, 0.0f, 0.0f);
+   gpGlobals->time = 101.0f;
+   mock_BotShootAtEnemy_count = 0;
+   ASSERT_TRUE(BotThinkHandleEnemy(bot));
+   ASSERT_INT(mock_BotShootAtEnemy_count, 1);
+
+   gpGlobals->time = 101.5f;
+   mock_BotShootAtEnemy_count = 0;
+   ASSERT_FALSE(BotThinkHandleEnemy(bot));
+   ASSERT_INT(mock_BotShootAtEnemy_count, 0);
 
    CrossfireTacticsReset();
    PASS();

@@ -345,6 +345,8 @@ static int Spawn_Post( edict_t *pent )
    if(!gpGlobals->deathmatch)
       RETURN_META_VALUE (MRES_IGNORED, 0);
 
+   CrossfireTacticsOnEntitySpawn(pent);
+
    if (FIsClassname(pent, "worldspawn"))
    {
       // check for team play... gamedll check it in 'worldspawn' spawn and doesn't recheck
@@ -797,6 +799,8 @@ static void StartFrame( void )
       pSoundEnt->Think();
 
    // bot system
+   CrossfireTacticsStartFrame();
+
    if (bot_stop == 0)
       StartFrameUpdateBots();
 

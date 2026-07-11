@@ -23,6 +23,17 @@ extern WAYPOINT waypoints[MAX_WAYPOINTS];
 extern int num_waypoints;
 
 static float mock_route_distances[MAX_WAYPOINTS];
+static int mock_touch_count = 0;
+static edict_t *mock_touched = NULL;
+static edict_t *mock_toucher = NULL;
+
+
+static void mock_touch(edict_t *touched, edict_t *toucher)
+{
+   mock_touch_count++;
+   mock_touched = touched;
+   mock_toucher = toucher;
+}
 
 
 float WaypointDistanceFromTo(int src, int dest)
@@ -41,6 +52,10 @@ static void setup_crossfire(void)
 
    for (int index = 0; index < MAX_WAYPOINTS; index++)
       mock_route_distances[index] = WAYPOINT_UNREACHABLE;
+
+   mock_touch_count = 0;
+   mock_touched = NULL;
+   mock_toucher = NULL;
 }
 
 
@@ -94,8 +109,11 @@ static int test_shelter_bounds(void)
    memset(&bot, 0, sizeof(bot));
    bot.pEdict = mock_alloc_edict();
 
-   bot.pEdict->v.origin = Vector(0.0f, -2350.0f, -1820.0f);
+   bot.pEdict->v.origin = Vector(0.0f, -2520.0f, -1820.0f);
    ASSERT_TRUE(CrossfireTacticsIsBotSheltered(bot));
+
+   bot.pEdict->v.origin = Vector(0.0f, -2350.0f, -1820.0f);
+   ASSERT_FALSE(CrossfireTacticsIsBotSheltered(bot));
 
    bot.pEdict->v.origin = Vector(0.0f, -1800.0f, -1724.0f);
    ASSERT_FALSE(CrossfireTacticsIsBotSheltered(bot));
@@ -112,8 +130,8 @@ static int test_bunker_goal_uses_reachable_nodes_and_spreads_bots(void)
    setup_crossfire();
 
    num_waypoints = 4;
-   waypoints[0].origin = Vector(-200.0f, -2350.0f, -1820.0f);
-   waypoints[1].origin = Vector(200.0f, -2400.0f, -1820.0f);
+   waypoints[0].origin = Vector(-200.0f, -2450.0f, -1820.0f);
+   waypoints[1].origin = Vector(200.0f, -2520.0f, -1820.0f);
    waypoints[2].origin = Vector(800.0f, -2400.0f, -1820.0f);
    waypoints[3].origin = Vector(0.0f, 0.0f, 0.0f);
    mock_route_distances[0] = 100.0f;
@@ -143,13 +161,16 @@ static int test_bunker_goal_preserves_enemy(void)
    setup_crossfire();
 
    num_waypoints = 2;
-   waypoints[0].origin = Vector(0.0f, -2350.0f, -1820.0f);
+   waypoints[0].origin = Vector(0.0f, -2520.0f, -1820.0f);
    waypoints[1].origin = Vector(0.0f, 0.0f, 0.0f);
 
    bot_t bot;
    memset(&bot, 0, sizeof(bot));
    bot.pEdict = mock_alloc_edict();
    bot.pBotEnemy = mock_alloc_edict();
+   bot.pBotPickupItem = mock_alloc_edict();
+   bot.pTrackSoundEdict = mock_alloc_edict();
+   bot.f_look_for_waypoint_time = gpGlobals->time + 5.0f;
    bot.curr_waypoint_index = -1;
    edict_t *enemy = bot.pBotEnemy;
 
@@ -159,7 +180,78 @@ static int test_bunker_goal_preserves_enemy(void)
    ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(bot.waypoint_goal, 0);
    ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, NULL);
+   ASSERT_PTR_EQ(bot.pTrackSoundEdict, NULL);
+   ASSERT_TRUE(bot.f_look_for_waypoint_time <= gpGlobals->time);
 
+   PASS();
+   return 0;
+}
+
+
+static int test_bot_periodically_reaches_and_touches_strike_trigger(void)
+{
+   TEST("Bot periodically reaches and touches the Crossfire strike trigger");
+
+   setup_crossfire();
+
+   edict_t *trigger = mock_alloc_edict();
+   mock_set_classname(trigger, "trigger_multiple");
+   trigger->v.target = (string_t)(long)"strike_mm";
+   trigger->v.absmin = Vector(-8.0f, -2226.0f, -1856.0f);
+   trigger->v.size = Vector(16.0f, 14.0f, 19.0f);
+   CrossfireTacticsOnEntitySpawn(trigger);
+
+   edict_t *bot_edict = mock_alloc_edict();
+   bot_edict->v.health = 100.0f;
+   bot_edict->v.deadflag = DEAD_NO;
+   bot_edict->v.origin = Vector(0.0f, -2249.0f, -1846.5f);
+
+   bots[0].is_used = TRUE;
+   bots[0].pEdict = bot_edict;
+   bots[0].curr_waypoint_index = -1;
+   bots[0].waypoint_goal = -1;
+   bots[0].f_max_speed = 320.0f;
+   strcpy(bots[0].name, "TriggerBot");
+
+   edict_t *far_bot_edict = mock_alloc_edict();
+   far_bot_edict->v.health = 100.0f;
+   far_bot_edict->v.deadflag = DEAD_NO;
+   far_bot_edict->v.origin = Vector(1000.0f, 0.0f, -1846.5f);
+   bots[1].is_used = TRUE;
+   bots[1].pEdict = far_bot_edict;
+   bots[1].curr_waypoint_index = -1;
+   bots[1].waypoint_goal = -1;
+   strcpy(bots[1].name, "FarBot");
+
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(0.0f, -2315.0f, -1846.5f);
+
+   CrossfireTacticsStartFrame();
+   ASSERT_FALSE(CrossfireTacticsIsBotStrikeActivator(bots[0]));
+
+   gpGlobals->time = 1000.0f;
+   CrossfireTacticsStartFrame();
+   ASSERT_TRUE(CrossfireTacticsIsBotStrikeActivator(bots[0]));
+   ASSERT_FALSE(CrossfireTacticsIsBotStrikeActivator(bots[1]));
+   ASSERT_TRUE(CrossfireTacticsEnsureStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_STRIKE_BUTTON);
+   ASSERT_INT(bots[0].waypoint_goal, 0);
+
+   gpGamedllFuncs->dllapi_table->pfnTouch = mock_touch;
+   ASSERT_TRUE(CrossfireTacticsHandleStrikeActivatorMovement(bots[0]));
+   ASSERT_INT(mock_touch_count, 1);
+   ASSERT_PTR_EQ(mock_touched, trigger);
+   ASSERT_PTR_EQ(mock_toucher, bot_edict);
+   ASSERT_TRUE(FBitSet(bot_edict->v.button, IN_USE));
+
+   gpGlobals->time = 1125.0f;
+   CrossfireTacticsStartFrame();
+   ASSERT_FALSE(CrossfireTacticsIsBotStrikeActivator(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_NONE);
+   ASSERT_INT(bots[0].waypoint_goal, -1);
+
+   CrossfireTacticsReset();
    PASS();
    return 0;
 }
@@ -175,6 +267,7 @@ int main(void)
    fail |= test_shelter_bounds();
    fail |= test_bunker_goal_uses_reachable_nodes_and_spreads_bots();
    fail |= test_bunker_goal_preserves_enemy();
+   fail |= test_bot_periodically_reaches_and_touches_strike_trigger();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 
