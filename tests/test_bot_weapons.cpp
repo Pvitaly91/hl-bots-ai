@@ -1250,17 +1250,21 @@ static int test_BotShouldUseCrowbarAtCloseRange(void)
    ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), TRUE);
    PASS();
 
-   TEST("crowbar + Glock outside melee range -> FALSE");
-   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 96.0f), FALSE);
+   TEST("exact melee boundary -> TRUE");
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 64.0f), TRUE);
    PASS();
 
-   TEST("strong firearm available -> FALSE");
+   TEST("outside melee range -> FALSE");
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 64.1f), FALSE);
+   PASS();
+
+   TEST("strong firearm available at point blank -> TRUE");
    pe->v.weapons |= (1u << VALVE_WEAPON_SHOTGUN);
    bot.m_rgAmmo[3] = 20;
-   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), FALSE);
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), TRUE);
    PASS();
 
-   TEST("Glock without crowbar -> FALSE");
+   TEST("no crowbar -> FALSE");
    pe->v.weapons = (1u << VALVE_WEAPON_GLOCK);
    ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), FALSE);
    PASS();
