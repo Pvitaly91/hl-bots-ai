@@ -128,7 +128,14 @@ void free_posdata_list(int idx) { (void)idx; }
 void GatherPlayerData(edict_t *pEdict) { (void)pEdict; }
 qboolean FPredictedVisible(bot_t &pBot) { (void)pBot; return FALSE; }
 void BotUpdateHearingSensitivity(bot_t &pBot) { (void)pBot; }
-void BotFindEnemy(bot_t &pBot) { (void)pBot; }
+static edict_t *mock_BotFindEnemy_result = NULL;
+static int mock_BotFindEnemy_count = 0;
+void BotFindEnemy(bot_t &pBot)
+{
+   mock_BotFindEnemy_count++;
+   if(mock_BotFindEnemy_result)
+      pBot.pBotEnemy = mock_BotFindEnemy_result;
+}
 void BotShootAtEnemy(bot_t &pBot) { (void)pBot; }
 static qboolean mock_BotShootTripmine_ret_early = FALSE;
 qboolean BotShootTripmine(bot_t &pBot) { (void)pBot; return mock_BotShootTripmine_ret_early; }
@@ -400,6 +407,8 @@ static void setup_engine_funcs(void)
    mock_WaypointFindRunawayPath_ret = -1;
    mock_BotShootTripmine_ret_early = FALSE;
    mock_BotRandomTurn_count = 0;
+   mock_BotFindEnemy_result = NULL;
+   mock_BotFindEnemy_count = 0;
 
    // Reset globals that bot.cpp uses
    free(team_blockedlist);
@@ -5232,12 +5241,51 @@ static int test_BotThink_weak_weapon_no_seek(void)
    bot.m_rgAmmo[1] = 50; // 9mm ammo
    bot.pBotEnemy = NULL;
    bot.f_last_time_attacked = 0; // not recently attacked
+   bot.need_to_initialize = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
 
    BotThink(bot);
 
    // Bot should NOT have found an enemy (engagement path skipped)
    ASSERT_PTR_NULL(bot.pBotEnemy);
+   ASSERT_INT(mock_BotFindEnemy_count, 0);
    // b_only_has_weak_weapons should be set
+   ASSERT_INT(bot.b_only_has_weak_weapons, TRUE);
+
+   PASS();
+   return 0;
+}
+
+static int test_BotThink_spawned_weak_weapon_seeks(void)
+{
+   TEST("BotThink: spawned bot with Glock actively seeks enemy");
+   setup_engine_funcs();
+   setup_weapon_defs_for_weak_weapon_tests();
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *enemy = mock_alloc_edict();
+   bot_t bot;
+   setup_alive_bot(bot, e);
+
+   enemy->v.origin = Vector(100, 0, 0);
+   e->v.weapons = (1u << VALVE_WEAPON_CROWBAR) | (1u << VALVE_WEAPON_GLOCK);
+   bot.m_rgAmmo[1] = 50;
+   bot.f_last_time_attacked = 0;
+   for(int i = 0; weapon_select[i].iId; i++)
+   {
+      if(weapon_select[i].iId == VALVE_WEAPON_GLOCK)
+      {
+         bot.current_weapon_index = i;
+         break;
+      }
+   }
+   bot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   mock_BotFindEnemy_result = enemy;
+
+   BotThink(bot);
+
+   ASSERT_TRUE(mock_BotFindEnemy_count > 0);
+   ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
    ASSERT_INT(bot.b_only_has_weak_weapons, TRUE);
 
    PASS();
@@ -5295,6 +5343,8 @@ static int test_BotThink_weak_weapon_disengages_after_1s(void)
    bot.pBotEnemy = NULL;
    // Attacked 2s ago: outside 1s weak window, inside 3s strong window
    bot.f_last_time_attacked = gpGlobals->time - 2.0f;
+   bot.need_to_initialize = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
 
    BotThink(bot);
 
@@ -5644,6 +5694,7 @@ int main(void)
 
    // Phase 6c: BotThink weak weapon behavior
    fail |= test_BotThink_weak_weapon_no_seek();
+   fail |= test_BotThink_spawned_weak_weapon_seeks();
    fail |= test_BotThink_weak_weapon_fights_back();
    fail |= test_BotThink_weak_weapon_disengages_after_1s();
    fail |= test_BotThink_strong_weapon_seeks();

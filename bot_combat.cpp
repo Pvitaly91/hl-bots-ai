@@ -1591,9 +1591,10 @@ static int BotFireWeaponTryReuseCurrent(bot_t &pBot, const bot_weapon_select_t *
    qboolean use_primary = FALSE;
    qboolean use_secondary = FALSE;
 
-   // Check if we can use this weapon
-   if ((weapon_choice == pSelect[select_index].iId || weapon_choice == 0) ||
-       (IsValidWeaponChoose(pBot, pSelect[select_index]) &&
+   // An explicit choice must not be bypassed by reusing another valid weapon.
+   if ((weapon_choice != 0 && weapon_choice == pSelect[select_index].iId) ||
+       (weapon_choice == 0 &&
+        IsValidWeaponChoose(pBot, pSelect[select_index]) &&
         BotCanUseWeapon(pBot, pSelect[select_index]) &&
         IsValidToFireAtTheMoment(pBot, pSelect[select_index])))
    {

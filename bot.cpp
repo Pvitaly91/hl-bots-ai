@@ -1532,6 +1532,12 @@ static void BotFindItem_SetPickupTarget(bot_t &pBot, edict_t *pPickupEntity,
    pBot.pBotPickupItem = pPickupEntity;  // save the item bot is trying to get
 }
 
+static qboolean BotIsInSpawnWeaponSearchWindow(const bot_t &pBot)
+{
+   float time_since_spawn = gpGlobals->time - pBot.f_bot_spawn_time;
+   return time_since_spawn >= 0.0f && time_since_spawn <= 12.0f;
+}
+
 static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name)
 {
    // Armor in sight should not lose to ordinary nearby pickups.
@@ -1539,8 +1545,7 @@ static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name)
       return 2;
 
    // Immediately after spawning, securing a real weapon is the primary task.
-   float time_since_spawn = gpGlobals->time - pBot.f_bot_spawn_time;
-   if(time_since_spawn >= 0.0f && time_since_spawn <= 12.0f &&
+   if(BotIsInSpawnWeaponSearchWindow(pBot) &&
       (GetWeaponItemFlag(item_name) != 0 || strcmp("weaponbox", item_name) == 0))
       return 3;
 
@@ -2882,7 +2887,8 @@ static void BotThinkHandleEnemy_FindAndAim(bot_t &pBot)
 
    if(BotWeaponCanAttack(pBot, FALSE) &&
       ((pBot.b_has_enough_ammo_for_good_weapon && !pBot.b_low_health
-        && !pBot.b_only_has_weak_weapons)
+         && !pBot.b_only_has_weak_weapons)
+       || BotIsInSpawnWeaponSearchWindow(pBot)
        || pBot.f_last_time_attacked > gpGlobals->time - BotCombatDisengageTime(pBot)))
    {
       // get enemy

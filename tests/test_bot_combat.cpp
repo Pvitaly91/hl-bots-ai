@@ -3107,6 +3107,41 @@ static int test_bot_fire_weapon_reuse_with_choice(void)
    }
    PASS();
 
+   TEST("point-blank enemy forces crowbar over current firearm");
+   {
+      mock_reset();
+      setup_skill_settings();
+      pBotEdict = mock_alloc_edict();
+      setup_bot_for_test(testbot, pBotEdict);
+      mock_trace_line_fn = trace_nohit;
+      mock_trace_hull_fn = trace_nohit;
+      pEnemy = create_enemy_player(Vector(48, 0, 0));
+      testbot.pBotEnemy = pEnemy;
+
+      int crow_idx = -1;
+      int sg_idx = -1;
+      for (int i = 0; weapon_select[i].iId; i++) {
+         if (weapon_select[i].iId == VALVE_WEAPON_CROWBAR) crow_idx = i;
+         if (weapon_select[i].iId == VALVE_WEAPON_SHOTGUN) sg_idx = i;
+      }
+
+      if (crow_idx >= 0 && sg_idx >= 0) {
+         testbot.current_weapon_index = sg_idx;
+         testbot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
+         pBotEdict->v.weapons = (1u << VALVE_WEAPON_CROWBAR) |
+                               (1u << VALVE_WEAPON_SHOTGUN);
+         int ammo1 = weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1;
+         if (ammo1 >= 0 && ammo1 < MAX_AMMO_SLOTS)
+            testbot.m_rgAmmo[ammo1] = 50;
+         fire_delay[crow_idx].iId = VALVE_WEAPON_CROWBAR;
+
+         qboolean res = BotFireWeapon(Vector(48, 0, 0), testbot, 0);
+         ASSERT_INT(res, TRUE);
+         ASSERT_INT(testbot.current_weapon_index, crow_idx);
+      }
+   }
+   PASS();
+
    return 0;
 }
 
@@ -4166,16 +4201,15 @@ static int test_reuse_weapon_conditions(void)
       }
    }
 
-   TEST("reuse current weapon via IsValid checks (lines 1500-1502)");
+   TEST("explicit non-matching choice does not reuse current weapon");
    if (sg_idx >= 0) {
       testbot.current_weapon_index = sg_idx;
       pBotEdict->v.weapons = (1u << VALVE_WEAPON_SHOTGUN);
       int ammo1 = weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1;
       if (ammo1 >= 0 && ammo1 < MAX_AMMO_SLOTS) testbot.m_rgAmmo[ammo1] = 50;
-      // weapon_choice != 0 AND != iId -> falls to IsValid condition check (lines 1500-1502)
-      // Distance 500 = within shotgun primary range (400-1500)
       qboolean res = BotFireWeapon(Vector(500, 0, 0), testbot, VALVE_WEAPON_MP5);
-      (void)res;
+      ASSERT_INT(res, FALSE);
+      ASSERT_INT(testbot.current_weapon_index, -1);
    }
    PASS();
 
