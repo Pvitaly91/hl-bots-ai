@@ -4373,9 +4373,9 @@ static int test_BotDoStrafe_combat_battle_strafe(void)
    return 0;
 }
 
-static int test_BotDoStrafe_combat_optimal_dist(void)
+static int test_BotDoStrafe_melee_chases_enemy(void)
 {
-   TEST("BotDoStrafe: combat keep_optimal_dist -> back up");
+   TEST("BotDoStrafe: melee chases despite stale optimal distance");
    setup_engine_funcs();
 
    edict_t *e = mock_alloc_edict();
@@ -4386,14 +4386,14 @@ static int test_BotDoStrafe_combat_optimal_dist(void)
    bot_t bot;
    setup_alive_bot(bot, e);
    bot.pBotEnemy = enemy;
-   bot.current_weapon_index = 0;
-   bot.current_opt_distance = 200.0f; // preferred distance > actual
+   bot.current_weapon_index = 0; // crowbar
+   bot.current_opt_distance = 200.0f; // stale value from previous firearm
    e->v.v_angle = Vector(0, 0, 0);
 
    for (int i = 0; i < 5; i++)
    {
       skill_settings[i].battle_strafe = 0;
-      skill_settings[i].keep_optimal_dist = 100; // always keep dist
+      skill_settings[i].keep_optimal_dist = 100;
    }
 
    bot.f_strafe_time = 0;
@@ -4402,8 +4402,8 @@ static int test_BotDoStrafe_combat_optimal_dist(void)
    BotDoStrafe(bot);
 
    ASSERT_TRUE(bot.f_strafe_time > gpGlobals->time);
-   // Enemy close, keep_optimal_dist -> move_direction = -1 (back up)
-   ASSERT_FLOAT(bot.f_move_direction, -1.0f);
+   ASSERT_FLOAT(bot.f_move_direction, 1.0f);
+   ASSERT_FLOAT(bot.f_move_speed, bot.f_max_speed);
 
    PASS();
    return 0;
@@ -5657,7 +5657,7 @@ int main(void)
 
    // Phase 3: BotDoStrafe
    fail |= test_BotDoStrafe_combat_battle_strafe();
-   fail |= test_BotDoStrafe_combat_optimal_dist();
+   fail |= test_BotDoStrafe_melee_chases_enemy();
    fail |= test_BotDoStrafe_combat_wall_checks();
    fail |= test_BotDoStrafe_ladder_waypoint_fast();
    fail |= test_BotDoStrafe_ladder_waypoint_slow();

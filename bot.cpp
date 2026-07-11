@@ -2242,9 +2242,22 @@ static void BotDoStrafeCombat_SelectDirection(bot_t &pBot)
    edict_t *pEdict = pBot.pEdict;
    bool isMelee = (weapon_select[pBot.current_weapon_index].type & WEAPON_MELEE);
 
+   if(isMelee)
+   {
+      if(pBot.f_strafe_time <= gpGlobals->time)
+      {
+         pBot.f_strafe_time = gpGlobals->time + RANDOM_FLOAT2(0.3, 0.7);
+         pBot.f_strafe_direction = RANDOM_FLOAT(-0.2, 0.2);
+      }
+
+      pBot.f_move_direction = 1.0f;
+      pBot.f_move_speed = pBot.f_max_speed;
+      return;
+   }
+
    // don't go too close to enemy
    // strafe instead
-   if(RANDOM_LONG2(1, 100) <= BotSkillGetBattleStrafe(pBot.bot_skill) && !isMelee)
+   if(RANDOM_LONG2(1, 100) <= BotSkillGetBattleStrafe(pBot.bot_skill))
    {
       if(pBot.f_strafe_time <= gpGlobals->time)
       {
@@ -2262,9 +2275,9 @@ static void BotDoStrafeCombat_SelectDirection(bot_t &pBot)
          pBot.f_strafe_time = gpGlobals->time + RANDOM_FLOAT2(0.5, 1.2);
          pBot.f_strafe_direction = RANDOM_FLOAT(-0.3, 0.3);
 
-         if(RANDOM_LONG2(1, 100) <= skill_settings[pBot.bot_skill].keep_optimal_dist || isMelee)
+         if(RANDOM_LONG2(1, 100) <= skill_settings[pBot.bot_skill].keep_optimal_dist)
          {
-            if((UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy) - pEdict->v.origin).Length() < pBot.current_opt_distance || !isMelee)
+            if((UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy) - pEdict->v.origin).Length() < pBot.current_opt_distance)
                pBot.f_move_direction = -1;
             else
                pBot.f_move_direction = 1;

@@ -1500,6 +1500,7 @@ static qboolean TrySelectWeapon(bot_t &pBot, const int select_index, const bot_w
    }
 
    pBot.current_weapon_index = select_index;
+   pBot.current_opt_distance = select.opt_distance;
    pBot.f_weaponchange_time = gpGlobals->time +
       RANDOM_FLOAT2(skill_settings[pBot.bot_skill].weaponchange_rate_min,
                     skill_settings[pBot.bot_skill].weaponchange_rate_max);

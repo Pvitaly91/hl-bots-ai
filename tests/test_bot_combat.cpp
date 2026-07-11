@@ -3138,6 +3138,7 @@ static int test_bot_fire_weapon_reuse_with_choice(void)
          qboolean res = BotFireWeapon(Vector(48, 0, 0), testbot, 0);
          ASSERT_INT(res, TRUE);
          ASSERT_INT(testbot.current_weapon_index, crow_idx);
+         ASSERT_FLOAT(testbot.current_opt_distance, weapon_select[crow_idx].opt_distance);
       }
    }
    PASS();
