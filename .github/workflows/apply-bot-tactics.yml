@@ -1,9 +1,8 @@
 name: Apply bot tactics patch
 
 on:
-  push:
-    branches:
-      - main
+  pull_request:
+    types: [opened]
 
 permissions:
   contents: write
@@ -15,6 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
       - name: Apply source changes
         run: python3 scripts/apply_bot_tactics_patch.py
