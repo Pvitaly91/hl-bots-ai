@@ -103,6 +103,7 @@ const char *BotTraceGoalTypeName(int goal_type)
       case WPT_GOAL_LOCATION:    return "location";
       case WPT_GOAL_TRACK_SOUND: return "track_sound";
       case WPT_GOAL_ENEMY:       return "enemy";
+      case WPT_GOAL_BUNKER:      return "bunker";
       default:                   return "unknown";
    }
 }

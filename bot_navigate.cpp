@@ -19,6 +19,7 @@
 #include "bot_weapons.h"
 #include "bot_sound.h"
 #include "bot_trace.h"
+#include "crossfire_tactics.h"
 
 
 extern WAYPOINT waypoints[MAX_WAYPOINTS];
@@ -318,7 +319,9 @@ static void BotEvaluateGoal( bot_t &pBot )
    edict_t *pEdict = pBot.pEdict;
 
    // we're dying!  Forget about our goal
-   if (pBot.waypoint_goal != -1 && pEdict->v.health <= 25 && pBot.wpt_goal_type != WPT_GOAL_HEALTH)
+   if (pBot.waypoint_goal != -1 && pEdict->v.health <= 25 &&
+       pBot.wpt_goal_type != WPT_GOAL_HEALTH &&
+       pBot.wpt_goal_type != WPT_GOAL_BUNKER)
    {
       //if(pBot.waypoint_goal != -1)
       //   UTIL_ConsolePrintf("[%s] Dying, forget goal: %d -> %d", pBot.name, pBot.waypoint_goal, -1);
@@ -670,9 +673,33 @@ static qboolean BotFindWaypointGoalEnemy(bot_t &pBot)
 }
 
 
+static qboolean BotFindWaypointGoalCrossfireBunker(bot_t &pBot)
+{
+   if (!CrossfireTacticsIsStrikeActive())
+      return FALSE;
+
+   const int index = CrossfireTacticsFindBunkerWaypoint(pBot);
+
+   if (index == -1)
+      return FALSE;
+
+   pBot.wpt_goal_type = WPT_GOAL_BUNKER;
+   pBot.waypoint_goal = index;
+   pBot.pTrackSoundEdict = NULL;
+   pBot.f_track_sound_time = -1;
+
+   BotTrace(pBot, "goal set: bunker wpt=%d", index);
+
+   return TRUE;
+}
+
+
 static void BotFindWaypointGoal( bot_t &pBot )
 {
    int index = -1;
+
+   if (BotFindWaypointGoalCrossfireBunker(pBot))
+      return;
 
    // look for health if we're pretty dead
    if (BotFindWaypointGoalCriticalHealth(pBot))
@@ -1025,6 +1052,13 @@ static qboolean BotHeadTowardWaypointCheckUnderwaterExit(bot_t &pBot)
 static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoint_found)
 {
    int i;
+
+   if (CrossfireTacticsIsStrikeActive() &&
+       pBot.wpt_goal_type != WPT_GOAL_BUNKER)
+   {
+      pBot.waypoint_goal = -1;
+      pBot.f_waypoint_goal_time = 0.0f;
+   }
 
    // if the bot doesn't have a goal waypoint then pick one...
    if ((pBot.waypoint_goal == -1 || pBot.pBotEnemy != NULL) &&

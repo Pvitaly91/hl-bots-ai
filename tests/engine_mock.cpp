@@ -90,6 +90,12 @@ __attribute__((weak)) gamedll_funcs_t *gpGamedllFuncs = &mock_gamedll_funcs;
 
 __attribute__((weak)) plugin_info_t Plugin_info;
 
+__attribute__((weak)) void BootstrapLogStage(const char *stage, const char *detail)
+{
+   (void)stage;
+   (void)detail;
+}
+
 // ============================================================
 // Extern globals from production .cpp files
 // ============================================================

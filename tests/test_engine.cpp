@@ -18,6 +18,7 @@
 #include "bot_func.h"
 #include "bot_sound.h"
 #include "bot_weapons.h"
+#include "crossfire_tactics.h"
 
 #include "engine_mock.h"
 #include "test_common.h"
@@ -232,6 +233,7 @@ static int test_GetEngineFunctions_returns_TRUE(void)
    ASSERT_PTR_NOT_NULL((void*)eng.pfnPlaybackEvent);
    ASSERT_PTR_NOT_NULL((void*)eng.pfnChangeLevel);
    ASSERT_PTR_NOT_NULL((void*)eng.pfnEmitSound);
+   ASSERT_PTR_NOT_NULL((void*)eng.pfnEmitAmbientSound);
    ASSERT_PTR_NOT_NULL((void*)eng.pfnClientCommand);
    ASSERT_PTR_NOT_NULL((void*)eng.pfnMessageBegin);
    ASSERT_PTR_NOT_NULL((void*)eng.pfnMessageEnd);
@@ -746,6 +748,25 @@ static int test_EmitSound_null_entity(void)
                              1.0f, 1.0f, 0, 100);
 
    ASSERT_INT(count_active_sounds(), 0);
+
+   PASS();
+   return 0;
+}
+
+
+static int test_EmitAmbientSound_crossfire_siren_starts_evacuation(void)
+{
+   TEST("pfnEmitAmbientSound: Crossfire siren starts evacuation");
+
+   test_reset();
+   CrossfireTacticsReset();
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+
+   g_eng_hooks.pfnEmitAmbientSound(NULL, NULL, "ambience/siren.wav",
+                                    1.0f, 1.0f, 0, 100);
+
+   ASSERT_TRUE(CrossfireTacticsIsStrikeActive());
+   CrossfireTacticsReset();
 
    PASS();
    return 0;
@@ -1686,6 +1707,7 @@ int main(void)
    fail |= test_EmitSound_other_entity();
    fail |= test_EmitSound_deathmatch_0();
    fail |= test_EmitSound_null_entity();
+   fail |= test_EmitAmbientSound_crossfire_siren_starts_evacuation();
 
    // ChangeLevel tests
    fail |= test_ChangeLevel_kicks_all_bots();

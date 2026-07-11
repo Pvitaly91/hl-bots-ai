@@ -2426,6 +2426,40 @@ static int test_find_waypoint_goal_needs_health(void)
    return 0;
 }
 
+
+static int test_find_waypoint_goal_crossfire_strike_prioritizes_bunker(void)
+{
+   TEST("BotFindWaypointGoal: Crossfire strike overrides combat with bunker");
+   mock_reset();
+   reset_navigate_mocks();
+   CrossfireTacticsReset();
+
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   gpGlobals->time = 100.0f;
+
+   edict_t *pEdict = mock_alloc_edict();
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   pEdict->v.health = 10.0f;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
+
+   setup_waypoint(0, Vector(0.0f, 0.0f, 0.0f));
+   setup_waypoint(1, Vector(0.0f, -2350.0f, -1820.0f));
+   mock_WaypointDistanceFromTo_result = 100.0f;
+
+   CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);
+   BotFindWaypointGoal(bot);
+
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bot.waypoint_goal, 1);
+
+   CrossfireTacticsReset();
+   PASS();
+   return 0;
+}
+
 // ============================================================
 // 20. BotHeadTowardWaypoint tests
 // ============================================================
@@ -5396,6 +5430,7 @@ int main(void)
    failures += test_find_waypoint_goal_enemy();
    failures += test_find_waypoint_goal_fallback_random();
    failures += test_find_waypoint_goal_needs_health();
+   failures += test_find_waypoint_goal_crossfire_strike_prioritizes_bunker();
 
    printf("=== BotHeadTowardWaypoint tests ===\n");
    failures += test_head_toward_no_waypoint_find_reachable();

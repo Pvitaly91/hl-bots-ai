@@ -29,6 +29,7 @@
 #include "bot_trace.h"
 
 #include "ai_balance.h"
+#include "crossfire_tactics.h"
 #include "bootstrap_log.h"
 #include "safe_snprintf.h"
 
@@ -212,6 +213,8 @@ static Vector m_origin;
 
 static void SpawnInitWorld(void)
 {
+   CrossfireTacticsReset();
+
    // clear players array
    //  note: posdata clean up first to prevent mem-leaks.
    //  note2: WaypointInit (and maybe others) set different than zero init value for array object,

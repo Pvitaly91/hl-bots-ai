@@ -16,6 +16,7 @@
 #include "bot_func.h"
 #include "bot_sound.h"
 #include "bot_weapons.h"
+#include "crossfire_tactics.h"
 
 extern enginefuncs_t g_engfuncs;
 extern bot_t bots[32];
@@ -177,6 +178,14 @@ static void pfnEmitSound(edict_t *entity, int channel, const char *sample, float
 
       SaveSound(entity, entity->v.origin, ivolume, channel, duration);
    }
+
+   RETURN_META (MRES_IGNORED);
+}
+
+
+static void pfnEmitAmbientSound(edict_t *entity, float *position, const char *sample, float volume, float attenuation, int fFlags, int pitch)
+{
+   CrossfireTacticsOnAmbientSound(sample, fFlags);
 
    RETURN_META (MRES_IGNORED);
 }
@@ -507,6 +516,7 @@ C_DLLEXPORT int GetEngineFunctions (enginefuncs_t *pengfuncsFromEngine, int *int
    pengfuncsFromEngine->pfnPlaybackEvent = pfnPlaybackEvent;
    pengfuncsFromEngine->pfnChangeLevel = pfnChangeLevel;
    pengfuncsFromEngine->pfnEmitSound = pfnEmitSound;
+   pengfuncsFromEngine->pfnEmitAmbientSound = pfnEmitAmbientSound;
    pengfuncsFromEngine->pfnClientCommand = pfnClientCommand;
    pengfuncsFromEngine->pfnMessageBegin = pfnMessageBegin;
    pengfuncsFromEngine->pfnMessageEnd = pfnMessageEnd;

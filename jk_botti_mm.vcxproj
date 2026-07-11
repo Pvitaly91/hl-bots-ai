@@ -132,6 +132,7 @@ xcopy "$(SolutionDir)addons\jk_botti" "$(SolutionDir)build\bin\$(Configuration)\
     <ClCompile Include="bot_trace.cpp" />
     <ClCompile Include="bot_weapons.cpp" />
     <ClCompile Include="commands.cpp" />
+    <ClCompile Include="crossfire_tactics.cpp" />
     <ClCompile Include="dll.cpp" />
     <ClCompile Include="engine.cpp" />
     <ClCompile Include="h_export.cpp" />
@@ -170,6 +171,7 @@ xcopy "$(SolutionDir)addons\jk_botti" "$(SolutionDir)build\bin\$(Configuration)\
     <ClInclude Include="bot_weapons.h" />
     <ClInclude Include="bootstrap_log.h" />
     <ClInclude Include="compiler.h" />
+    <ClInclude Include="crossfire_tactics.h" />
     <ClInclude Include="geneticalg.h" />
     <ClInclude Include="neuralnet.h" />
     <ClInclude Include="new_baseclass.h" />

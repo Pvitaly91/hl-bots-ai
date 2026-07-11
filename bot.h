@@ -73,6 +73,7 @@ typedef int BOOL;
 #define WPT_GOAL_LOCATION  8
 #define WPT_GOAL_TRACK_SOUND  9
 #define WPT_GOAL_ENEMY     10
+#define WPT_GOAL_BUNKER    11
 
 // instant damage (from cbase.h)
 #define DMG_CRUSH       (1 << 0) // crushed by falling or moving object

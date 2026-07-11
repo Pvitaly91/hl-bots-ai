@@ -9,7 +9,9 @@
    #include <sys/types.h>
 
    typedef int socklen_t;
-   typedef SSIZE_T ssize_t;
+   #ifdef _MSC_VER
+      typedef SSIZE_T ssize_t;
+   #endif
 #else
    #include <sys/types.h>
    #include <sys/socket.h>

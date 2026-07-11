@@ -21,6 +21,7 @@
 #include "bot_config_init.h"
 #include "bot_name_sanitize.h"
 #include "bot_trace.h"
+#include "crossfire_tactics.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -2972,6 +2973,15 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
    pBot.b_has_enough_ammo_for_good_weapon = !BotAllWeaponsRunningOutOfAmmo(pBot, TRUE);
    pBot.b_only_has_weak_weapons = BotHasOnlyWeakWeapons(pBot);
 
+   if (CrossfireTacticsIsStrikeActive())
+   {
+      if (pBot.pBotEnemy != NULL)
+         BotRemoveEnemy(pBot, FALSE, "crossfire strike evacuation");
+
+      pBot.f_pause_time = 0.0f;
+      return FALSE;
+   }
+
    BotThinkHandleEnemy_FindAndAim(pBot);
 
    BotDetonateSatchel(pBot);
@@ -3013,6 +3023,12 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
    if(did_shoot)
    {
       // do nothing
+   }
+   else if (CrossfireTacticsIsStrikeActive() &&
+            CrossfireTacticsIsBotSheltered(pBot))
+   {
+      pBot.f_pause_time = 0.0f;
+      pBot.f_move_speed = 0.0f;
    }
    else if (pBot.f_pause_time > gpGlobals->time)  // is bot "paused"?
    {
