@@ -136,7 +136,8 @@ void BotFindEnemy(bot_t &pBot)
    if(mock_BotFindEnemy_result)
       pBot.pBotEnemy = mock_BotFindEnemy_result;
 }
-void BotShootAtEnemy(bot_t &pBot) { (void)pBot; }
+static int mock_BotShootAtEnemy_count = 0;
+void BotShootAtEnemy(bot_t &pBot) { (void)pBot; mock_BotShootAtEnemy_count++; }
 static qboolean mock_BotShootTripmine_ret_early = FALSE;
 qboolean BotShootTripmine(bot_t &pBot) { (void)pBot; return mock_BotShootTripmine_ret_early; }
 qboolean BotDetonateSatchel(bot_t &pBot) { (void)pBot; return FALSE; }
@@ -409,6 +410,7 @@ static void setup_engine_funcs(void)
    mock_BotRandomTurn_count = 0;
    mock_BotFindEnemy_result = NULL;
    mock_BotFindEnemy_count = 0;
+   mock_BotShootAtEnemy_count = 0;
 
    // Reset globals that bot.cpp uses
    free(team_blockedlist);
@@ -5256,6 +5258,50 @@ static int test_BotThink_weak_weapon_no_seek(void)
    return 0;
 }
 
+
+static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
+{
+   TEST("BotThink: Crossfire strike keeps combat and assigns bunker goal");
+   setup_engine_funcs();
+   CrossfireTacticsReset();
+
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   gpGlobals->time = 100.0f;
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *enemy = mock_alloc_edict();
+   enemy->v.origin = Vector(200.0f, 0.0f, 0.0f);
+   enemy->v.flags = FL_CLIENT;
+   enemy->v.health = 100.0f;
+   enemy->v.deadflag = DEAD_NO;
+
+   bot_t bot;
+   setup_alive_bot(bot, e);
+   bot.pBotEnemy = enemy;
+   bot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
+   bot.current_weapon.iClip = 8;
+   e->v.weapons = (1u << VALVE_WEAPON_SHOTGUN);
+   bot.m_rgAmmo[weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1] = 50;
+
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(0.0f, -2350.0f, -1820.0f);
+
+   CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);
+
+   const qboolean did_shoot = BotThinkHandleEnemy(bot);
+   BotThinkHandleNavigation(bot, did_shoot, 2.0f);
+
+   ASSERT_TRUE(did_shoot);
+   ASSERT_INT(mock_BotShootAtEnemy_count, 1);
+   ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bot.waypoint_goal, 0);
+
+   CrossfireTacticsReset();
+   PASS();
+   return 0;
+}
+
 static int test_BotThink_spawned_weak_weapon_seeks(void)
 {
    TEST("BotThink: spawned bot with Glock actively seeks enemy");
@@ -5683,6 +5729,7 @@ int main(void)
 
    // Phase 6: BotThink combat
    fail |= test_BotThink_enemy_shoot();
+   fail |= test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal();
    fail |= test_BotThink_enemy_zoom_off();
    fail |= test_BotThink_enemy_eagle_spot_off();
    fail |= test_BotThink_enemy_cant_attack_runaway();

@@ -142,3 +142,27 @@ int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot)
 
    return best_index;
 }
+
+
+qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot)
+{
+   if (!CrossfireTacticsIsStrikeActive())
+      return FALSE;
+
+   if (pBot.wpt_goal_type == WPT_GOAL_BUNKER &&
+       pBot.waypoint_goal >= 0 && pBot.waypoint_goal < num_waypoints &&
+       CrossfireTacticsIsBunkerGoalWaypoint(waypoints[pBot.waypoint_goal]))
+      return TRUE;
+
+   const int index = CrossfireTacticsFindBunkerWaypoint(pBot);
+
+   if (index == -1)
+      return FALSE;
+
+   pBot.wpt_goal_type = WPT_GOAL_BUNKER;
+   pBot.waypoint_goal = index;
+   pBot.pTrackSoundEdict = NULL;
+   pBot.f_track_sound_time = -1.0f;
+
+   return TRUE;
+}

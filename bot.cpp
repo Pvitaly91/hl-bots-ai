@@ -2973,15 +2973,6 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
    pBot.b_has_enough_ammo_for_good_weapon = !BotAllWeaponsRunningOutOfAmmo(pBot, TRUE);
    pBot.b_only_has_weak_weapons = BotHasOnlyWeakWeapons(pBot);
 
-   if (CrossfireTacticsIsStrikeActive())
-   {
-      if (pBot.pBotEnemy != NULL)
-         BotRemoveEnemy(pBot, FALSE, "crossfire strike evacuation");
-
-      pBot.f_pause_time = 0.0f;
-      return FALSE;
-   }
-
    BotThinkHandleEnemy_FindAndAim(pBot);
 
    BotDetonateSatchel(pBot);
@@ -3019,6 +3010,10 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float moved_distance)
 {
    edict_t *pEdict = pBot.pEdict;
+
+   // Combat may skip waypoint movement for this frame, but the strategic
+   // destination must remain the bunker throughout the strike.
+   CrossfireTacticsEnsureBunkerGoal(pBot);
 
    if(did_shoot)
    {

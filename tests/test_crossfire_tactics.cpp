@@ -136,6 +136,35 @@ static int test_bunker_goal_uses_reachable_nodes_and_spreads_bots(void)
 }
 
 
+static int test_bunker_goal_preserves_enemy(void)
+{
+   TEST("Strike assigns bunker goal without clearing the combat target");
+
+   setup_crossfire();
+
+   num_waypoints = 2;
+   waypoints[0].origin = Vector(0.0f, -2350.0f, -1820.0f);
+   waypoints[1].origin = Vector(0.0f, 0.0f, 0.0f);
+
+   bot_t bot;
+   memset(&bot, 0, sizeof(bot));
+   bot.pEdict = mock_alloc_edict();
+   bot.pBotEnemy = mock_alloc_edict();
+   bot.curr_waypoint_index = -1;
+   edict_t *enemy = bot.pBotEnemy;
+
+   CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);
+
+   ASSERT_TRUE(CrossfireTacticsEnsureBunkerGoal(bot));
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bot.waypoint_goal, 0);
+   ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -145,6 +174,7 @@ int main(void)
    fail |= test_other_maps_and_sounds_are_ignored();
    fail |= test_shelter_bounds();
    fail |= test_bunker_goal_uses_reachable_nodes_and_spreads_bots();
+   fail |= test_bunker_goal_preserves_enemy();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

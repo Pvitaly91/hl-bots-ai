@@ -675,20 +675,10 @@ static qboolean BotFindWaypointGoalEnemy(bot_t &pBot)
 
 static qboolean BotFindWaypointGoalCrossfireBunker(bot_t &pBot)
 {
-   if (!CrossfireTacticsIsStrikeActive())
+   if (!CrossfireTacticsEnsureBunkerGoal(pBot))
       return FALSE;
 
-   const int index = CrossfireTacticsFindBunkerWaypoint(pBot);
-
-   if (index == -1)
-      return FALSE;
-
-   pBot.wpt_goal_type = WPT_GOAL_BUNKER;
-   pBot.waypoint_goal = index;
-   pBot.pTrackSoundEdict = NULL;
-   pBot.f_track_sound_time = -1;
-
-   BotTrace(pBot, "goal set: bunker wpt=%d", index);
+   BotTrace(pBot, "goal set: bunker wpt=%d", pBot.waypoint_goal);
 
    return TRUE;
 }

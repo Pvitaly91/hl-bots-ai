@@ -10,5 +10,6 @@ void CrossfireTacticsOnAmbientSound(const char *sample, int flags);
 qboolean CrossfireTacticsIsStrikeActive(void);
 qboolean CrossfireTacticsIsBotSheltered(const bot_t &pBot);
 int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot);
+qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot);
 
 #endif // CROSSFIRE_TACTICS_H
