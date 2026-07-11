@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feature/bot-tactics-pickups
 
 permissions:
   contents: write
@@ -35,4 +34,4 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add bot.cpp bot_combat.cpp bot_weapons.cpp scripts/apply_bot_tactics_patch.py .github/workflows/apply-bot-tactics.yml
           git commit -m "Improve bot close combat and pickup tactics"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:main
