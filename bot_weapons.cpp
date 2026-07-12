@@ -97,9 +97,11 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
     60, TRUE, 100, 1, 0, FALSE, FALSE, FALSE, FALSE, 0.0, 0.0, FALSE, 2, -1,
     W_IFL_RPG, W_IFL_AMMO_RPG, 0, TRUE, FALSE },
 
+   // Favor the Glock's fast secondary fire at close and medium range while
+   // retaining accurate primary fire for longer shots.
    {VALVE_WEAPON_GLOCK, WEAPON_SUBMOD_ALL, "weapon_9mmhandgun", WEAPON_FIRE, 1.0,
-    SKILL5, SKILL3, FALSE, TRUE,
-    250.0, 1500.0, 32.0, 300.0, 300.0,
+    SKILL5, SKILL5, FALSE, TRUE,
+    250.0, 1500.0, 32.0, 700.0, 300.0,
     20, TRUE, 70, 1, 1, TRUE, TRUE, FALSE, FALSE, 0.0, 0.0, TRUE, 30, -1,
     W_IFL_GLOCK, W_IFL_AMMO_9MM, 0, TRUE, FALSE },
 

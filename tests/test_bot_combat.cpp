@@ -1952,7 +1952,7 @@ static int test_bot_fire_selected_weapon(void)
    ASSERT_TRUE(testbot.f_duck_time > gpGlobals->time);
    PASS();
 
-   TEST("both primary+secondary calls BotSelectAttack");
+   TEST("Glock prefers secondary when both attacks are valid");
    select.iId = VALVE_WEAPON_GLOCK;
    delay.iId = VALVE_WEAPON_GLOCK;
    select.type = WEAPON_FIRE;
@@ -1963,8 +1963,8 @@ static int test_bot_fire_selected_weapon(void)
    pBotEdict->v.button = 0;
    result = BotFireSelectedWeapon(testbot, select, delay, TRUE, TRUE);
    ASSERT_INT(result, TRUE);
-   // BotSelectAttack should pick one; either IN_ATTACK or IN_ATTACK2 is set
-   ASSERT_TRUE((pBotEdict->v.button & (IN_ATTACK | IN_ATTACK2)) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    PASS();
 
    TEST("primary fire with min/max delay");
@@ -2257,6 +2257,67 @@ static int test_bot_fire_weapon(void)
          weapon_select[crow_idx].use_percent = 100;
       }
    }
+   PASS();
+
+   return 0;
+}
+
+static int test_glock_secondary_distance_policy(void)
+{
+   printf("Glock secondary distance policy:\n");
+   mock_reset();
+   setup_skill_settings();
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   testbot.bot_skill = WORST_BOT_LEVEL;
+   testbot.weapon_skill = SKILL5;
+   testbot.pBotEnemy = create_enemy_player(Vector(500, 0, 0));
+
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_nohit;
+
+   int glock_idx = -1;
+   for (int i = 0; weapon_select[i].iId; ++i)
+   {
+      if (weapon_select[i].iId == VALVE_WEAPON_GLOCK)
+      {
+         glock_idx = i;
+         break;
+      }
+   }
+
+   ASSERT_TRUE(glock_idx >= 0);
+   weapon_defs[VALVE_WEAPON_GLOCK].iId = VALVE_WEAPON_GLOCK;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo2 = -1;
+   pBotEdict->v.weapons = (1u << VALVE_WEAPON_GLOCK);
+   testbot.current_weapon_index = glock_idx;
+   testbot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   testbot.current_weapon.iClip = 17;
+   testbot.m_rgAmmo[1] = 50;
+   fire_delay[glock_idx].iId = VALVE_WEAPON_GLOCK;
+
+   TEST("skill 5 Glock uses secondary fire at close range");
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(128, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   PASS();
+
+   TEST("skill 5 Glock favors secondary fire at medium range");
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   PASS();
+
+   TEST("Glock uses primary fire beyond secondary range");
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(900, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
    PASS();
 
    return 0;
@@ -4794,6 +4855,8 @@ int main(void)
    rc |= test_bot_fire_selected_weapon();
    printf("\n");
    rc |= test_bot_fire_weapon();
+   printf("\n");
+   rc |= test_glock_secondary_distance_policy();
    printf("\n");
 
    // Group 6: BotShootAtEnemy + special weapons

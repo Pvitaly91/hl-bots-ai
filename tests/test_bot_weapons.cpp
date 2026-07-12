@@ -314,6 +314,14 @@ static int test_skill_checks(void)
    ASSERT_INT(BotCanUseWeapon(bot, *gauss), TRUE);
    PASS();
 
+   TEST("Glock secondary fire is available to skill 5 bots");
+   bot_weapon_select_t *glock = GetWeaponSelect(VALVE_WEAPON_GLOCK);
+   bot.weapon_skill = SKILL5;
+   ASSERT_PTR_NOT_NULL(glock);
+   ASSERT_INT(BotSkilledEnoughForSecondaryAttack(bot, *glock), TRUE);
+   ASSERT_FLOAT(glock->secondary_max_distance, 700.0f);
+   PASS();
+
    return 0;
 }
 
@@ -607,6 +615,15 @@ static int test_IsValidSecondaryAttack(void)
    bot.m_rgAmmo[6] = 0; // no primary (uranium) ammo
    ASSERT_INT(IsValidSecondaryAttack(bot, *gauss, 200.0, 0.0, FALSE), FALSE);
    bot.current_weapon.iAmmo2 = 0;
+   PASS();
+
+   TEST("Glock secondary covers close and medium range only");
+   bot_weapon_select_t *glock = GetWeaponSelect(VALVE_WEAPON_GLOCK);
+   bot.m_rgAmmo[1] = 50;
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 128.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 500.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 700.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 700.1f, 0.0f, FALSE), FALSE);
    PASS();
 
    return 0;

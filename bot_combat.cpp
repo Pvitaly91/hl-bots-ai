@@ -1473,8 +1473,14 @@ static void BotFireSelectedWeaponSetShootTime(bot_t &pBot, const bot_weapon_sele
 //
 static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &select, const bot_fire_delay_t &delay, qboolean use_primary, qboolean use_secondary)
 {
-   // Select primary or secondary based on bot skill and random percent
-   if(use_primary && use_secondary)
+   // The Glock's secondary mode is its close/medium rapid-fire attack. Once
+   // its range check passes, do not randomly fall back to slow primary fire.
+   if(use_primary && use_secondary && select.iId == VALVE_WEAPON_GLOCK)
+   {
+      use_primary = FALSE;
+   }
+   // Select primary or secondary based on bot skill and random percent.
+   else if(use_primary && use_secondary)
    {
       BotSelectAttack(pBot, select, use_primary, use_secondary);
    }
