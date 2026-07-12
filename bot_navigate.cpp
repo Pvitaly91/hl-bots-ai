@@ -19,7 +19,7 @@
 #include "bot_weapons.h"
 #include "bot_sound.h"
 #include "bot_trace.h"
-#include "crossfire_tactics.h"
+#include "map_profile.h"
 
 
 extern WAYPOINT waypoints[MAX_WAYPOINTS];
@@ -321,9 +321,7 @@ static void BotEvaluateGoal( bot_t &pBot )
    // we're dying!  Forget about our goal
    if (pBot.waypoint_goal != -1 && pEdict->v.health <= 25 &&
        pBot.wpt_goal_type != WPT_GOAL_HEALTH &&
-       pBot.wpt_goal_type != WPT_GOAL_BUNKER &&
-       pBot.wpt_goal_type != WPT_GOAL_STRIKE_BUTTON &&
-       pBot.wpt_goal_type != WPT_GOAL_BUNKER_SHAFT)
+       !MapProfileIsStrategicGoal(pBot))
    {
       //if(pBot.waypoint_goal != -1)
       //   UTIL_ConsolePrintf("[%s] Dying, forget goal: %d -> %d", pBot.name, pBot.waypoint_goal, -1);
@@ -675,9 +673,9 @@ static qboolean BotFindWaypointGoalEnemy(bot_t &pBot)
 }
 
 
-static qboolean BotFindWaypointGoalCrossfireTactic(bot_t &pBot)
+static qboolean BotFindWaypointGoalMapProfile(bot_t &pBot)
 {
-   if (!CrossfireTacticsEnsureStrategicGoal(pBot))
+   if (!MapProfileEnsureStrategicGoal(pBot))
       return FALSE;
 
    BotTrace(pBot, "goal set: %s wpt=%d",
@@ -691,7 +689,7 @@ static void BotFindWaypointGoal( bot_t &pBot )
 {
    int index = -1;
 
-   if (BotFindWaypointGoalCrossfireTactic(pBot))
+   if (BotFindWaypointGoalMapProfile(pBot))
       return;
 
    // look for health if we're pretty dead
@@ -1046,9 +1044,8 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
 {
    int i;
 
-   if (CrossfireTacticsIsStrikeActive() &&
-       pBot.wpt_goal_type != WPT_GOAL_BUNKER &&
-       pBot.wpt_goal_type != WPT_GOAL_BUNKER_SHAFT)
+   if (MapProfileIsStrategicEventActive() &&
+       !MapProfileIsStrategicGoal(pBot))
    {
       pBot.waypoint_goal = -1;
       pBot.f_waypoint_goal_time = 0.0f;

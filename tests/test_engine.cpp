@@ -18,7 +18,7 @@
 #include "bot_func.h"
 #include "bot_sound.h"
 #include "bot_weapons.h"
-#include "crossfire_tactics.h"
+#include "map_profile.h"
 
 #include "engine_mock.h"
 #include "test_common.h"
@@ -759,14 +759,14 @@ static int test_EmitAmbientSound_crossfire_siren_starts_evacuation(void)
    TEST("pfnEmitAmbientSound: Crossfire siren starts evacuation");
 
    test_reset();
-   CrossfireTacticsReset();
+   MapProfileReset();
    gpGlobals->mapname = (string_t)(long)"crossfire";
 
    g_eng_hooks.pfnEmitAmbientSound(NULL, NULL, "ambience/siren.wav",
                                     1.0f, 1.0f, 0, 100);
 
-   ASSERT_TRUE(CrossfireTacticsIsStrikeActive());
-   CrossfireTacticsReset();
+   ASSERT_TRUE(MapProfileIsStrategicEventActive());
+   MapProfileReset();
 
    PASS();
    return 0;

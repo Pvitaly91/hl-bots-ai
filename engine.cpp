@@ -16,7 +16,7 @@
 #include "bot_func.h"
 #include "bot_sound.h"
 #include "bot_weapons.h"
-#include "crossfire_tactics.h"
+#include "map_profile.h"
 
 extern enginefuncs_t g_engfuncs;
 extern bot_t bots[32];
@@ -185,7 +185,7 @@ static void pfnEmitSound(edict_t *entity, int channel, const char *sample, float
 
 static void pfnEmitAmbientSound(edict_t *entity, float *position, const char *sample, float volume, float attenuation, int fFlags, int pitch)
 {
-   CrossfireTacticsOnAmbientSound(sample, fFlags);
+   MapProfileOnAmbientSound(sample, fFlags);
 
    RETURN_META (MRES_IGNORED);
 }

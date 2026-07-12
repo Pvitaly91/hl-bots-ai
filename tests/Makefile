@@ -84,7 +84,7 @@ test_bot_weapons: $(BOT_WEAPONS_OBJS)
 
 # Bot navigate tests (bot_navigate.cpp is #included in test file, not linked separately)
 BOT_NAVIGATE_OBJS = engine_mock.o test_bot_navigate.o \
-	bot_trace.o bot_weapons.o crossfire_tactics.o util.o safe_snprintf.o random_num.o
+	bot_trace.o bot_weapons.o map_profile.o map_profile_crossfire.o util.o safe_snprintf.o random_num.o
 
 test_bot_navigate: $(BOT_NAVIGATE_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(BOT_NAVIGATE_OBJS) -lm
@@ -139,7 +139,7 @@ test_bot.o: test_bot.cpp ../bot.cpp
 	${CXX} ${TEST_CXXFLAGS} -c $< -o $@
 
 BOT_OBJS = engine_mock.o test_bot.o \
-	bot_trace.o bot_config_init.o bot_weapons.o crossfire_tactics.o util.o safe_snprintf.o random_num.o
+	bot_trace.o bot_config_init.o bot_weapons.o map_profile.o map_profile_crossfire.o util.o safe_snprintf.o random_num.o
 
 test_bot: $(BOT_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(BOT_OBJS) -lm
@@ -156,24 +156,24 @@ dll.o: ../dll.cpp
 	${CXX} ${TEST_CXXFLAGS} -UVER_NOTE -DVER_NOTE='"test"' -UVER_MAJOR -DVER_MAJOR=0 -UVER_MINOR -DVER_MINOR=0 -c $< -o $@
 
 DLL_OBJS = engine_mock.o test_dll.o \
-	dll.o ai_balance.o bot_skill.o bot_trace.o bot_weapons.o bot_sound.o crossfire_tactics.o util.o safe_snprintf.o random_num.o
+	dll.o ai_balance.o bot_skill.o bot_trace.o bot_weapons.o bot_sound.o map_profile.o map_profile_crossfire.o util.o safe_snprintf.o random_num.o
 
 test_dll: $(DLL_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(DLL_OBJS) -lm
 
 # engine tests
 ENGINE_OBJS = engine_mock.o test_engine.o \
-	engine.o bot_weapons.o bot_sound.o crossfire_tactics.o util.o safe_snprintf.o random_num.o
+	engine.o bot_weapons.o bot_sound.o map_profile.o map_profile_crossfire.o util.o safe_snprintf.o random_num.o
 
 test_engine: $(ENGINE_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(ENGINE_OBJS) -lm
 
-# Crossfire map-specific tactics tests
-CROSSFIRE_TACTICS_OBJS = engine_mock.o test_crossfire_tactics.o \
-	crossfire_tactics.o util.o safe_snprintf.o random_num.o
+# Crossfire map profile tests
+MAP_PROFILE_CROSSFIRE_OBJS = engine_mock.o test_map_profile_crossfire.o \
+	map_profile.o map_profile_crossfire.o util.o safe_snprintf.o random_num.o
 
-test_crossfire_tactics: $(CROSSFIRE_TACTICS_OBJS)
-	${CXX} $(COVERAGE_FLAGS) -o $@ $(CROSSFIRE_TACTICS_OBJS) -lm
+test_map_profile_crossfire: $(MAP_PROFILE_CROSSFIRE_OBJS)
+	${CXX} $(COVERAGE_FLAGS) -o $@ $(MAP_PROFILE_CROSSFIRE_OBJS) -lm
 
 # bot_query_hook tests (bot_query_hook.cpp is #included in test file)
 test_bot_query_hook.o: test_bot_query_hook.cpp ../bot_query_hook.cpp ../bot_query_hook.h
@@ -205,7 +205,7 @@ BOT_TRACE_OBJS = engine_mock.o test_bot_trace.o \
 test_bot_trace: $(BOT_TRACE_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(BOT_TRACE_OBJS) -lm
 
-ALL_TESTS = test_name_sanitize test_posdata_list test_bot_combat test_bot_weapons test_util test_util_math test_bot_chat test_safe_snprintf test_random_num test_neuralnet test_geneticalg test_waypoint test_bot_navigate test_bot_skill test_bot_sound test_h_export test_bot_config_init test_bot_models test_bot_client test_bot test_commands test_dll test_engine test_crossfire_tactics test_bot_trace test_bot_query_hook test_bot_query_hook_linux test_bot_query_hook_win32
+ALL_TESTS = test_name_sanitize test_posdata_list test_bot_combat test_bot_weapons test_util test_util_math test_bot_chat test_safe_snprintf test_random_num test_neuralnet test_geneticalg test_waypoint test_bot_navigate test_bot_skill test_bot_sound test_h_export test_bot_config_init test_bot_models test_bot_client test_bot test_commands test_dll test_engine test_map_profile_crossfire test_bot_trace test_bot_query_hook test_bot_query_hook_linux test_bot_query_hook_win32
 
 all: $(ALL_TESTS)
 
@@ -233,7 +233,7 @@ run: $(ALL_TESTS)
 	./test_commands
 	./test_dll
 	./test_engine
-	./test_crossfire_tactics
+	./test_map_profile_crossfire
 	./test_bot_trace
 	./test_bot_query_hook
 	./test_bot_query_hook_linux
@@ -265,7 +265,7 @@ valgrind: $(ALL_TESTS)
 	$(VALGRIND) ./test_commands
 	$(VALGRIND) ./test_dll
 	$(VALGRIND) ./test_engine
-	$(VALGRIND) ./test_crossfire_tactics
+	$(VALGRIND) ./test_map_profile_crossfire
 	$(VALGRIND) ./test_bot_trace
 	$(VALGRIND) ./test_bot_query_hook
 	$(VALGRIND) ./test_bot_query_hook_linux

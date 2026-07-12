@@ -13,7 +13,7 @@
 #include "bot.h"
 #include "waypoint.h"
 #include "util.h"
-#include "crossfire_tactics.h"
+#include "map_profile_crossfire.h"
 
 extern bot_t bots[32];
 extern WAYPOINT waypoints[MAX_WAYPOINTS];
@@ -86,6 +86,22 @@ static float g_crossfire_shaft_next_progress_log[32];
 static qboolean g_crossfire_shaft_roof_logged[32];
 static qboolean g_crossfire_shaft_slip_logged[32];
 static qboolean g_crossfire_shaft_routes_active = FALSE;
+
+static void CrossfireTacticsReset(void);
+static void CrossfireTacticsOnEntitySpawn(edict_t *entity);
+static void CrossfireTacticsStartFrame(void);
+static void CrossfireTacticsOnAmbientSound(const char *sample, int flags);
+static qboolean CrossfireTacticsIsStrikeActive(void);
+static qboolean CrossfireTacticsIsBotSheltered(const bot_t &pBot);
+static qboolean CrossfireTacticsIsStrategicGoal(const bot_t &pBot);
+static int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot);
+static qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot);
+static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot);
+static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot);
+static qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot);
+static qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot);
+static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
+   const bot_t &pBot);
 
 
 static qboolean CrossfireTacticsIsCrossfire(void)
@@ -488,7 +504,7 @@ static qboolean CrossfireTacticsEnsureBunkerShaftGoal(bot_t &pBot)
 }
 
 
-void CrossfireTacticsReset(void)
+static void CrossfireTacticsReset(void)
 {
    CrossfireTacticsResetBunkerShaftRoutes();
    g_crossfire_strike_end_time = 0.0f;
@@ -501,7 +517,7 @@ void CrossfireTacticsReset(void)
 }
 
 
-void CrossfireTacticsOnEntitySpawn(edict_t *entity)
+static void CrossfireTacticsOnEntitySpawn(edict_t *entity)
 {
    if (!CrossfireTacticsIsCrossfire() || entity == NULL || entity->free ||
        FStringNull(entity->v.classname) || FStringNull(entity->v.target))
@@ -513,7 +529,7 @@ void CrossfireTacticsOnEntitySpawn(edict_t *entity)
 }
 
 
-void CrossfireTacticsStartFrame(void)
+static void CrossfireTacticsStartFrame(void)
 {
    if (!CrossfireTacticsIsCrossfire())
       return;
@@ -599,7 +615,7 @@ void CrossfireTacticsStartFrame(void)
 }
 
 
-void CrossfireTacticsOnAmbientSound(const char *sample, int flags)
+static void CrossfireTacticsOnAmbientSound(const char *sample, int flags)
 {
    if (!CrossfireTacticsIsCrossfire() || sample == NULL ||
        stricmp(sample, "ambience/siren.wav") != 0 ||
@@ -621,14 +637,14 @@ void CrossfireTacticsOnAmbientSound(const char *sample, int flags)
 }
 
 
-qboolean CrossfireTacticsIsStrikeActive(void)
+static qboolean CrossfireTacticsIsStrikeActive(void)
 {
    return CrossfireTacticsIsCrossfire() &&
       g_crossfire_strike_end_time > gpGlobals->time;
 }
 
 
-qboolean CrossfireTacticsIsBotSheltered(const bot_t &pBot)
+static qboolean CrossfireTacticsIsBotSheltered(const bot_t &pBot)
 {
    if (pBot.pEdict == NULL)
       return FALSE;
@@ -641,7 +657,15 @@ qboolean CrossfireTacticsIsBotSheltered(const bot_t &pBot)
 }
 
 
-int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot)
+static qboolean CrossfireTacticsIsStrategicGoal(const bot_t &pBot)
+{
+   return pBot.wpt_goal_type == WPT_GOAL_BUNKER ||
+      pBot.wpt_goal_type == WPT_GOAL_STRIKE_BUTTON ||
+      pBot.wpt_goal_type == WPT_GOAL_BUNKER_SHAFT;
+}
+
+
+static int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot)
 {
    if (!CrossfireTacticsIsCrossfire() || pBot.pEdict == NULL)
       return -1;
@@ -683,7 +707,7 @@ int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot)
 }
 
 
-qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot)
+static qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot)
 {
    if (!CrossfireTacticsIsStrikeActive())
       return FALSE;
@@ -886,7 +910,7 @@ static qboolean CrossfireTacticsHandleShaftRampMovement(
 }
 
 
-qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
+static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
 {
    if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL)
       return FALSE;
@@ -1031,7 +1055,7 @@ qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
 }
 
 
-qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot)
+static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot)
 {
    if (CrossfireTacticsIsStrikeActive())
       return CrossfireTacticsEnsureBunkerGoal(pBot);
@@ -1040,14 +1064,14 @@ qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot)
 }
 
 
-qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot)
+static qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot)
 {
    return g_crossfire_strike_activator >= 0 &&
       &bots[g_crossfire_strike_activator] == &pBot;
 }
 
 
-qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot)
+static qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot)
 {
    if (!CrossfireTacticsIsBotStrikeActivator(pBot) ||
        CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL ||
@@ -1088,7 +1112,8 @@ qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot)
 }
 
 
-qboolean CrossfireTacticsShouldYieldToStrategicMovement(const bot_t &pBot)
+static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
+   const bot_t &pBot)
 {
    if (pBot.pEdict == NULL || pBot.pBotEnemy == NULL)
       return FALSE;
@@ -1127,4 +1152,36 @@ qboolean CrossfireTacticsShouldYieldToStrategicMovement(const bot_t &pBot)
          : CROSSFIRE_STRATEGIC_COMBAT_WINDOW;
 
    return phase >= combat_window;
+}
+
+
+static qboolean CrossfireProfileHandleSpecialMovement(bot_t &pBot)
+{
+   if (CrossfireTacticsHandleBunkerShaftMovement(pBot))
+      return TRUE;
+
+   return CrossfireTacticsHandleStrikeActivatorMovement(pBot);
+}
+
+
+static const map_profile_t g_crossfire_profile =
+{
+   "crossfire",
+   "crossfire",
+   CrossfireTacticsReset,
+   CrossfireTacticsOnEntitySpawn,
+   CrossfireTacticsStartFrame,
+   CrossfireTacticsOnAmbientSound,
+   CrossfireTacticsIsStrikeActive,
+   CrossfireTacticsIsBotSheltered,
+   CrossfireTacticsIsStrategicGoal,
+   CrossfireTacticsEnsureStrategicGoal,
+   CrossfireProfileHandleSpecialMovement,
+   CrossfireTacticsShouldYieldToStrategicMovement
+};
+
+
+const map_profile_t *MapProfileCrossfire(void)
+{
+   return &g_crossfire_profile;
 }

@@ -21,7 +21,7 @@
 #include "bot_config_init.h"
 #include "bot_name_sanitize.h"
 #include "bot_trace.h"
-#include "crossfire_tactics.h"
+#include "map_profile.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -2975,7 +2975,7 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 
    BotThinkHandleEnemy_FindAndAim(pBot);
 
-   if (CrossfireTacticsShouldYieldToStrategicMovement(pBot))
+   if (MapProfileShouldYieldToStrategicMovement(pBot))
    {
       pBot.f_pause_time = 0.0f;
       return FALSE;
@@ -3017,23 +3017,20 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
 {
    edict_t *pEdict = pBot.pEdict;
 
-   // Combat may skip waypoint movement for this frame, but the strategic
-   // destination must remain the bunker throughout the strike.
-   if (CrossfireTacticsEnsureStrategicGoal(pBot))
+   // Combat may skip waypoint movement for this frame, but a map profile's
+   // strategic destination must remain authoritative throughout its event.
+   if (MapProfileEnsureStrategicGoal(pBot))
       pBot.f_pause_time = 0.0f;
 
-   if (CrossfireTacticsHandleBunkerShaftMovement(pBot))
-      return;
-
-   if (CrossfireTacticsHandleStrikeActivatorMovement(pBot))
+   if (MapProfileHandleSpecialMovement(pBot))
       return;
 
    if(did_shoot)
    {
       // do nothing
    }
-   else if (CrossfireTacticsIsStrikeActive() &&
-            CrossfireTacticsIsBotSheltered(pBot))
+   else if (MapProfileIsStrategicEventActive() &&
+            MapProfileIsBotAtStrategicDestination(pBot))
    {
       pBot.f_pause_time = 0.0f;
       pBot.f_move_speed = 0.0f;

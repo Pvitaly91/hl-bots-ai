@@ -5263,7 +5263,7 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
 {
    TEST("BotThink: Crossfire strike keeps combat and assigns bunker goal");
    setup_engine_funcs();
-   CrossfireTacticsReset();
+   MapProfileReset();
 
    gpGlobals->mapname = (string_t)(long)"crossfire";
    gpGlobals->time = 100.0f;
@@ -5286,7 +5286,7 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    num_waypoints = 1;
    waypoints[0].origin = Vector(0.0f, -2520.0f, -1820.0f);
 
-   CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
 
    const qboolean did_shoot = BotThinkHandleEnemy(bot);
    BotThinkHandleNavigation(bot, did_shoot, 2.0f);
@@ -5330,7 +5330,7 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_FALSE(BotThinkHandleEnemy(bot));
    ASSERT_INT(mock_BotShootAtEnemy_count, 0);
 
-   CrossfireTacticsReset();
+   MapProfileReset();
    PASS();
    return 0;
 }
