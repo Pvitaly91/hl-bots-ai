@@ -24,6 +24,8 @@ typedef struct
    qboolean (*handle_special_movement)(bot_t &pBot);
    qboolean (*should_yield_to_strategic_movement)(const bot_t &pBot);
    qboolean (*should_prioritize_combat)(const bot_t &pBot);
+   qboolean (*can_notice_combat_target)(const bot_t &pBot,
+      const edict_t *target);
 } map_profile_t;
 
 void MapProfileReset(void);
@@ -37,6 +39,8 @@ qboolean MapProfileEnsureStrategicGoal(bot_t &pBot);
 qboolean MapProfileHandleSpecialMovement(bot_t &pBot);
 qboolean MapProfileShouldYieldToStrategicMovement(const bot_t &pBot);
 qboolean MapProfileShouldPrioritizeCombat(const bot_t &pBot);
+qboolean MapProfileCanNoticeCombatTarget(const bot_t &pBot,
+   const edict_t *target);
 const char *MapProfileGetActiveName(void);
 
 #endif // MAP_PROFILE_H

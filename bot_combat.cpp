@@ -22,6 +22,7 @@
 #include "waypoint.h"
 #include "bot_sound.h"
 #include "bot_trace.h"
+#include "map_profile.h"
 #include "player.h"
 
 extern bot_weapon_t weapon_defs[MAX_WEAPONS];
@@ -865,7 +866,11 @@ static qboolean BotFindEnemyMaintainCurrent_TrackVisibility(bot_t &pBot)
    if(FCanShootInHead(pEdict, pBot.pBotEnemy, vecPredEnemy))
       vecEnd += pBot.pBotEnemy->v.view_ofs;
 
-   if( FInViewCone( vecEnd, pEdict ) && FVisibleEnemy( vecEnd, pEdict, pBot.pBotEnemy ))
+   const qboolean profile_notice =
+      MapProfileCanNoticeCombatTarget(pBot, pBot.pBotEnemy);
+
+   if ((FInViewCone(vecEnd, pEdict) || profile_notice) &&
+       FVisibleEnemy(vecEnd, pEdict, pBot.pBotEnemy))
    {
       // face the enemy
       Vector v_enemy = vecPredEnemy - pEdict->v.origin;
@@ -1104,7 +1109,9 @@ static qboolean BotFindEnemySearchPlayers_IsValidCandidate(bot_t &pBot, edict_t 
    Vector vecEnd = GetGunPosition(pPlayer);
 
    // see if bot can't see the player...
-   if (!(FInViewCone( vecEnd, pEdict ) && FVisibleEnemy( vecEnd, pEdict, pPlayer )))
+   if (!(FInViewCone(vecEnd, pEdict) ||
+         MapProfileCanNoticeCombatTarget(pBot, pPlayer)) ||
+       !FVisibleEnemy(vecEnd, pEdict, pPlayer))
       return FALSE;
 
    return TRUE;

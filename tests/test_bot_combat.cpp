@@ -1605,6 +1605,45 @@ static int test_bot_find_enemy_expanded(void)
    return 0;
 }
 
+
+static int test_crossfire_defender_notices_visible_ingress_enemy(void)
+{
+   printf("Crossfire bunker defense acquisition:\n");
+   mock_reset();
+   MapProfileReset();
+   setup_skill_settings();
+
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   gpGlobals->time = 100.0f;
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   pBotEdict->v.origin = Vector(0.0f, -2520.0f, -1820.0f);
+   pBotEdict->v.v_angle = Vector(0.0f, -90.0f, 0.0f);
+
+   edict_t *pEnemy = create_enemy_player(
+      Vector(0.0f, -1800.0f, -1820.0f));
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_nohit;
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+
+   TEST("visible bunker entrant is acquired outside defender view cone");
+   BotFindEnemy(testbot);
+   ASSERT_PTR_EQ(testbot.pBotEnemy, pEnemy);
+   PASS();
+
+   TEST("profile awareness still rejects an occluded bunker entrant");
+   mock_trace_line_fn = trace_partial_hit;
+   mock_trace_hull_fn = trace_partial_hit;
+   BotFindEnemy(testbot);
+   ASSERT_PTR_NULL(testbot.pBotEnemy);
+   PASS();
+
+   MapProfileReset();
+   return 0;
+}
+
 // ============================================================
 // Group 5: Weapon firing
 // ============================================================
@@ -4741,6 +4780,8 @@ int main(void)
    rc |= test_fpredicted_visible();
    printf("\n");
    rc |= test_bot_find_enemy_expanded();
+   printf("\n");
+   rc |= test_crossfire_defender_notices_visible_ingress_enemy();
    printf("\n");
 
    // Group 5: Weapon firing

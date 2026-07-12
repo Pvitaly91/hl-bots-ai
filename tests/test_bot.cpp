@@ -5298,13 +5298,13 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_INT(bot.waypoint_goal, 0);
 
    // Evacuating bots sustain a visible burst against distant enemies.
-   gpGlobals->time = 100.35f;
+   gpGlobals->time = 100.15f;
    mock_BotShootAtEnemy_count = 0;
    ASSERT_TRUE(BotThinkHandleEnemy(bot));
    ASSERT_INT(mock_BotShootAtEnemy_count, 1);
 
    // Movement still takes precedence between combat bursts.
-   gpGlobals->time = 100.5f;
+   gpGlobals->time = 100.45f;
    mock_BotShootAtEnemy_count = 0;
    const qboolean yielded_to_movement = BotThinkHandleEnemy(bot);
 
@@ -5325,7 +5325,7 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_TRUE(BotThinkHandleEnemy(bot));
    ASSERT_INT(mock_BotShootAtEnemy_count, 1);
 
-   gpGlobals->time = 101.75f;
+   gpGlobals->time = 101.9f;
    mock_BotShootAtEnemy_count = 0;
    ASSERT_FALSE(BotThinkHandleEnemy(bot));
    ASSERT_INT(mock_BotShootAtEnemy_count, 0);

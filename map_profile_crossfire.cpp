@@ -27,12 +27,13 @@ static const float CROSSFIRE_REPEAT_BOT_STRIKE_MAX = 360.0f;
 static const float CROSSFIRE_ACTIVATOR_TIMEOUT = 120.0f;
 static const float CROSSFIRE_TRIGGER_TOUCH_DISTANCE = 160.0f;
 static const float CROSSFIRE_STRATEGIC_COMBAT_RANGE = 160.0f;
-static const float CROSSFIRE_STRATEGIC_COMBAT_WINDOW = 0.40f;
-static const float CROSSFIRE_CLOSE_COMBAT_WINDOW = 0.70f;
-static const float CROSSFIRE_SHAFT_COMBAT_WINDOW = 0.15f;
-static const float CROSSFIRE_SHAFT_CLOSE_COMBAT_WINDOW = 0.35f;
+static const float CROSSFIRE_STRATEGIC_COMBAT_CYCLE = 0.75f;
+static const float CROSSFIRE_STRATEGIC_COMBAT_WINDOW = 0.42f;
+static const float CROSSFIRE_CLOSE_COMBAT_WINDOW = 0.55f;
+static const float CROSSFIRE_SHAFT_COMBAT_WINDOW = 0.28f;
+static const float CROSSFIRE_SHAFT_CLOSE_COMBAT_WINDOW = 0.40f;
 static const float CROSSFIRE_ACTIVATOR_COMBAT_WINDOW = 0.0f;
-static const float CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW = 0.10f;
+static const float CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW = 0.08f;
 static const float CROSSFIRE_SHAFT_LADDER_TAKEOVER_DISTANCE = 384.0f;
 static const float CROSSFIRE_SHAFT_LADDER_MAX_HORIZONTAL_DISTANCE = 192.0f;
 static const float CROSSFIRE_SHAFT_LADDER_APPROACH_SPEED = 80.0f;
@@ -49,6 +50,9 @@ static const float CROSSFIRE_SHAFT_LANDED_HEIGHT = -1450.0f;
 static const float CROSSFIRE_SHAFT_INGRESS_MAX_Y = -1900.0f;
 static const float CROSSFIRE_SHAFT_PROGRESS_LOG_INTERVAL = 10.0f;
 static const float CROSSFIRE_BUNKER_WATCH_INTERVAL = 2.5f;
+static const float CROSSFIRE_MAIN_DOOR_PREEMPT_TIME = 17.0f;
+static const float CROSSFIRE_MAIN_DOOR_MOVEMENT_EPSILON = 1.0f;
+static const int CROSSFIRE_MAX_MAIN_DOORS = 4;
 static const int AMBIENT_SOUND_STOP_FLAG = (1 << 5);
 
 enum CrossfireBunkerRoute
@@ -74,11 +78,15 @@ enum CrossfireShaftStage
 };
 
 static float g_crossfire_strike_end_time = 0.0f;
+static float g_crossfire_strike_start_time = 0.0f;
 static float g_crossfire_next_bot_strike_time = 0.0f;
 static float g_crossfire_next_trigger_touch_time = 0.0f;
 static float g_crossfire_strike_activator_deadline = 0.0f;
 static int g_crossfire_strike_activator = -1;
 static edict_t *g_crossfire_strike_trigger = NULL;
+static edict_t *g_crossfire_main_doors[CROSSFIRE_MAX_MAIN_DOORS];
+static Vector g_crossfire_main_door_origins[CROSSFIRE_MAX_MAIN_DOORS];
+static int g_crossfire_main_door_count = 0;
 static qboolean g_crossfire_trigger_touch_logged = FALSE;
 static int g_crossfire_bunker_route[32];
 static int g_crossfire_shaft_stage[32];
@@ -87,6 +95,7 @@ static float g_crossfire_shaft_next_progress_log[32];
 static qboolean g_crossfire_shaft_roof_logged[32];
 static qboolean g_crossfire_shaft_slip_logged[32];
 static qboolean g_crossfire_bunker_defender_logged[32];
+static qboolean g_crossfire_force_shaft_route[32];
 static qboolean g_crossfire_shaft_routes_active = FALSE;
 
 static void CrossfireTacticsReset(void);
@@ -101,11 +110,14 @@ static qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot);
 static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot);
 static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot);
 static qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot);
+static qboolean CrossfireTacticsHandleEvacuationCombatMovement(bot_t &pBot);
 static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot);
 static qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const bot_t &pBot);
 static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot);
+static qboolean CrossfireTacticsCanNoticeCombatTarget(
+   const bot_t &pBot, const edict_t *target);
 
 
 static qboolean CrossfireTacticsIsCrossfire(void)
@@ -188,6 +200,7 @@ static void CrossfireTacticsClearBunkerShaftRoute(int index)
    g_crossfire_shaft_roof_logged[index] = FALSE;
    g_crossfire_shaft_slip_logged[index] = FALSE;
    g_crossfire_bunker_defender_logged[index] = FALSE;
+   g_crossfire_force_shaft_route[index] = FALSE;
 }
 
 
@@ -444,6 +457,74 @@ static qboolean CrossfireTacticsAssignBunkerShaftRoute(
 }
 
 
+static qboolean CrossfireTacticsMainDoorsAreClosing(void)
+{
+   if (!CrossfireTacticsIsStrikeActive())
+      return FALSE;
+
+   if (g_crossfire_strike_start_time > 0.0f &&
+       gpGlobals->time - g_crossfire_strike_start_time >=
+          CROSSFIRE_MAIN_DOOR_PREEMPT_TIME)
+      return TRUE;
+
+   for (int index = 0; index < g_crossfire_main_door_count; index++)
+   {
+      const edict_t *door = g_crossfire_main_doors[index];
+
+      if (door == NULL || door->free)
+         continue;
+
+      if (door->v.velocity.Length() >= CROSSFIRE_MAIN_DOOR_MOVEMENT_EPSILON ||
+          (door->v.origin - g_crossfire_main_door_origins[index]).Length() >=
+             CROSSFIRE_MAIN_DOOR_MOVEMENT_EPSILON)
+         return TRUE;
+   }
+
+   return FALSE;
+}
+
+
+static qboolean CrossfireTacticsForceShaftRouteIfDoorUnavailable(
+   bot_t &pBot, int bot_index, int &route)
+{
+   if (route == CROSSFIRE_ROUTE_LEFT_SHAFT ||
+       route == CROSSFIRE_ROUTE_RIGHT_SHAFT ||
+       route == CROSSFIRE_ROUTE_SHAFT_LANDED ||
+       pBot.pEdict == NULL || CrossfireTacticsIsBotSheltered(pBot))
+      return FALSE;
+
+   // A bot already past the entrance should continue deeper instead of
+   // backtracking through the closing doorway to reach a tower.
+   if (pBot.pEdict->v.origin.y <= CROSSFIRE_SHAFT_INGRESS_MAX_Y)
+   {
+      g_crossfire_force_shaft_route[bot_index] = FALSE;
+      return FALSE;
+   }
+
+   if (!CrossfireTacticsMainDoorsAreClosing())
+      return FALSE;
+
+   if (!g_crossfire_force_shaft_route[bot_index])
+   {
+      g_crossfire_force_shaft_route[bot_index] = TRUE;
+      UTIL_ConsolePrintf(
+         "[jk_botti] %s sees the central bunker doors closing and is switching to a tower shaft",
+         pBot.name);
+   }
+
+   route = CROSSFIRE_ROUTE_UNASSIGNED;
+
+   if (pBot.wpt_goal_type == WPT_GOAL_BUNKER)
+   {
+      pBot.wpt_goal_type = WPT_GOAL_NONE;
+      pBot.waypoint_goal = -1;
+      pBot.f_waypoint_goal_time = 0.0f;
+   }
+
+   return TRUE;
+}
+
+
 static qboolean CrossfireTacticsEnsureBunkerShaftGoal(bot_t &pBot)
 {
    if (!g_crossfire_shaft_routes_active)
@@ -455,12 +536,16 @@ static qboolean CrossfireTacticsEnsureBunkerShaftGoal(bot_t &pBot)
       return FALSE;
 
    int &route = g_crossfire_bunker_route[bot_index];
+   const qboolean force_shaft =
+      CrossfireTacticsForceShaftRouteIfDoorUnavailable(
+         pBot, bot_index, route);
 
    if (route == CROSSFIRE_ROUTE_UNASSIGNED)
    {
-      if (CrossfireTacticsIsBotSheltered(pBot) ||
+      if (!force_shaft &&
+          (CrossfireTacticsIsBotSheltered(pBot) ||
           pBot.pEdict->v.origin.y <= CROSSFIRE_SHAFT_INGRESS_MAX_Y ||
-          bot_index % 3 == 0)
+          bot_index % 3 == 0))
       {
          route = CROSSFIRE_ROUTE_CENTRAL;
          return FALSE;
@@ -483,6 +568,7 @@ static qboolean CrossfireTacticsEnsureBunkerShaftGoal(bot_t &pBot)
              pBot, bot_index, fallback_route))
       {
          route = CROSSFIRE_ROUTE_CENTRAL;
+         g_crossfire_force_shaft_route[bot_index] = FALSE;
          return FALSE;
       }
 
@@ -513,24 +599,52 @@ static void CrossfireTacticsReset(void)
 {
    CrossfireTacticsResetBunkerShaftRoutes();
    g_crossfire_strike_end_time = 0.0f;
+   g_crossfire_strike_start_time = 0.0f;
    g_crossfire_next_bot_strike_time = 0.0f;
    g_crossfire_next_trigger_touch_time = 0.0f;
    g_crossfire_strike_activator_deadline = 0.0f;
    g_crossfire_strike_activator = -1;
    g_crossfire_strike_trigger = NULL;
    g_crossfire_trigger_touch_logged = FALSE;
+   g_crossfire_main_door_count = 0;
+
+   for (int index = 0; index < CROSSFIRE_MAX_MAIN_DOORS; index++)
+   {
+      g_crossfire_main_doors[index] = NULL;
+      g_crossfire_main_door_origins[index] = Vector(0.0f, 0.0f, 0.0f);
+   }
 }
 
 
 static void CrossfireTacticsOnEntitySpawn(edict_t *entity)
 {
    if (!CrossfireTacticsIsCrossfire() || entity == NULL || entity->free ||
-       FStringNull(entity->v.classname) || FStringNull(entity->v.target))
+       FStringNull(entity->v.classname))
       return;
 
-   if (stricmp(STRING(entity->v.classname), "trigger_multiple") == 0 &&
+   const char *classname = STRING(entity->v.classname);
+
+   if (stricmp(classname, "trigger_multiple") == 0 &&
+       !FStringNull(entity->v.target) &&
        stricmp(STRING(entity->v.target), "strike_mm") == 0)
       g_crossfire_strike_trigger = entity;
+
+   if (stricmp(classname, "func_door") != 0 ||
+       FStringNull(entity->v.targetname) ||
+       stricmp(STRING(entity->v.targetname), "bunker_maindoor") != 0 ||
+       g_crossfire_main_door_count >= CROSSFIRE_MAX_MAIN_DOORS)
+      return;
+
+   for (int index = 0; index < g_crossfire_main_door_count; index++)
+   {
+      if (g_crossfire_main_doors[index] == entity)
+         return;
+   }
+
+   g_crossfire_main_doors[g_crossfire_main_door_count] = entity;
+   g_crossfire_main_door_origins[g_crossfire_main_door_count] =
+      entity->v.origin;
+   g_crossfire_main_door_count++;
 }
 
 
@@ -632,6 +746,7 @@ static void CrossfireTacticsOnAmbientSound(const char *sample, int flags)
 
    if (!was_active)
    {
+      g_crossfire_strike_start_time = gpGlobals->time;
       CrossfireTacticsClearStrikeActivator();
       CrossfireTacticsResetBunkerShaftRoutes();
       g_crossfire_shaft_routes_active = TRUE;
@@ -1133,7 +1248,9 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    if (bot_index < 0)
       bot_index = 0;
 
-   const float phase = fmod(gpGlobals->time + bot_index * 0.173f, 1.0f);
+   const float phase = fmod(
+      gpGlobals->time + bot_index * 0.173f,
+      CROSSFIRE_STRATEGIC_COMBAT_CYCLE);
    const qboolean close_enemy =
       (pBot.pBotEnemy->v.origin - pBot.pEdict->v.origin).Length() <=
          CROSSFIRE_STRATEGIC_COMBAT_RANGE;
@@ -1164,6 +1281,43 @@ static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot)
 {
    return CrossfireTacticsIsStrikeActive() &&
       CrossfireTacticsIsBotSheltered(pBot);
+}
+
+
+static qboolean CrossfireTacticsCanNoticeCombatTarget(
+   const bot_t &pBot, const edict_t *target)
+{
+   if (!CrossfireTacticsShouldPrioritizeCombat(pBot) || target == NULL ||
+       target->free || !FBitSet(target->v.flags, FL_CLIENT))
+      return FALSE;
+
+   const Vector &origin = target->v.origin;
+
+   // Defenders cover only the bunker approach, central entrance and tower
+   // shafts. Core combat code still requires an unobstructed visibility trace.
+   return origin.x >= -900.0f && origin.x <= 900.0f &&
+      origin.y >= -2400.0f && origin.y <= -900.0f &&
+      origin.z >= -2050.0f && origin.z <= -1050.0f;
+}
+
+
+static qboolean CrossfireTacticsHandleEvacuationCombatMovement(bot_t &pBot)
+{
+   if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL ||
+       pBot.pBotEnemy == NULL || CrossfireTacticsIsBotSheltered(pBot) ||
+       CrossfireTacticsShouldYieldToStrategicMovement(pBot))
+      return FALSE;
+
+   // Fire from the current route for a bounded burst, then let the movement
+   // phase resume. This prevents normal combat movement from chasing a target
+   // away from the bunker and keeps combat aim authoritative on shaft routes.
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_speed = 0.0f;
+   pBot.f_strafe_direction = 0.0f;
+   pBot.pEdict->v.button &=
+      ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT);
+
+   return TRUE;
 }
 
 
@@ -1237,6 +1391,9 @@ static qboolean CrossfireProfileHandleSpecialMovement(bot_t &pBot)
    if (CrossfireTacticsHandleBunkerDefenseMovement(pBot))
       return TRUE;
 
+   if (CrossfireTacticsHandleEvacuationCombatMovement(pBot))
+      return TRUE;
+
    if (CrossfireTacticsHandleBunkerShaftMovement(pBot))
       return TRUE;
 
@@ -1258,7 +1415,8 @@ static const map_profile_t g_crossfire_profile =
    CrossfireTacticsEnsureStrategicGoal,
    CrossfireProfileHandleSpecialMovement,
    CrossfireTacticsShouldYieldToStrategicMovement,
-   CrossfireTacticsShouldPrioritizeCombat
+   CrossfireTacticsShouldPrioritizeCombat,
+   CrossfireTacticsCanNoticeCombatTarget
 };
 
 

@@ -151,6 +151,14 @@ static int test_sheltered_bot_defends_bunker_entrances(void)
    ASSERT_FLOAT(bot.pEdict->v.ideal_yaw, 90.0f);
 
    edict_t *enemy = mock_alloc_edict();
+   enemy->v.flags = FL_CLIENT;
+   enemy->v.origin = Vector(0.0f, -1800.0f, -1820.0f);
+   ASSERT_TRUE(MapProfileCanNoticeCombatTarget(bot, enemy));
+
+   enemy->v.origin = Vector(1200.0f, -1800.0f, -1820.0f);
+   ASSERT_FALSE(MapProfileCanNoticeCombatTarget(bot, enemy));
+   enemy->v.origin = Vector(0.0f, -1800.0f, -1820.0f);
+
    bot.pBotEnemy = enemy;
    bot.pEdict->v.ideal_yaw = 37.0f;
    bot.f_move_speed = 320.0f;
@@ -161,6 +169,8 @@ static int test_sheltered_bot_defends_bunker_entrances(void)
 
    bot.pEdict->v.origin = Vector(0.0f, -2200.0f, -1820.0f);
    ASSERT_FALSE(MapProfileShouldPrioritizeCombat(bot));
+   ASSERT_FALSE(MapProfileCanNoticeCombatTarget(bot, enemy));
+   bot.pBotEnemy = NULL;
    ASSERT_FALSE(MapProfileHandleSpecialMovement(bot));
 
    MapProfileReset();
@@ -369,6 +379,22 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(bots[3].waypoint_goal, 0);
 
+   // Shaft bots stop only for a short firing window. Their combat yaw is not
+   // overwritten by precise ladder movement, and route movement then resumes.
+   bots[1].pBotEnemy = bots[2].pEdict;
+   bots[1].pEdict->v.ideal_yaw = 37.0f;
+   bots[1].f_move_speed = bots[1].f_max_speed;
+   gpGlobals->time = 100.4f;
+   ASSERT_FALSE(MapProfileShouldYieldToStrategicMovement(bots[1]));
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[1]));
+   ASSERT_FLOAT(bots[1].f_move_speed, 0.0f);
+   ASSERT_FLOAT(bots[1].pEdict->v.ideal_yaw, 37.0f);
+
+   gpGlobals->time = 100.8f;
+   ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[1]));
+   ASSERT_FALSE(MapProfileHandleSpecialMovement(bots[1]));
+   bots[1].pBotEnemy = NULL;
+
    bots[1].curr_waypoint_index = 1;
    bots[1].pEdict->v.origin = Vector(-368.0f, -1456.0f, -1660.0f);
    bots[1].pEdict->v.button = 0;
@@ -438,6 +464,77 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
 }
 
 
+static int setup_central_door_reroute_scenario(edict_t **door)
+{
+   setup_crossfire();
+
+   *door = mock_alloc_edict();
+   mock_set_classname(*door, "func_door");
+   (*door)->v.targetname = (string_t)(long)"bunker_maindoor";
+   MapProfileOnEntitySpawn(*door);
+
+   num_waypoints = 4;
+   waypoints[0].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   waypoints[1].origin = Vector(-432.0f, -1594.0f, -1276.0f);
+   waypoints[2].origin = Vector(445.0f, -1509.0f, -1318.0f);
+   waypoints[3].origin = Vector(0.0f, -1000.0f, -1660.0f);
+   mock_route_distances[0] = 500.0f;
+   mock_route_distances[1] = 200.0f;
+   mock_route_distances[2] = 220.0f;
+
+   bots[3].is_used = TRUE;
+   bots[3].pEdict = mock_alloc_edict();
+   bots[3].pEdict->v.health = 100.0f;
+   bots[3].pEdict->v.deadflag = DEAD_NO;
+   bots[3].pEdict->v.origin = waypoints[3].origin;
+   bots[3].curr_waypoint_index = 3;
+   bots[3].waypoint_goal = -1;
+   bots[3].f_max_speed = 320.0f;
+   strcpy(bots[3].name, "DoorRouteBot");
+
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[3]));
+   ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER);
+
+   return 0;
+}
+
+
+static int test_closing_main_door_reroutes_central_bot_to_shaft(void)
+{
+   TEST("Closing Crossfire main doors reroute outside bots to a tower shaft");
+
+   edict_t *door = NULL;
+   if (setup_central_door_reroute_scenario(&door) != 0)
+      return 1;
+
+   gpGlobals->time = 116.9f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[3]));
+   ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER);
+
+   // The stock map begins its door phase at 20 seconds. Preempt the route
+   // three seconds earlier so a bot does not commit to a doorway it cannot use.
+   gpGlobals->time = 117.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[3]));
+   ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER_SHAFT);
+   ASSERT_INT(bots[3].waypoint_goal, 1);
+
+   // Actual brush movement also causes an immediate switch if map timing or
+   // door state differs from the expected stock sequence.
+   if (setup_central_door_reroute_scenario(&door) != 0)
+      return 1;
+   gpGlobals->time = 105.0f;
+   door->v.velocity = Vector(0.0f, 0.0f, -5.0f);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[3]));
+   ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER_SHAFT);
+   ASSERT_INT(bots[3].waypoint_goal, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -451,6 +548,7 @@ int main(void)
    fail |= test_bunker_goal_preserves_enemy();
    fail |= test_bot_periodically_reaches_and_touches_strike_trigger();
    fail |= test_bots_use_both_tower_shafts_for_bunker_ingress();
+   fail |= test_closing_main_door_reroutes_central_bot_to_shaft();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

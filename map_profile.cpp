@@ -184,6 +184,16 @@ qboolean MapProfileShouldPrioritizeCombat(const bot_t &pBot)
 }
 
 
+qboolean MapProfileCanNoticeCombatTarget(const bot_t &pBot,
+   const edict_t *target)
+{
+   const map_profile_t *profile = MapProfileResolve();
+
+   return profile != NULL && profile->can_notice_combat_target != NULL &&
+      profile->can_notice_combat_target(pBot, target);
+}
+
+
 const char *MapProfileGetActiveName(void)
 {
    const map_profile_t *profile = MapProfileResolve();
