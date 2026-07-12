@@ -79,8 +79,10 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
     10, TRUE, 50, 1, 4, TRUE, TRUE, FALSE, FALSE, 0.0, 0.0, TRUE, -1, -1,
     W_IFL_HORNETGUN, 0, 0, FALSE, FALSE },
 
+   // Every bot can use the launcher, but its range, ammo, trajectory, and
+   // clearance checks still prevent unsafe secondary fire.
    {VALVE_WEAPON_MP5, WEAPON_SUBMOD_ALL, "weapon_9mmAR", WEAPON_FIRE, 1.0,
-    SKILL5, SKILL3, FALSE, FALSE,
+    SKILL5, SKILL5, FALSE, FALSE,
     32.0, 2000.0, 300.0, 700.0, 600.0,
     55, FALSE, 70, 1, 1, TRUE, FALSE, FALSE, FALSE, 0.0, 0.0, FALSE, 50, 2,
     W_IFL_MP5, W_IFL_AMMO_9MM, W_IFL_AMMO_ARGRENADES, TRUE, FALSE },

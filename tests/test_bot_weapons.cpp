@@ -322,6 +322,15 @@ static int test_skill_checks(void)
    ASSERT_FLOAT(glock->secondary_max_distance, 700.0f);
    PASS();
 
+   TEST("MP5 grenade launcher is available to skill 5 bots");
+   bot_weapon_select_t *mp5 = GetWeaponSelect(VALVE_WEAPON_MP5);
+   bot.weapon_skill = SKILL5;
+   ASSERT_PTR_NOT_NULL(mp5);
+   ASSERT_INT(BotSkilledEnoughForSecondaryAttack(bot, *mp5), TRUE);
+   ASSERT_FLOAT(mp5->secondary_min_distance, 300.0f);
+   ASSERT_FLOAT(mp5->secondary_max_distance, 700.0f);
+   PASS();
+
    return 0;
 }
 
@@ -572,6 +581,15 @@ static int test_IsValidSecondaryAttack(void)
    bot.m_rgAmmo[1] = 50;  // primary (needed: MP5 blocks secondary if primary empty)
    bot.m_rgAmmo[8] = 5;   // AR grenades
    ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 500.0, 0.0, FALSE), TRUE);
+   PASS();
+
+   TEST("MP5 grenade launcher keeps a self-damage safety distance");
+   bot.m_rgAmmo[1] = 50;
+   bot.m_rgAmmo[8] = 5;
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 299.9f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 300.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 700.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 700.1f, 0.0f, FALSE), FALSE);
    PASS();
 
    TEST("MP5 primary empty blocks secondary -> FALSE");

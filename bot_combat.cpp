@@ -1473,9 +1473,10 @@ static void BotFireSelectedWeaponSetShootTime(bot_t &pBot, const bot_weapon_sele
 //
 static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &select, const bot_fire_delay_t &delay, qboolean use_primary, qboolean use_secondary)
 {
-   // The Glock's secondary mode is its close/medium rapid-fire attack. Once
-   // its range check passes, do not randomly fall back to slow primary fire.
-   if(use_primary && use_secondary && select.iId == VALVE_WEAPON_GLOCK)
+   // These secondary modes are tactical upgrades in their validated ranges.
+   // MP5 clearance and launch-angle checks below can still fall back to primary.
+   if(use_primary && use_secondary &&
+      (select.iId == VALVE_WEAPON_GLOCK || select.iId == VALVE_WEAPON_MP5))
    {
       use_primary = FALSE;
    }

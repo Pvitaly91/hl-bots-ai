@@ -1967,6 +1967,18 @@ static int test_bot_fire_selected_weapon(void)
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    PASS();
 
+   TEST("MP5 prefers grenade launcher when both attacks are valid");
+   select.iId = VALVE_WEAPON_MP5;
+   delay.iId = VALVE_WEAPON_MP5;
+   select.type = WEAPON_FIRE;
+   pEnemy->v.origin = Vector(500, 0, 0);
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, TRUE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   PASS();
+
    TEST("primary fire with min/max delay");
    select.iId = VALVE_WEAPON_GLOCK;
    delay.iId = VALVE_WEAPON_GLOCK;
@@ -2318,6 +2330,91 @@ static int test_glock_secondary_distance_policy(void)
    ASSERT_INT(BotFireWeapon(Vector(900, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   return 0;
+}
+
+static int test_mp5_secondary_attack_policy(void)
+{
+   printf("MP5 secondary attack policy:\n");
+   mock_reset();
+   setup_skill_settings();
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   testbot.bot_skill = WORST_BOT_LEVEL;
+   testbot.weapon_skill = SKILL5;
+   edict_t *pEnemy = create_enemy_player(Vector(500, 0, 0));
+   testbot.pBotEnemy = pEnemy;
+
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_nohit;
+
+   int mp5_idx = -1;
+   for (int i = 0; weapon_select[i].iId; ++i)
+   {
+      if (weapon_select[i].iId == VALVE_WEAPON_MP5)
+      {
+         mp5_idx = i;
+         break;
+      }
+   }
+
+   ASSERT_TRUE(mp5_idx >= 0);
+   weapon_defs[VALVE_WEAPON_MP5].iId = VALVE_WEAPON_MP5;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2 = 8;
+   pBotEdict->v.weapons = (1u << VALVE_WEAPON_MP5);
+   testbot.current_weapon_index = mp5_idx;
+   testbot.current_weapon.iId = VALVE_WEAPON_MP5;
+   testbot.current_weapon.iClip = 50;
+   testbot.m_rgAmmo[1] = 50;
+   testbot.m_rgAmmo[8] = 5;
+   fire_delay[mp5_idx].iId = VALVE_WEAPON_MP5;
+
+   TEST("skill 5 MP5 uses grenade launcher at medium range");
+   pBotEdict->v.button = 0;
+   testbot.b_set_special_shoot_angle = FALSE;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_INT(testbot.b_set_special_shoot_angle, TRUE);
+   PASS();
+
+   TEST("MP5 uses primary fire inside grenade safety range");
+   pEnemy->v.origin = Vector(200, 0, 0);
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0;
+   testbot.b_set_special_shoot_angle = FALSE;
+   ASSERT_INT(BotFireWeapon(Vector(200, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   ASSERT_INT(testbot.b_set_special_shoot_angle, FALSE);
+   PASS();
+
+   TEST("MP5 uses primary fire when AR grenades are empty");
+   pEnemy->v.origin = Vector(500, 0, 0);
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0;
+   testbot.m_rgAmmo[8] = 0;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("MP5 falls back to primary when grenade path is blocked");
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0;
+   testbot.m_rgAmmo[8] = 5;
+   testbot.b_set_special_shoot_angle = FALSE;
+   mock_trace_line_fn = trace_partial_hit;
+   mock_trace_hull_fn = trace_partial_hit;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   ASSERT_INT(testbot.b_set_special_shoot_angle, FALSE);
    PASS();
 
    return 0;
@@ -4857,6 +4954,8 @@ int main(void)
    rc |= test_bot_fire_weapon();
    printf("\n");
    rc |= test_glock_secondary_distance_policy();
+   printf("\n");
+   rc |= test_mp5_secondary_attack_policy();
    printf("\n");
 
    // Group 6: BotShootAtEnemy + special weapons
