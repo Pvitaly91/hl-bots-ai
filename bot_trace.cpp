@@ -105,6 +105,7 @@ const char *BotTraceGoalTypeName(int goal_type)
       case WPT_GOAL_ENEMY:       return "enemy";
       case WPT_GOAL_BUNKER:      return "bunker";
       case WPT_GOAL_STRIKE_BUTTON: return "strike_button";
+      case WPT_GOAL_BUNKER_SHAFT: return "bunker_shaft";
       default:                   return "unknown";
    }
 }

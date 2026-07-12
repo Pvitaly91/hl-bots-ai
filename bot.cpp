@@ -3022,6 +3022,9 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
    if (CrossfireTacticsEnsureStrategicGoal(pBot))
       pBot.f_pause_time = 0.0f;
 
+   if (CrossfireTacticsHandleBunkerShaftMovement(pBot))
+      return;
+
    if (CrossfireTacticsHandleStrikeActivatorMovement(pBot))
       return;
 

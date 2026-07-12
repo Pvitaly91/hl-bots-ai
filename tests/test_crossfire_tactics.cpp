@@ -257,6 +257,116 @@ static int test_bot_periodically_reaches_and_touches_strike_trigger(void)
 }
 
 
+static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
+{
+   TEST("Crossfire evacuation distributes bots across both tower shafts");
+
+   setup_crossfire();
+
+   num_waypoints = 4;
+   waypoints[0].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   waypoints[1].origin = Vector(-432.0f, -1594.0f, -1276.0f);
+   waypoints[2].origin = Vector(445.0f, -1509.0f, -1318.0f);
+   waypoints[3].origin = Vector(0.0f, -1000.0f, -1660.0f);
+   mock_route_distances[0] = 500.0f;
+   mock_route_distances[1] = 200.0f;
+   mock_route_distances[2] = 220.0f;
+
+   for (int index = 1; index <= 3; index++)
+   {
+      bots[index].is_used = TRUE;
+      bots[index].pEdict = mock_alloc_edict();
+      bots[index].pEdict->v.health = 100.0f;
+      bots[index].pEdict->v.deadflag = DEAD_NO;
+      bots[index].pEdict->v.origin = waypoints[3].origin;
+      bots[index].curr_waypoint_index = 3;
+      bots[index].waypoint_goal = -1;
+      bots[index].f_max_speed = 320.0f;
+   }
+
+   strcpy(bots[1].name, "LeftShaftBot");
+   strcpy(bots[2].name, "RightShaftBot");
+   strcpy(bots[3].name, "CentralBot");
+   bots[1].pBotPickupItem = bots[2].pEdict;
+   bots[1].pTrackSoundEdict = bots[2].pEdict;
+   bots[1].b_use_health_station = TRUE;
+   bots[1].b_use_HEV_station = TRUE;
+   bots[1].b_use_button = TRUE;
+   bots[1].f_move_speed = 0.0f;
+   bots[1].f_strafe_direction = 1.0f;
+
+   CrossfireTacticsOnAmbientSound("ambience/siren.wav", 0);
+
+   ASSERT_TRUE(CrossfireTacticsEnsureBunkerGoal(bots[1]));
+   ASSERT_INT(bots[1].wpt_goal_type, WPT_GOAL_BUNKER_SHAFT);
+   ASSERT_INT(bots[1].waypoint_goal, 1);
+   ASSERT_PTR_EQ(bots[1].pBotPickupItem, NULL);
+   ASSERT_PTR_EQ(bots[1].pTrackSoundEdict, NULL);
+   ASSERT_FALSE(bots[1].b_use_health_station);
+   ASSERT_FALSE(bots[1].b_use_HEV_station);
+   ASSERT_FALSE(bots[1].b_use_button);
+   ASSERT_TRUE(bots[1].f_find_item > gpGlobals->time);
+   ASSERT_FLOAT(bots[1].f_move_speed, bots[1].f_max_speed);
+   ASSERT_FLOAT(bots[1].f_strafe_direction, 0.0f);
+
+   ASSERT_TRUE(CrossfireTacticsEnsureBunkerGoal(bots[2]));
+   ASSERT_INT(bots[2].wpt_goal_type, WPT_GOAL_BUNKER_SHAFT);
+   ASSERT_INT(bots[2].waypoint_goal, 2);
+
+   ASSERT_TRUE(CrossfireTacticsEnsureBunkerGoal(bots[3]));
+   ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bots[3].waypoint_goal, 0);
+
+   bots[2].curr_waypoint_index = 2;
+   bots[2].pEdict->v.origin = Vector(475.0f, -1456.0f, -1660.0f);
+   bots[2].pEdict->v.button = 0;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_FORWARD));
+   ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
+   ASSERT_TRUE(bots[2].b_not_maxspeed);
+
+   bots[2].pEdict->v.origin = Vector(447.0f, -1509.0f, -1500.0f);
+   bots[2].pEdict->v.movetype = MOVETYPE_FLY;
+   bots[2].b_on_ladder = TRUE;
+   bots[2].pEdict->v.button = 0;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_FORWARD));
+   ASSERT_FLOAT(bots[2].pEdict->v.v_angle.x, -60.0f);
+
+   bots[2].pEdict->v.origin = waypoints[2].origin;
+   bots[2].pEdict->v.button = 0;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_JUMP));
+   ASSERT_FLOAT(bots[2].f_move_speed, 120.0f);
+
+   bots[2].pEdict->v.origin = Vector(447.0f, -1509.0f, -1500.0f);
+   bots[2].pEdict->v.movetype = MOVETYPE_WALK;
+   bots[2].b_on_ladder = FALSE;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
+
+   bots[1].pEdict->v.origin = waypoints[1].origin;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[1]));
+   ASSERT_TRUE(bots[1].f_move_speed > 0.0f);
+
+   bots[1].pEdict->v.origin = Vector(-320.0f, -1660.0f, -1276.0f);
+   bots[1].pEdict->v.button = 0;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[1]));
+   ASSERT_TRUE(FBitSet(bots[1].pEdict->v.button, IN_JUMP));
+   ASSERT_TRUE(FBitSet(bots[1].pEdict->v.button, IN_DUCK));
+
+   bots[1].pEdict->v.origin = Vector(-320.0f, -1712.0f, -1600.0f);
+   ASSERT_FALSE(CrossfireTacticsHandleBunkerShaftMovement(bots[1]));
+   ASSERT_TRUE(CrossfireTacticsEnsureBunkerGoal(bots[1]));
+   ASSERT_INT(bots[1].wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bots[1].waypoint_goal, 0);
+
+   CrossfireTacticsReset();
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -268,6 +378,7 @@ int main(void)
    fail |= test_bunker_goal_uses_reachable_nodes_and_spreads_bots();
    fail |= test_bunker_goal_preserves_enemy();
    fail |= test_bot_periodically_reaches_and_touches_strike_trigger();
+   fail |= test_bots_use_both_tower_shafts_for_bunker_ingress();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

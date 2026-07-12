@@ -424,6 +424,7 @@ static int test_goal_type_names(void)
    ASSERT_STR(BotTraceGoalTypeName(WPT_GOAL_ENEMY), "enemy");
    ASSERT_STR(BotTraceGoalTypeName(WPT_GOAL_BUNKER), "bunker");
    ASSERT_STR(BotTraceGoalTypeName(WPT_GOAL_STRIKE_BUTTON), "strike_button");
+   ASSERT_STR(BotTraceGoalTypeName(WPT_GOAL_BUNKER_SHAFT), "bunker_shaft");
    PASS();
 
    TEST("BotTraceGoalTypeName: unknown type -> unknown");

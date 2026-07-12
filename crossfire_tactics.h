@@ -14,6 +14,7 @@ qboolean CrossfireTacticsIsBotSheltered(const bot_t &pBot);
 int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot);
 qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot);
 qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot);
+qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot);
 qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot);
 qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot);
 qboolean CrossfireTacticsShouldYieldToStrategicMovement(const bot_t &pBot);

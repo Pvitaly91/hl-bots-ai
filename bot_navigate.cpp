@@ -322,7 +322,8 @@ static void BotEvaluateGoal( bot_t &pBot )
    if (pBot.waypoint_goal != -1 && pEdict->v.health <= 25 &&
        pBot.wpt_goal_type != WPT_GOAL_HEALTH &&
        pBot.wpt_goal_type != WPT_GOAL_BUNKER &&
-       pBot.wpt_goal_type != WPT_GOAL_STRIKE_BUTTON)
+       pBot.wpt_goal_type != WPT_GOAL_STRIKE_BUTTON &&
+       pBot.wpt_goal_type != WPT_GOAL_BUNKER_SHAFT)
    {
       //if(pBot.waypoint_goal != -1)
       //   UTIL_ConsolePrintf("[%s] Dying, forget goal: %d -> %d", pBot.name, pBot.waypoint_goal, -1);
@@ -1046,7 +1047,8 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
    int i;
 
    if (CrossfireTacticsIsStrikeActive() &&
-       pBot.wpt_goal_type != WPT_GOAL_BUNKER)
+       pBot.wpt_goal_type != WPT_GOAL_BUNKER &&
+       pBot.wpt_goal_type != WPT_GOAL_BUNKER_SHAFT)
    {
       pBot.waypoint_goal = -1;
       pBot.f_waypoint_goal_time = 0.0f;
