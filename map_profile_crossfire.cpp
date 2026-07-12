@@ -36,6 +36,7 @@ static const float CROSSFIRE_ACTIVATOR_COMBAT_WINDOW = 0.0f;
 static const float CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW = 0.08f;
 static const float CROSSFIRE_SHAFT_LADDER_TAKEOVER_DISTANCE = 384.0f;
 static const float CROSSFIRE_SHAFT_LADDER_MAX_HORIZONTAL_DISTANCE = 192.0f;
+static const float CROSSFIRE_SHAFT_LADDER_COMBAT_LOCK_DISTANCE = 320.0f;
 static const float CROSSFIRE_SHAFT_LADDER_APPROACH_SPEED = 80.0f;
 static const float CROSSFIRE_SHAFT_RAMP_START_SPEED = 180.0f;
 static const float CROSSFIRE_SHAFT_RAMP_CLIMB_SPEED = 120.0f;
@@ -49,6 +50,10 @@ static const float CROSSFIRE_SHAFT_JUMP_DISTANCE = 80.0f;
 static const float CROSSFIRE_SHAFT_LANDED_HEIGHT = -1450.0f;
 static const float CROSSFIRE_SHAFT_INGRESS_MAX_Y = -1900.0f;
 static const float CROSSFIRE_SHAFT_PROGRESS_LOG_INTERVAL = 10.0f;
+static const float CROSSFIRE_SHAFT_ROOF_SCAN_TIME = 0.35f;
+static const float CROSSFIRE_SHAFT_ROOF_COVER_FIRE_TIME = 1.5f;
+static const float CROSSFIRE_TOWER_DOOR_CLOSE_TIME = 47.0f;
+static const float CROSSFIRE_TOWER_DOOR_ESCAPE_RESERVE = 8.0f;
 static const float CROSSFIRE_BUNKER_WATCH_INTERVAL = 2.5f;
 static const float CROSSFIRE_MAIN_DOOR_PREEMPT_TIME = 17.0f;
 static const float CROSSFIRE_MAIN_DOOR_MOVEMENT_EPSILON = 1.0f;
@@ -94,6 +99,8 @@ static int g_crossfire_shaft_goal[32];
 static float g_crossfire_shaft_next_progress_log[32];
 static qboolean g_crossfire_shaft_roof_logged[32];
 static qboolean g_crossfire_shaft_slip_logged[32];
+static float g_crossfire_shaft_roof_arrival_time[32];
+static float g_crossfire_shaft_roof_cover_fire_end[32];
 static qboolean g_crossfire_bunker_defender_logged[32];
 static qboolean g_crossfire_force_shaft_route[32];
 static qboolean g_crossfire_shaft_routes_active = FALSE;
@@ -200,6 +207,8 @@ static void CrossfireTacticsClearBunkerShaftRoute(int index)
    g_crossfire_shaft_next_progress_log[index] = 0.0f;
    g_crossfire_shaft_roof_logged[index] = FALSE;
    g_crossfire_shaft_slip_logged[index] = FALSE;
+   g_crossfire_shaft_roof_arrival_time[index] = 0.0f;
+   g_crossfire_shaft_roof_cover_fire_end[index] = 0.0f;
    g_crossfire_bunker_defender_logged[index] = FALSE;
    g_crossfire_force_shaft_route[index] = FALSE;
 }
@@ -482,6 +491,36 @@ static qboolean CrossfireTacticsMainDoorsAreClosing(void)
    }
 
    return FALSE;
+}
+
+
+static float CrossfireTacticsTowerDoorEscapeCutoff(void)
+{
+   return g_crossfire_strike_start_time +
+      CROSSFIRE_TOWER_DOOR_CLOSE_TIME -
+      CROSSFIRE_TOWER_DOOR_ESCAPE_RESERVE;
+}
+
+
+static qboolean CrossfireTacticsTowerDoorsRequireEscape(void)
+{
+   return CrossfireTacticsIsStrikeActive() &&
+      gpGlobals->time >= CrossfireTacticsTowerDoorEscapeCutoff();
+}
+
+
+static float CrossfireTacticsRoofCoverFireDeadline(void)
+{
+   if (CrossfireTacticsTowerDoorsRequireEscape())
+      return 0.0f;
+
+   const float desired_deadline =
+      gpGlobals->time + CROSSFIRE_SHAFT_ROOF_COVER_FIRE_TIME;
+   const float escape_cutoff = CrossfireTacticsTowerDoorEscapeCutoff();
+
+   return desired_deadline < escape_cutoff
+      ? desired_deadline
+      : escape_cutoff;
 }
 
 
@@ -1065,12 +1104,27 @@ static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
       if (CrossfireTacticsBotReachedShaftRoof(pBot, route))
       {
          stage = CROSSFIRE_SHAFT_STAGE_CROSS_ROOF;
+         g_crossfire_shaft_roof_arrival_time[bot_index] =
+            gpGlobals->time;
+         g_crossfire_shaft_roof_cover_fire_end[bot_index] =
+            CrossfireTacticsRoofCoverFireDeadline();
 
          if (!g_crossfire_shaft_roof_logged[bot_index])
          {
             g_crossfire_shaft_roof_logged[bot_index] = TRUE;
-            UTIL_ConsolePrintf("[jk_botti] %s reached the %s tower roof",
-               pBot.name, CrossfireTacticsShaftName(route));
+
+            const float cover_time =
+               g_crossfire_shaft_roof_cover_fire_end[bot_index] -
+               gpGlobals->time;
+
+            if (cover_time > 0.0f)
+               UTIL_ConsolePrintf(
+                  "[jk_botti] %s reached the %s tower roof and has %.1f seconds for cover fire",
+                  pBot.name, CrossfireTacticsShaftName(route), cover_time);
+            else
+               UTIL_ConsolePrintf(
+                  "[jk_botti] %s reached the %s tower roof and is descending before the shutters close",
+                  pBot.name, CrossfireTacticsShaftName(route));
          }
       }
       else
@@ -1106,6 +1160,8 @@ static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
       if (pEdict->v.origin.z < roof_entry.z - 96.0f)
       {
          stage = CROSSFIRE_SHAFT_STAGE_RAMP_START;
+         g_crossfire_shaft_roof_arrival_time[bot_index] = 0.0f;
+         g_crossfire_shaft_roof_cover_fire_end[bot_index] = 0.0f;
 
          if (!g_crossfire_shaft_slip_logged[bot_index])
          {
@@ -1119,11 +1175,33 @@ static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
             pBot, route, stage);
       }
 
-      CrossfireTacticsMovePreciselyTowardShaftTarget(
-         pBot, roof_entry, CROSSFIRE_SHAFT_ROOF_MOVE_SPEED);
-
       if (pBot.b_on_ladder || pEdict->v.movetype == MOVETYPE_FLY)
          pBot.ladder_dir = LADDER_UNKNOWN;
+
+      const qboolean cover_window_active =
+         !CrossfireTacticsTowerDoorsRequireEscape() &&
+         g_crossfire_shaft_roof_cover_fire_end[bot_index] >
+            gpGlobals->time;
+      const qboolean scanning_from_roof =
+         gpGlobals->time <
+            g_crossfire_shaft_roof_arrival_time[bot_index] +
+            CROSSFIRE_SHAFT_ROOF_SCAN_TIME;
+
+      if (cover_window_active &&
+          (pBot.pBotEnemy != NULL || scanning_from_roof))
+      {
+         pBot.f_pause_time = 0.0f;
+         pBot.f_move_speed = 0.0f;
+         pBot.f_strafe_direction = 0.0f;
+         return TRUE;
+      }
+
+      // Once cover fire ends, commit to the shaft. Do not resume combat while
+      // crossing the roof or dropping through the closing shutters.
+      g_crossfire_shaft_roof_cover_fire_end[bot_index] = 0.0f;
+
+      CrossfireTacticsMovePreciselyTowardShaftTarget(
+         pBot, roof_entry, CROSSFIRE_SHAFT_ROOF_MOVE_SPEED);
 
       if ((pEdict->v.origin - roof_entry).Make2D().Length() >
           CROSSFIRE_SHAFT_ROOF_DISTANCE)
@@ -1141,6 +1219,8 @@ static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
       g_crossfire_bunker_route[bot_index] = CROSSFIRE_ROUTE_SHAFT_LANDED;
       g_crossfire_shaft_stage[bot_index] = CROSSFIRE_SHAFT_STAGE_NONE;
       g_crossfire_shaft_goal[bot_index] = -1;
+      g_crossfire_shaft_roof_arrival_time[bot_index] = 0.0f;
+      g_crossfire_shaft_roof_cover_fire_end[bot_index] = 0.0f;
       pBot.wpt_goal_type = WPT_GOAL_NONE;
       pBot.waypoint_goal = -1;
       pBot.f_waypoint_goal_time = 0.0f;
@@ -1233,6 +1313,51 @@ static qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot)
 }
 
 
+static qboolean CrossfireTacticsShaftMovementOverridesCombat(
+   const bot_t &pBot, int bot_index)
+{
+   if (bot_index < 0 || bot_index >= 32)
+      return FALSE;
+
+   const int route = g_crossfire_bunker_route[bot_index];
+   const int stage = g_crossfire_shaft_stage[bot_index];
+
+   if (route != CROSSFIRE_ROUTE_LEFT_SHAFT &&
+       route != CROSSFIRE_ROUTE_RIGHT_SHAFT)
+      return FALSE;
+
+   if (pBot.b_on_ladder ||
+       stage == CROSSFIRE_SHAFT_STAGE_RAMP_START ||
+       stage == CROSSFIRE_SHAFT_STAGE_RAMP_TOP ||
+       stage == CROSSFIRE_SHAFT_STAGE_LADDER_LANDING ||
+       stage == CROSSFIRE_SHAFT_STAGE_CLIMB ||
+       stage == CROSSFIRE_SHAFT_STAGE_DROP ||
+       stage == CROSSFIRE_SHAFT_STAGE_JUMP)
+      return TRUE;
+
+   if (stage == CROSSFIRE_SHAFT_STAGE_CROSS_ROOF)
+      return CrossfireTacticsTowerDoorsRequireEscape() ||
+         g_crossfire_shaft_roof_cover_fire_end[bot_index] <=
+            gpGlobals->time;
+
+   if (stage != CROSSFIRE_SHAFT_STAGE_APPROACH ||
+       pBot.pEdict == NULL)
+      return FALSE;
+
+   const int goal = g_crossfire_shaft_goal[bot_index];
+   if (goal < 0 || goal >= num_waypoints ||
+       CrossfireTacticsDistanceToWaypoint(pBot, goal) >
+          CROSSFIRE_SHAFT_LADDER_TAKEOVER_DISTANCE)
+      return FALSE;
+
+   const Vector ladder = CrossfireTacticsShaftLadder(
+      route, pBot.pEdict->v.origin.z);
+
+   return (ladder - pBot.pEdict->v.origin).Make2D().Length() <=
+      CROSSFIRE_SHAFT_LADDER_COMBAT_LOCK_DISTANCE;
+}
+
+
 static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const bot_t &pBot)
 {
@@ -1260,6 +1385,10 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const qboolean using_shaft = route_index >= 0 &&
       (g_crossfire_bunker_route[route_index] == CROSSFIRE_ROUTE_LEFT_SHAFT ||
        g_crossfire_bunker_route[route_index] == CROSSFIRE_ROUTE_RIGHT_SHAFT);
+
+   if (using_shaft &&
+       CrossfireTacticsShaftMovementOverridesCombat(pBot, route_index))
+      return TRUE;
 
    if (using_shaft)
       combat_window = close_enemy
