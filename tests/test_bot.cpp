@@ -5312,6 +5312,31 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_INT(mock_BotShootAtEnemy_count, 0);
    ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
 
+   // Evacuation actively acquires and fires at visible targets even when the
+   // bot has only a Glock and low health, which normally blocks a new fight.
+   e->v.health = 20.0f;
+   e->v.weapons = (1u << VALVE_WEAPON_GLOCK);
+   bot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   bot.current_weapon.iClip = 17;
+   bot.m_rgAmmo[weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1] = 50;
+   bot.b_low_health = TRUE;
+   bot.pBotEnemy = NULL;
+   bot.f_last_time_attacked = 0.0f;
+   mock_BotFindEnemy_result = enemy;
+   mock_BotFindEnemy_count = 0;
+   mock_BotShootAtEnemy_count = 0;
+   gpGlobals->time = 100.25f;
+
+   ASSERT_TRUE(MapProfileShouldPrioritizeCombat(bot));
+   ASSERT_TRUE(BotThinkHandleEnemy(bot));
+   ASSERT_INT(mock_BotFindEnemy_count, 1);
+   ASSERT_INT(mock_BotShootAtEnemy_count, 1);
+   ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+
+   e->v.health = 100.0f;
+   bot.b_low_health = FALSE;
+   mock_BotFindEnemy_result = NULL;
+
    // Point-blank threats get a larger combat window, but still cannot block
    // evacuation indefinitely.
    enemy->v.origin = Vector(100.0f, 0.0f, 0.0f);

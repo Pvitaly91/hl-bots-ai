@@ -28,10 +28,10 @@ static const float CROSSFIRE_ACTIVATOR_TIMEOUT = 120.0f;
 static const float CROSSFIRE_TRIGGER_TOUCH_DISTANCE = 160.0f;
 static const float CROSSFIRE_STRATEGIC_COMBAT_RANGE = 160.0f;
 static const float CROSSFIRE_STRATEGIC_COMBAT_CYCLE = 0.75f;
-static const float CROSSFIRE_STRATEGIC_COMBAT_WINDOW = 0.42f;
-static const float CROSSFIRE_CLOSE_COMBAT_WINDOW = 0.55f;
-static const float CROSSFIRE_SHAFT_COMBAT_WINDOW = 0.28f;
-static const float CROSSFIRE_SHAFT_CLOSE_COMBAT_WINDOW = 0.40f;
+static const float CROSSFIRE_STRATEGIC_COMBAT_WINDOW = 0.52f;
+static const float CROSSFIRE_CLOSE_COMBAT_WINDOW = 0.58f;
+static const float CROSSFIRE_SHAFT_COMBAT_WINDOW = 0.36f;
+static const float CROSSFIRE_SHAFT_CLOSE_COMBAT_WINDOW = 0.48f;
 static const float CROSSFIRE_ACTIVATOR_COMBAT_WINDOW = 0.0f;
 static const float CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW = 0.08f;
 static const float CROSSFIRE_SHAFT_LADDER_TAKEOVER_DISTANCE = 384.0f;
@@ -115,6 +115,7 @@ static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot);
 static qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const bot_t &pBot);
+static qboolean CrossfireTacticsIsBunkerDefender(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot);
 static qboolean CrossfireTacticsCanNoticeCombatTarget(
    const bot_t &pBot, const edict_t *target);
@@ -1277,17 +1278,27 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
 }
 
 
-static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot)
+static qboolean CrossfireTacticsIsBunkerDefender(const bot_t &pBot)
 {
    return CrossfireTacticsIsStrikeActive() &&
       CrossfireTacticsIsBotSheltered(pBot);
 }
 
 
+static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot)
+{
+   (void)pBot;
+
+   // Every evacuating bot actively acquires visible enemies. Strategic combat
+   // windows still force it back onto the bunker route after each short burst.
+   return CrossfireTacticsIsStrikeActive();
+}
+
+
 static qboolean CrossfireTacticsCanNoticeCombatTarget(
    const bot_t &pBot, const edict_t *target)
 {
-   if (!CrossfireTacticsShouldPrioritizeCombat(pBot) || target == NULL ||
+   if (!CrossfireTacticsIsBunkerDefender(pBot) || target == NULL ||
        target->free || !FBitSet(target->v.flags, FL_CLIENT))
       return FALSE;
 
@@ -1345,7 +1356,7 @@ static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot)
 {
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
 
-   if (!CrossfireTacticsShouldPrioritizeCombat(pBot))
+   if (!CrossfireTacticsIsBunkerDefender(pBot))
    {
       if (bot_index >= 0)
          g_crossfire_bunker_defender_logged[bot_index] = FALSE;

@@ -168,7 +168,7 @@ static int test_sheltered_bot_defends_bunker_entrances(void)
    ASSERT_FLOAT(bot.pEdict->v.ideal_yaw, 37.0f);
 
    bot.pEdict->v.origin = Vector(0.0f, -2200.0f, -1820.0f);
-   ASSERT_FALSE(MapProfileShouldPrioritizeCombat(bot));
+   ASSERT_TRUE(MapProfileShouldPrioritizeCombat(bot));
    ASSERT_FALSE(MapProfileCanNoticeCombatTarget(bot, enemy));
    bot.pBotEnemy = NULL;
    ASSERT_FALSE(MapProfileHandleSpecialMovement(bot));
@@ -390,7 +390,7 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    ASSERT_FLOAT(bots[1].f_move_speed, 0.0f);
    ASSERT_FLOAT(bots[1].pEdict->v.ideal_yaw, 37.0f);
 
-   gpGlobals->time = 100.8f;
+   gpGlobals->time = 100.9f;
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[1]));
    ASSERT_FALSE(MapProfileHandleSpecialMovement(bots[1]));
    bots[1].pBotEnemy = NULL;
