@@ -2463,7 +2463,9 @@ static int test_mp5_grenade_priority_over_current_weapon(void)
    setup_bot_for_test(testbot, pBotEdict);
    testbot.bot_skill = WORST_BOT_LEVEL;
    testbot.weapon_skill = SKILL5;
-   testbot.pBotEnemy = create_enemy_player(Vector(500, 0, 0));
+   pBotEdict->v.origin = Vector(800, 1200, -1500);
+   testbot.pBotEnemy = create_enemy_player(
+      pBotEdict->v.origin + Vector(500, 0, 0));
 
    mock_trace_line_fn = trace_nohit;
    mock_trace_hull_fn = trace_nohit;
@@ -2495,7 +2497,7 @@ static int test_mp5_grenade_priority_over_current_weapon(void)
    testbot.m_rgAmmo[3] = 20;
    testbot.m_rgAmmo[8] = 5;
 
-   TEST("carried MP5 grenade overrides shotgun and weapon-change cooldown");
+   TEST("carried MP5 grenade overrides shotgun cooldown at non-zero coordinates");
    testbot.current_weapon_index = shotgun_idx;
    testbot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
    testbot.current_weapon.iClip = 8;

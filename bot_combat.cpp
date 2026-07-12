@@ -1366,7 +1366,7 @@ static qboolean CheckWeaponFireConditions(bot_t & pBot, const bot_weapon_select_
       if(HaveRoomForThrow(pBot))
       {
          // setup bot aim angle by distance and height to enemy
-         Vector v_enemy = pBot.pBotEnemy->v.origin - (pEdict->v.origin + GetGunPosition(pEdict));
+         Vector v_enemy = pBot.pBotEnemy->v.origin - GetGunPosition(pEdict);
 
          float angle = ValveWeaponMP5_GetBestLaunchAngleByDistanceAndHeight(v_enemy.Length(), v_enemy.z);
          if(angle >= -89.0 && angle <= 89.0)
@@ -1912,8 +1912,8 @@ static qboolean BotFireWeaponTryPrioritizedMP5Grenade(bot_t &pBot, const bot_wea
       !HaveRoomForThrow(pBot))
       return FALSE;
 
-   Vector v_actual_enemy = pBot.pBotEnemy->v.origin -
-      (pBot.pEdict->v.origin + GetGunPosition(pBot.pEdict));
+   Vector v_actual_enemy =
+      pBot.pBotEnemy->v.origin - GetGunPosition(pBot.pEdict);
    float launch_angle = ValveWeaponMP5_GetBestLaunchAngleByDistanceAndHeight(
       v_actual_enemy.Length(), v_actual_enemy.z);
 
