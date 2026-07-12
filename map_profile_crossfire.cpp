@@ -48,6 +48,7 @@ static const float CROSSFIRE_SHAFT_JUMP_DISTANCE = 80.0f;
 static const float CROSSFIRE_SHAFT_LANDED_HEIGHT = -1450.0f;
 static const float CROSSFIRE_SHAFT_INGRESS_MAX_Y = -1900.0f;
 static const float CROSSFIRE_SHAFT_PROGRESS_LOG_INTERVAL = 10.0f;
+static const float CROSSFIRE_BUNKER_WATCH_INTERVAL = 2.5f;
 static const int AMBIENT_SOUND_STOP_FLAG = (1 << 5);
 
 enum CrossfireBunkerRoute
@@ -85,6 +86,7 @@ static int g_crossfire_shaft_goal[32];
 static float g_crossfire_shaft_next_progress_log[32];
 static qboolean g_crossfire_shaft_roof_logged[32];
 static qboolean g_crossfire_shaft_slip_logged[32];
+static qboolean g_crossfire_bunker_defender_logged[32];
 static qboolean g_crossfire_shaft_routes_active = FALSE;
 
 static void CrossfireTacticsReset(void);
@@ -99,9 +101,11 @@ static qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot);
 static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot);
 static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot);
 static qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot);
+static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot);
 static qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const bot_t &pBot);
+static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot);
 
 
 static qboolean CrossfireTacticsIsCrossfire(void)
@@ -183,6 +187,7 @@ static void CrossfireTacticsClearBunkerShaftRoute(int index)
    g_crossfire_shaft_next_progress_log[index] = 0.0f;
    g_crossfire_shaft_roof_logged[index] = FALSE;
    g_crossfire_shaft_slip_logged[index] = FALSE;
+   g_crossfire_bunker_defender_logged[index] = FALSE;
 }
 
 
@@ -1155,8 +1160,83 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
 }
 
 
+static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot)
+{
+   return CrossfireTacticsIsStrikeActive() &&
+      CrossfireTacticsIsBotSheltered(pBot);
+}
+
+
+static Vector CrossfireTacticsBunkerWatchTarget(const bot_t &pBot)
+{
+   int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index < 0)
+      bot_index = 0;
+
+   const int watch_index =
+      ((int)(gpGlobals->time / CROSSFIRE_BUNKER_WATCH_INTERVAL) +
+       bot_index) % 3;
+
+   if (watch_index == 1)
+      return Vector(-300.0f, -2280.0f, -1800.0f);
+
+   if (watch_index == 2)
+      return Vector(260.0f, -2280.0f, -1800.0f);
+
+   return Vector(0.0f, -2240.0f, -1820.0f);
+}
+
+
+static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+
+   if (!CrossfireTacticsShouldPrioritizeCombat(pBot))
+   {
+      if (bot_index >= 0)
+         g_crossfire_bunker_defender_logged[bot_index] = FALSE;
+
+      return FALSE;
+   }
+
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_speed = 0.0f;
+   pBot.f_strafe_direction = 0.0f;
+
+   if (bot_index >= 0 && !g_crossfire_bunker_defender_logged[bot_index])
+   {
+      g_crossfire_bunker_defender_logged[bot_index] = TRUE;
+      UTIL_ConsolePrintf(
+         "[jk_botti] %s reached the bunker and is defending its entrances",
+         pBot.name);
+   }
+
+   // Keep combat aim authoritative. When idle, scan the three bunker ingress
+   // lanes so normal FOV and visibility checks can acquire approaching enemies.
+   if (pBot.pBotEnemy == NULL)
+   {
+      const Vector target = CrossfireTacticsBunkerWatchTarget(pBot);
+      Vector direction = target - pBot.pEdict->v.origin;
+      direction.z = 0.0f;
+
+      if (direction.Length() > 1.0f)
+      {
+         const Vector angles = UTIL_VecToAngles(direction);
+         pBot.pEdict->v.ideal_yaw = UTIL_WrapAngle(angles.y);
+      }
+
+      pBot.pEdict->v.idealpitch = 0.0f;
+   }
+
+   return TRUE;
+}
+
+
 static qboolean CrossfireProfileHandleSpecialMovement(bot_t &pBot)
 {
+   if (CrossfireTacticsHandleBunkerDefenseMovement(pBot))
+      return TRUE;
+
    if (CrossfireTacticsHandleBunkerShaftMovement(pBot))
       return TRUE;
 
@@ -1177,7 +1257,8 @@ static const map_profile_t g_crossfire_profile =
    CrossfireTacticsIsStrategicGoal,
    CrossfireTacticsEnsureStrategicGoal,
    CrossfireProfileHandleSpecialMovement,
-   CrossfireTacticsShouldYieldToStrategicMovement
+   CrossfireTacticsShouldYieldToStrategicMovement,
+   CrossfireTacticsShouldPrioritizeCombat
 };
 
 

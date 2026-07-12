@@ -129,6 +129,46 @@ static int test_shelter_bounds(void)
 }
 
 
+static int test_sheltered_bot_defends_bunker_entrances(void)
+{
+   TEST("Sheltered bot prioritizes combat and holds the bunker");
+
+   setup_crossfire();
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   gpGlobals->time = 105.0f;
+
+   bot_t bot;
+   memset(&bot, 0, sizeof(bot));
+   bot.pEdict = mock_alloc_edict();
+   bot.pEdict->v.origin = Vector(0.0f, -2520.0f, -1820.0f);
+   bot.f_move_speed = 320.0f;
+   bot.f_strafe_direction = 80.0f;
+
+   ASSERT_TRUE(MapProfileShouldPrioritizeCombat(bot));
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_FLOAT(bot.f_move_speed, 0.0f);
+   ASSERT_FLOAT(bot.f_strafe_direction, 0.0f);
+   ASSERT_FLOAT(bot.pEdict->v.ideal_yaw, 90.0f);
+
+   edict_t *enemy = mock_alloc_edict();
+   bot.pBotEnemy = enemy;
+   bot.pEdict->v.ideal_yaw = 37.0f;
+   bot.f_move_speed = 320.0f;
+
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_FLOAT(bot.f_move_speed, 0.0f);
+   ASSERT_FLOAT(bot.pEdict->v.ideal_yaw, 37.0f);
+
+   bot.pEdict->v.origin = Vector(0.0f, -2200.0f, -1820.0f);
+   ASSERT_FALSE(MapProfileShouldPrioritizeCombat(bot));
+   ASSERT_FALSE(MapProfileHandleSpecialMovement(bot));
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
 static int test_bunker_goal_uses_reachable_nodes_and_spreads_bots(void)
 {
    TEST("Bunker goal selection spreads bots over reachable shelter nodes");
@@ -406,6 +446,7 @@ int main(void)
    fail |= test_siren_starts_and_expires_strike();
    fail |= test_other_maps_and_sounds_are_ignored();
    fail |= test_shelter_bounds();
+   fail |= test_sheltered_bot_defends_bunker_entrances();
    fail |= test_bunker_goal_uses_reachable_nodes_and_spreads_bots();
    fail |= test_bunker_goal_preserves_enemy();
    fail |= test_bot_periodically_reaches_and_touches_strike_trigger();

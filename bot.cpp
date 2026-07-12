@@ -2898,9 +2898,12 @@ static void BotThinkUpdatePhysicsState(bot_t &pBot)
 static void BotThinkHandleEnemy_FindAndAim(bot_t &pBot)
 {
    edict_t *pEdict = pBot.pEdict;
+   const qboolean prioritize_combat =
+      MapProfileShouldPrioritizeCombat(pBot);
 
    if(BotWeaponCanAttack(pBot, FALSE) &&
-      ((pBot.b_has_enough_ammo_for_good_weapon && !pBot.b_low_health
+      (prioritize_combat ||
+       (pBot.b_has_enough_ammo_for_good_weapon && !pBot.b_low_health
          && !pBot.b_only_has_weak_weapons)
        || BotIsInSpawnWeaponSearchWindow(pBot)
        || pBot.f_last_time_attacked > gpGlobals->time - BotCombatDisengageTime(pBot)))
@@ -2988,7 +2991,10 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
    // does have an enemy?
    if (pBot.pBotEnemy != NULL)
    {
-      if(BotWeaponCanAttack(pBot, FALSE) && (!pBot.b_low_health || pBot.f_last_time_attacked > gpGlobals->time - BotCombatDisengageTime(pBot)))
+      if(BotWeaponCanAttack(pBot, FALSE) &&
+         (MapProfileShouldPrioritizeCombat(pBot) || !pBot.b_low_health ||
+          pBot.f_last_time_attacked >
+             gpGlobals->time - BotCombatDisengageTime(pBot)))
       {
          BotShootAtEnemy( pBot );  // shoot at the enemy
          DidShootAtEnemy = (pBot.pBotEnemy != NULL);

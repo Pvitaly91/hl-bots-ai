@@ -5330,6 +5330,29 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_FALSE(BotThinkHandleEnemy(bot));
    ASSERT_INT(mock_BotShootAtEnemy_count, 0);
 
+   // Once sheltered, even a low-health defender actively searches and shoots.
+   e->v.origin = Vector(0.0f, -2520.0f, -1820.0f);
+   e->v.health = 20.0f;
+   bot.b_low_health = TRUE;
+   bot.pBotEnemy = NULL;
+   bot.f_last_time_attacked = 0.0f;
+   mock_BotFindEnemy_result = enemy;
+   mock_BotFindEnemy_count = 0;
+   mock_BotShootAtEnemy_count = 0;
+   gpGlobals->time = 102.0f;
+
+   ASSERT_TRUE(BotThinkHandleEnemy(bot));
+   ASSERT_INT(mock_BotFindEnemy_count, 1);
+   ASSERT_INT(mock_BotShootAtEnemy_count, 1);
+   ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+
+   // Profile movement cancels forward chase while preserving combat aim.
+   bot.f_move_speed = bot.f_max_speed;
+   e->v.ideal_yaw = 37.0f;
+   BotThinkHandleNavigation(bot, TRUE, 0.0f);
+   ASSERT_FLOAT(bot.f_move_speed, 0.0f);
+   ASSERT_FLOAT(e->v.ideal_yaw, 37.0f);
+
    MapProfileReset();
    PASS();
    return 0;
