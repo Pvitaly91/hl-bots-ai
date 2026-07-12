@@ -83,7 +83,7 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
    // clearance checks still prevent unsafe secondary fire.
    {VALVE_WEAPON_MP5, WEAPON_SUBMOD_ALL, "weapon_9mmAR", WEAPON_FIRE, 1.0,
     SKILL5, SKILL5, FALSE, FALSE,
-    32.0, 2000.0, 300.0, 700.0, 600.0,
+    32.0, 2000.0, 300.0, 1400.0, 600.0,
     55, FALSE, 70, 1, 1, TRUE, FALSE, FALSE, FALSE, 0.0, 0.0, FALSE, 50, 2,
     W_IFL_MP5, W_IFL_AMMO_9MM, W_IFL_AMMO_ARGRENADES, TRUE, FALSE },
 
@@ -557,14 +557,7 @@ qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, 
    {
       secondary_valid = TRUE;
 
-      // MP5 cannot use secondary if primary is empty
-      if(weapon_index == VALVE_WEAPON_MP5 &&
-         (pBot.m_rgAmmo[weapon_defs[weapon_index].iAmmo1] <
-          select.min_primary_ammo))
-      {
-         secondary_valid = FALSE;
-      }
-      else if(weapon_index == VALVE_WEAPON_MP5 && distance != 0.0 && height != 0.0)
+      if(weapon_index == VALVE_WEAPON_MP5 && distance != 0.0 && height != 0.0)
       {
          // check if can get valid launch angle for mp2 grenade
          float angle = ValveWeaponMP5_GetBestLaunchAngleByDistanceAndHeight(distance, height);

@@ -328,7 +328,7 @@ static int test_skill_checks(void)
    ASSERT_PTR_NOT_NULL(mp5);
    ASSERT_INT(BotSkilledEnoughForSecondaryAttack(bot, *mp5), TRUE);
    ASSERT_FLOAT(mp5->secondary_min_distance, 300.0f);
-   ASSERT_FLOAT(mp5->secondary_max_distance, 700.0f);
+   ASSERT_FLOAT(mp5->secondary_max_distance, 1400.0f);
    PASS();
 
    return 0;
@@ -574,11 +574,11 @@ static int test_IsValidSecondaryAttack(void)
    bot_t bot;
    setup_bot(bot, pe);
 
-   // MP5: secondary_min=300, secondary_max=700, min_secondary_ammo=1, iAmmo2=slot 8
+   // MP5: secondary_min=300, secondary_max=1400, min_secondary_ammo=1, iAmmo2=slot 8
    bot_weapon_select_t *mp5 = GetWeaponSelect(VALVE_WEAPON_MP5);
 
    TEST("in range + has secondary ammo -> TRUE");
-   bot.m_rgAmmo[1] = 50;  // primary (needed: MP5 blocks secondary if primary empty)
+   bot.m_rgAmmo[1] = 50;
    bot.m_rgAmmo[8] = 5;   // AR grenades
    ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 500.0, 0.0, FALSE), TRUE);
    PASS();
@@ -588,14 +588,14 @@ static int test_IsValidSecondaryAttack(void)
    bot.m_rgAmmo[8] = 5;
    ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 299.9f, 0.0f, FALSE), FALSE);
    ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 300.0f, 0.0f, FALSE), TRUE);
-   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 700.0f, 0.0f, FALSE), TRUE);
-   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 700.1f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 1400.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 1400.1f, 0.0f, FALSE), FALSE);
    PASS();
 
-   TEST("MP5 primary empty blocks secondary -> FALSE");
+   TEST("MP5 grenade remains usable without primary ammo");
    bot.m_rgAmmo[1] = 0;   // no 9mm
    bot.m_rgAmmo[8] = 5;   // has grenades
-   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 500.0, 0.0, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *mp5, 500.0, 0.0, FALSE), TRUE);
    PASS();
 
    TEST("MP5 bad launch angle rejects secondary");

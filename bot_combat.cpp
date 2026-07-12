@@ -1378,7 +1378,12 @@ static qboolean CheckWeaponFireConditions(bot_t & pBot, const bot_weapon_select_
       }
 
       if(!ok)
-         use_primary = !(use_secondary = FALSE);
+      {
+         use_secondary = FALSE;
+
+         if(!use_primary)
+            return FALSE;
+      }
    }
 
    return TRUE;
@@ -1473,8 +1478,20 @@ static void BotFireSelectedWeaponSetShootTime(bot_t &pBot, const bot_weapon_sele
 //
 static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &select, const bot_fire_delay_t &delay, qboolean use_primary, qboolean use_secondary)
 {
+   qboolean conditions_checked = FALSE;
+
+   // Validate the MP5 grenade before choosing it over primary fire. A failed
+   // trajectory or clearance check leaves an already-valid primary available.
+   if(select.iId == VALVE_WEAPON_MP5 && use_secondary)
+   {
+      if(!CheckWeaponFireConditions(pBot, select, use_primary, use_secondary))
+         return FALSE;
+
+      conditions_checked = TRUE;
+   }
+
    // These secondary modes are tactical upgrades in their validated ranges.
-   // MP5 clearance and launch-angle checks below can still fall back to primary.
+   // MP5 clearance and launch-angle checks above can still fall back to primary.
    if(use_primary && use_secondary &&
       (select.iId == VALVE_WEAPON_GLOCK || select.iId == VALVE_WEAPON_MP5))
    {
@@ -1487,7 +1504,8 @@ static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &s
    }
 
    // Check if weapon can be fired and setup bot for firing this weapon
-   if(!CheckWeaponFireConditions(pBot, select, use_primary, use_secondary))
+   if(!conditions_checked &&
+      !CheckWeaponFireConditions(pBot, select, use_primary, use_secondary))
       return FALSE;
 
    BotFireSelectedWeaponSetupSpecial(pBot, select, use_primary, use_secondary);
@@ -1873,6 +1891,47 @@ static qboolean BotFireWeaponFallbackSearch(bot_t &pBot, const bot_weapon_select
 }
 
 
+// Spend carried MP5 grenades before ordinary current/random weapon selection.
+static qboolean BotFireWeaponTryPrioritizedMP5Grenade(bot_t &pBot, const bot_weapon_select_t *pSelect, const bot_fire_delay_t *pDelay, float distance, float height, int weapon_choice)
+{
+   if(weapon_choice != 0 ||
+      !BotIsCarryingWeapon(pBot, VALVE_WEAPON_MP5) ||
+      pBot.b_in_water)
+      return FALSE;
+
+   int select_index = 0;
+   while(pSelect[select_index].iId &&
+         pSelect[select_index].iId != VALVE_WEAPON_MP5)
+      select_index++;
+
+   if(pSelect[select_index].iId != VALVE_WEAPON_MP5 ||
+      !IsValidWeaponChoose(pBot, pSelect[select_index]) ||
+      !IsValidToFireAtTheMoment(pBot, pSelect[select_index]) ||
+      !BotSkilledEnoughForSecondaryAttack(pBot, pSelect[select_index]) ||
+      !IsValidSecondaryAttack(pBot, pSelect[select_index], distance, height, FALSE) ||
+      !HaveRoomForThrow(pBot))
+      return FALSE;
+
+   Vector v_actual_enemy = pBot.pBotEnemy->v.origin -
+      (pBot.pEdict->v.origin + GetGunPosition(pBot.pEdict));
+   float launch_angle = ValveWeaponMP5_GetBestLaunchAngleByDistanceAndHeight(
+      v_actual_enemy.Length(), v_actual_enemy.z);
+
+   if(launch_angle < -89.0f || launch_angle > 89.0f)
+      return FALSE;
+
+   qboolean use_primary =
+      IsValidPrimaryAttack(pBot, pSelect[select_index], distance, height, FALSE) &&
+      BotSkilledEnoughForPrimaryAttack(pBot, pSelect[select_index]);
+
+   if(!TrySelectWeapon(pBot, select_index, pSelect[select_index], pDelay[select_index]))
+      return FALSE;
+
+   return BotFireSelectedWeapon(
+      pBot, pSelect[select_index], pDelay[select_index], use_primary, TRUE);
+}
+
+
 // specifing a weapon_choice allows you to choose the weapon the bot will
 // use (assuming enough ammo exists for that weapon)
 // BotFireWeapon will return TRUE if weapon was fired, FALSE otherwise
@@ -1896,6 +1955,10 @@ static qboolean BotFireWeapon(const Vector & v_enemy, bot_t &pBot, int weapon_ch
    if (BotFireWeaponHandleCharging(pBot, pSelect, pDelay, TRUE))
       return TRUE;
    if (BotFireWeaponHandleCharging(pBot, pSelect, pDelay, FALSE))
+      return TRUE;
+
+   if(BotFireWeaponTryPrioritizedMP5Grenade(
+      pBot, pSelect, pDelay, distance, height, weapon_choice))
       return TRUE;
 
    // check if we can reuse currently active weapon

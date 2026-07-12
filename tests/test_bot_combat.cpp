@@ -1781,11 +1781,19 @@ static int test_check_weapon_fire_conditions(void)
    pEnemy->v.origin = Vector(50, 0, 0);
    testbot.pBotEnemy = pEnemy;
    testbot.b_set_special_shoot_angle = FALSE;
-   use_p = FALSE; use_s = TRUE;
+   use_p = TRUE; use_s = TRUE;
    result = CheckWeaponFireConditions(testbot, mp5_select, use_p, use_s);
    ASSERT_INT(result, TRUE);
    // Should have switched to primary since angle is out of range
    ASSERT_INT(use_p, TRUE);
+   ASSERT_INT(use_s, FALSE);
+   PASS();
+
+   TEST("MP5 secondary: invalid angle without primary returns FALSE");
+   use_p = FALSE; use_s = TRUE;
+   result = CheckWeaponFireConditions(testbot, mp5_select, use_p, use_s);
+   ASSERT_INT(result, FALSE);
+   ASSERT_INT(use_p, FALSE);
    ASSERT_INT(use_s, FALSE);
    PASS();
 
@@ -2383,10 +2391,34 @@ static int test_mp5_secondary_attack_policy(void)
    ASSERT_INT(testbot.b_set_special_shoot_angle, TRUE);
    PASS();
 
+   TEST("MP5 uses grenade launcher at reliable long range");
+   pEnemy->v.origin = Vector(1000, 0, 0);
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0;
+   testbot.b_set_special_shoot_angle = FALSE;
+   ASSERT_INT(BotFireWeapon(Vector(1000, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_INT(testbot.b_set_special_shoot_angle, TRUE);
+   PASS();
+
+   TEST("MP5 uses carried grenade even without 9mm ammo");
+   pEnemy->v.origin = Vector(500, 0, 0);
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0;
+   testbot.m_rgAmmo[1] = 0;
+   testbot.b_set_special_shoot_angle = FALSE;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_INT(testbot.b_set_special_shoot_angle, TRUE);
+   PASS();
+
    TEST("MP5 uses primary fire inside grenade safety range");
    pEnemy->v.origin = Vector(200, 0, 0);
    pBotEdict->v.button = 0;
    testbot.f_shoot_time = 0;
+   testbot.m_rgAmmo[1] = 50;
    testbot.b_set_special_shoot_angle = FALSE;
    ASSERT_INT(BotFireWeapon(Vector(200, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
@@ -2415,6 +2447,78 @@ static int test_mp5_secondary_attack_policy(void)
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
    ASSERT_INT(testbot.b_set_special_shoot_angle, FALSE);
+   PASS();
+
+   return 0;
+}
+
+static int test_mp5_grenade_priority_over_current_weapon(void)
+{
+   printf("MP5 grenade priority over current weapon:\n");
+   mock_reset();
+   setup_skill_settings();
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   testbot.bot_skill = WORST_BOT_LEVEL;
+   testbot.weapon_skill = SKILL5;
+   testbot.pBotEnemy = create_enemy_player(Vector(500, 0, 0));
+
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_nohit;
+
+   int mp5_idx = -1;
+   int shotgun_idx = -1;
+   for (int i = 0; weapon_select[i].iId; ++i)
+   {
+      if(weapon_select[i].iId == VALVE_WEAPON_MP5)
+         mp5_idx = i;
+      else if(weapon_select[i].iId == VALVE_WEAPON_SHOTGUN)
+         shotgun_idx = i;
+   }
+
+   ASSERT_TRUE(mp5_idx >= 0);
+   ASSERT_TRUE(shotgun_idx >= 0);
+   weapon_defs[VALVE_WEAPON_MP5].iId = VALVE_WEAPON_MP5;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2 = 8;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iId = VALVE_WEAPON_SHOTGUN;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1 = 3;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo2 = -1;
+   fire_delay[mp5_idx].iId = VALVE_WEAPON_MP5;
+   fire_delay[shotgun_idx].iId = VALVE_WEAPON_SHOTGUN;
+
+   pBotEdict->v.weapons =
+      (1u << VALVE_WEAPON_MP5) | (1u << VALVE_WEAPON_SHOTGUN);
+   testbot.m_rgAmmo[1] = 50;
+   testbot.m_rgAmmo[3] = 20;
+   testbot.m_rgAmmo[8] = 5;
+
+   TEST("carried MP5 grenade overrides shotgun and weapon-change cooldown");
+   testbot.current_weapon_index = shotgun_idx;
+   testbot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
+   testbot.current_weapon.iClip = 8;
+   testbot.f_weaponchange_time = gpGlobals->time + 10.0f;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, mp5_idx);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   PASS();
+
+   TEST("without AR grenades current shotgun remains selected");
+   testbot.current_weapon_index = shotgun_idx;
+   testbot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
+   testbot.current_weapon.iClip = 8;
+   testbot.f_weaponchange_time = gpGlobals->time + 10.0f;
+   testbot.f_shoot_time = 0;
+   testbot.m_rgAmmo[8] = 0;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, shotgun_idx);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
    PASS();
 
    return 0;
@@ -4956,6 +5060,8 @@ int main(void)
    rc |= test_glock_secondary_distance_policy();
    printf("\n");
    rc |= test_mp5_secondary_attack_policy();
+   printf("\n");
+   rc |= test_mp5_grenade_priority_over_current_weapon();
    printf("\n");
 
    // Group 6: BotShootAtEnemy + special weapons
