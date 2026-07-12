@@ -5296,21 +5296,37 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
    ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(bot.waypoint_goal, 0);
+   ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bot));
+   ASSERT_FALSE(MapProfileShouldSuppressCombat(bot));
 
-   // Evacuating bots sustain a visible burst against distant enemies.
+   // Evacuating bots keep firing without entering a stationary combat phase.
    gpGlobals->time = 100.15f;
    mock_BotShootAtEnemy_count = 0;
    ASSERT_TRUE(BotThinkHandleEnemy(bot));
    ASSERT_INT(mock_BotShootAtEnemy_count, 1);
 
-   // Movement still takes precedence between combat bursts.
+   // The same target remains engaged while navigation continues toward the
+   // bunker and preserves the combat aim selected before route processing.
    gpGlobals->time = 100.45f;
    mock_BotShootAtEnemy_count = 0;
-   const qboolean yielded_to_movement = BotThinkHandleEnemy(bot);
-
-   ASSERT_FALSE(yielded_to_movement);
-   ASSERT_INT(mock_BotShootAtEnemy_count, 0);
+   ASSERT_TRUE(BotThinkHandleEnemy(bot));
+   ASSERT_INT(mock_BotShootAtEnemy_count, 1);
    ASSERT_PTR_EQ(bot.pBotEnemy, enemy);
+   e->v.idealpitch = -7.0f;
+   e->v.ideal_yaw = 37.0f;
+   bot.f_move_speed = bot.f_max_speed;
+   BotThinkHandleNavigation(bot, TRUE, 2.0f);
+   ASSERT_TRUE(bot.f_move_speed > 0.0f);
+   ASSERT_FLOAT(e->v.idealpitch, -7.0f);
+   ASSERT_FLOAT(e->v.ideal_yaw, 37.0f);
+
+   // Strategic strafing keeps route speed instead of applying ordinary
+   // combat distance/strafe behavior toward the visible enemy.
+   bot.curr_waypoint_index = 0;
+   bot.f_move_speed = bot.f_max_speed;
+   e->v.v_angle.y = 0.0f;
+   BotDoStrafe(bot);
+   ASSERT_TRUE(fabs(bot.f_move_speed) > 100.0f);
 
    // Evacuation actively acquires and fires at visible targets even when the
    // bot has only a Glock and low health, which normally blocks a new fight.
@@ -5337,8 +5353,8 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
    bot.b_low_health = FALSE;
    mock_BotFindEnemy_result = NULL;
 
-   // Point-blank threats get a larger combat window, but still cannot block
-   // evacuation indefinitely.
+   // Point-blank threats are continuously engaged without interrupting the
+   // route to the bunker.
    enemy->v.origin = Vector(100.0f, 0.0f, 0.0f);
    gpGlobals->time = 101.0f;
    mock_BotShootAtEnemy_count = 0;
@@ -5352,8 +5368,8 @@ static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
 
    gpGlobals->time = 101.9f;
    mock_BotShootAtEnemy_count = 0;
-   ASSERT_FALSE(BotThinkHandleEnemy(bot));
-   ASSERT_INT(mock_BotShootAtEnemy_count, 0);
+   ASSERT_TRUE(BotThinkHandleEnemy(bot));
+   ASSERT_INT(mock_BotShootAtEnemy_count, 1);
 
    // Once sheltered, even a low-health defender actively searches and shoots.
    e->v.origin = Vector(0.0f, -2520.0f, -1820.0f);

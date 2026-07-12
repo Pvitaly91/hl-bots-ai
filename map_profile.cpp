@@ -175,6 +175,15 @@ qboolean MapProfileShouldYieldToStrategicMovement(const bot_t &pBot)
 }
 
 
+qboolean MapProfileShouldSuppressCombat(const bot_t &pBot)
+{
+   const map_profile_t *profile = MapProfileResolve();
+
+   return profile != NULL && profile->should_suppress_combat != NULL &&
+      profile->should_suppress_combat(pBot);
+}
+
+
 qboolean MapProfileShouldPrioritizeCombat(const bot_t &pBot)
 {
    const map_profile_t *profile = MapProfileResolve();

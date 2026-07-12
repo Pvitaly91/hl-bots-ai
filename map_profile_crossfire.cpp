@@ -26,14 +26,6 @@ static const float CROSSFIRE_REPEAT_BOT_STRIKE_MIN = 240.0f;
 static const float CROSSFIRE_REPEAT_BOT_STRIKE_MAX = 360.0f;
 static const float CROSSFIRE_ACTIVATOR_TIMEOUT = 120.0f;
 static const float CROSSFIRE_TRIGGER_TOUCH_DISTANCE = 160.0f;
-static const float CROSSFIRE_STRATEGIC_COMBAT_RANGE = 160.0f;
-static const float CROSSFIRE_STRATEGIC_COMBAT_CYCLE = 0.75f;
-static const float CROSSFIRE_STRATEGIC_COMBAT_WINDOW = 0.52f;
-static const float CROSSFIRE_CLOSE_COMBAT_WINDOW = 0.58f;
-static const float CROSSFIRE_SHAFT_COMBAT_WINDOW = 0.36f;
-static const float CROSSFIRE_SHAFT_CLOSE_COMBAT_WINDOW = 0.48f;
-static const float CROSSFIRE_ACTIVATOR_COMBAT_WINDOW = 0.0f;
-static const float CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW = 0.08f;
 static const float CROSSFIRE_SHAFT_LADDER_TAKEOVER_DISTANCE = 384.0f;
 static const float CROSSFIRE_SHAFT_LADDER_MAX_HORIZONTAL_DISTANCE = 192.0f;
 static const float CROSSFIRE_SHAFT_LADDER_COMBAT_LOCK_DISTANCE = 320.0f;
@@ -117,11 +109,11 @@ static qboolean CrossfireTacticsEnsureBunkerGoal(bot_t &pBot);
 static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot);
 static qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot);
 static qboolean CrossfireTacticsHandleStrikeActivatorMovement(bot_t &pBot);
-static qboolean CrossfireTacticsHandleEvacuationCombatMovement(bot_t &pBot);
 static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot);
 static qboolean CrossfireTacticsIsBotStrikeActivator(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const bot_t &pBot);
+static qboolean CrossfireTacticsShouldSuppressCombat(const bot_t &pBot);
 static qboolean CrossfireTacticsIsBunkerDefender(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot);
 static qboolean CrossfireTacticsCanNoticeCombatTarget(
@@ -1370,40 +1362,21 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    if (!evacuating && !CrossfireTacticsIsBotStrikeActivator(pBot))
       return FALSE;
 
-   int bot_index = UTIL_GetBotIndex(pBot.pEdict);
-   if (bot_index < 0)
-      bot_index = 0;
+   // Keep route movement authoritative for the entire evacuation. Combat aim
+   // and fire remain active, but may not stop or redirect the bot's legs.
+   return TRUE;
+}
 
-   const float phase = fmod(
-      gpGlobals->time + bot_index * 0.173f,
-      CROSSFIRE_STRATEGIC_COMBAT_CYCLE);
-   const qboolean close_enemy =
-      (pBot.pBotEnemy->v.origin - pBot.pEdict->v.origin).Length() <=
-         CROSSFIRE_STRATEGIC_COMBAT_RANGE;
-   float combat_window;
-   const int route_index = CrossfireTacticsBotArrayIndex(pBot);
-   const qboolean using_shaft = route_index >= 0 &&
-      (g_crossfire_bunker_route[route_index] == CROSSFIRE_ROUTE_LEFT_SHAFT ||
-       g_crossfire_bunker_route[route_index] == CROSSFIRE_ROUTE_RIGHT_SHAFT);
 
-   if (using_shaft &&
-       CrossfireTacticsShaftMovementOverridesCombat(pBot, route_index))
-      return TRUE;
+static qboolean CrossfireTacticsShouldSuppressCombat(const bot_t &pBot)
+{
+   if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL ||
+       CrossfireTacticsIsBotSheltered(pBot))
+      return FALSE;
 
-   if (using_shaft)
-      combat_window = close_enemy
-         ? CROSSFIRE_SHAFT_CLOSE_COMBAT_WINDOW
-         : CROSSFIRE_SHAFT_COMBAT_WINDOW;
-   else if (CrossfireTacticsIsBotStrikeActivator(pBot))
-      combat_window = close_enemy
-         ? CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW
-         : CROSSFIRE_ACTIVATOR_COMBAT_WINDOW;
-   else
-      combat_window = close_enemy
-         ? CROSSFIRE_CLOSE_COMBAT_WINDOW
-         : CROSSFIRE_STRATEGIC_COMBAT_WINDOW;
-
-   return phase >= combat_window;
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   return bot_index >= 0 &&
+      CrossfireTacticsShaftMovementOverridesCombat(pBot, bot_index);
 }
 
 
@@ -1438,26 +1411,6 @@ static qboolean CrossfireTacticsCanNoticeCombatTarget(
    return origin.x >= -900.0f && origin.x <= 900.0f &&
       origin.y >= -2400.0f && origin.y <= -900.0f &&
       origin.z >= -2050.0f && origin.z <= -1050.0f;
-}
-
-
-static qboolean CrossfireTacticsHandleEvacuationCombatMovement(bot_t &pBot)
-{
-   if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL ||
-       pBot.pBotEnemy == NULL || CrossfireTacticsIsBotSheltered(pBot) ||
-       CrossfireTacticsShouldYieldToStrategicMovement(pBot))
-      return FALSE;
-
-   // Fire from the current route for a bounded burst, then let the movement
-   // phase resume. This prevents normal combat movement from chasing a target
-   // away from the bunker and keeps combat aim authoritative on shaft routes.
-   pBot.f_pause_time = 0.0f;
-   pBot.f_move_speed = 0.0f;
-   pBot.f_strafe_direction = 0.0f;
-   pBot.pEdict->v.button &=
-      ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT);
-
-   return TRUE;
 }
 
 
@@ -1531,9 +1484,6 @@ static qboolean CrossfireProfileHandleSpecialMovement(bot_t &pBot)
    if (CrossfireTacticsHandleBunkerDefenseMovement(pBot))
       return TRUE;
 
-   if (CrossfireTacticsHandleEvacuationCombatMovement(pBot))
-      return TRUE;
-
    if (CrossfireTacticsHandleBunkerShaftMovement(pBot))
       return TRUE;
 
@@ -1555,6 +1505,7 @@ static const map_profile_t g_crossfire_profile =
    CrossfireTacticsEnsureStrategicGoal,
    CrossfireProfileHandleSpecialMovement,
    CrossfireTacticsShouldYieldToStrategicMovement,
+   CrossfireTacticsShouldSuppressCombat,
    CrossfireTacticsShouldPrioritizeCombat,
    CrossfireTacticsCanNoticeCombatTarget
 };

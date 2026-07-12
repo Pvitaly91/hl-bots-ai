@@ -379,20 +379,17 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(bots[3].waypoint_goal, 0);
 
-   // Shaft bots stop only for a short firing window. Their combat yaw is not
-   // overwritten by precise ladder movement, and route movement then resumes.
+   // Distant shaft approach keeps movement authoritative while combat remains
+   // available. Seeing an enemy must never create a stationary firing phase.
    bots[1].pBotEnemy = bots[2].pEdict;
    bots[1].pEdict->v.ideal_yaw = 37.0f;
    bots[1].f_move_speed = bots[1].f_max_speed;
    gpGlobals->time = 100.4f;
-   ASSERT_FALSE(MapProfileShouldYieldToStrategicMovement(bots[1]));
-   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[1]));
-   ASSERT_FLOAT(bots[1].f_move_speed, 0.0f);
-   ASSERT_FLOAT(bots[1].pEdict->v.ideal_yaw, 37.0f);
-
-   gpGlobals->time = 100.9f;
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[1]));
+   ASSERT_FALSE(MapProfileShouldSuppressCombat(bots[1]));
    ASSERT_FALSE(MapProfileHandleSpecialMovement(bots[1]));
+   ASSERT_FLOAT(bots[1].f_move_speed, bots[1].f_max_speed);
+   ASSERT_FLOAT(bots[1].pEdict->v.ideal_yaw, 37.0f);
    bots[1].pBotEnemy = NULL;
 
    bots[1].curr_waypoint_index = 1;
@@ -408,6 +405,7 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    bots[2].pBotEnemy = bots[1].pEdict;
    gpGlobals->time = 100.4f;
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[2]));
+   ASSERT_TRUE(MapProfileShouldSuppressCombat(bots[2]));
    ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[2]));
    ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_FORWARD));
    ASSERT_FLOAT(bots[2].f_move_speed, 180.0f);
@@ -430,6 +428,7 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    bots[2].b_on_ladder = TRUE;
    bots[2].pEdict->v.button = 0;
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[2]));
+   ASSERT_TRUE(MapProfileShouldSuppressCombat(bots[2]));
    ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[2]));
    ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_FORWARD));
    ASSERT_FLOAT(bots[2].pEdict->v.v_angle.x, -60.0f);
@@ -443,10 +442,12 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    ASSERT_FLOAT(bots[2].f_move_speed, 0.0f);
    bots[2].pEdict->v.movetype = MOVETYPE_WALK;
    bots[2].b_on_ladder = FALSE;
-   ASSERT_FALSE(MapProfileShouldYieldToStrategicMovement(bots[2]));
+   ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[2]));
+   ASSERT_FALSE(MapProfileShouldSuppressCombat(bots[2]));
 
    gpGlobals->time = 106.6f;
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[2]));
+   ASSERT_TRUE(MapProfileShouldSuppressCombat(bots[2]));
    ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[2]));
    ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
    bots[2].pBotEnemy = NULL;
@@ -461,6 +462,7 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    bots[1].pBotEnemy = bots[2].pEdict;
    gpGlobals->time = 139.0f;
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[1]));
+   ASSERT_TRUE(MapProfileShouldSuppressCombat(bots[1]));
    ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[1]));
    ASSERT_TRUE(bots[1].f_move_speed > 0.0f);
    ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[1]));

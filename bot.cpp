@@ -2448,6 +2448,29 @@ static void BotDoStrafeLadder(bot_t &pBot)
 }
 
 
+static qboolean BotDoStrafeStrategic(bot_t &pBot)
+{
+   if (!MapProfileShouldYieldToStrategicMovement(pBot))
+      return FALSE;
+
+   // Precise ladder/shaft movement has already supplied its own controls.
+   if (MapProfileShouldSuppressCombat(pBot))
+      return TRUE;
+
+   if (pBot.curr_waypoint_index >= 0 &&
+       pBot.curr_waypoint_index < num_waypoints &&
+       pBot.f_move_speed != 0.0f)
+   {
+      const float speed = fabs(pBot.f_move_speed);
+      BotDoStrafeLadder_AlignWithWaypoint(pBot);
+      pBot.f_move_speed = speed * pBot.f_move_direction;
+   }
+
+   // Never let ordinary combat strafing redirect an evacuating bot.
+   return TRUE;
+}
+
+
 static void BotDoStrafeNormal(bot_t &pBot)
 {
    edict_t *pEdict = pBot.pEdict;
@@ -2493,6 +2516,9 @@ static void BotDoStrafeNormal(bot_t &pBot)
 static void BotDoStrafe(bot_t &pBot)
 {
    edict_t *pEdict = pBot.pEdict;
+
+   if (BotDoStrafeStrategic(pBot))
+      return;
 
    // combat strafe
    if(pBot.pBotEnemy != NULL && FInViewCone(UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy), pEdict) && FVisibleEnemy( UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy), pEdict, pBot.pBotEnemy ))
@@ -2978,7 +3004,7 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 
    BotThinkHandleEnemy_FindAndAim(pBot);
 
-   if (MapProfileShouldYieldToStrategicMovement(pBot))
+   if (MapProfileShouldSuppressCombat(pBot))
    {
       pBot.f_pause_time = 0.0f;
       return FALSE;
@@ -3022,16 +3048,29 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float moved_distance)
 {
    edict_t *pEdict = pBot.pEdict;
+   const qboolean preserve_combat_aim = did_shoot &&
+      MapProfileShouldYieldToStrategicMovement(pBot);
+   const float combat_pitch = pEdict->v.idealpitch;
+   const float combat_yaw = pEdict->v.ideal_yaw;
 
    // Combat may skip waypoint movement for this frame, but a map profile's
    // strategic destination must remain authoritative throughout its event.
    if (MapProfileEnsureStrategicGoal(pBot))
       pBot.f_pause_time = 0.0f;
 
-   if (MapProfileHandleSpecialMovement(pBot))
+   const qboolean handled_special_movement =
+      MapProfileHandleSpecialMovement(pBot);
+
+   if (preserve_combat_aim)
+   {
+      pEdict->v.idealpitch = combat_pitch;
+      pEdict->v.ideal_yaw = combat_yaw;
+   }
+
+   if (handled_special_movement)
       return;
 
-   if(did_shoot)
+   if(did_shoot && !preserve_combat_aim)
    {
       // do nothing
    }
@@ -3085,6 +3124,12 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
    else
    {
       BotJustWanderAround(pBot, moved_distance);
+   }
+
+   if (preserve_combat_aim)
+   {
+      pEdict->v.idealpitch = combat_pitch;
+      pEdict->v.ideal_yaw = combat_yaw;
    }
 }
 
