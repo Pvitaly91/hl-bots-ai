@@ -36,7 +36,12 @@ static const float CROSSFIRE_ACTIVATOR_CLOSE_COMBAT_WINDOW = 0.10f;
 static const float CROSSFIRE_SHAFT_LADDER_TAKEOVER_DISTANCE = 384.0f;
 static const float CROSSFIRE_SHAFT_LADDER_MAX_HORIZONTAL_DISTANCE = 192.0f;
 static const float CROSSFIRE_SHAFT_LADDER_APPROACH_SPEED = 80.0f;
-static const float CROSSFIRE_SHAFT_ROOF_MOVE_SPEED = 120.0f;
+static const float CROSSFIRE_SHAFT_RAMP_START_SPEED = 180.0f;
+static const float CROSSFIRE_SHAFT_RAMP_CLIMB_SPEED = 120.0f;
+static const float CROSSFIRE_SHAFT_LANDING_SPEED = 70.0f;
+static const float CROSSFIRE_SHAFT_RAMP_STAGE_DISTANCE = 48.0f;
+static const float CROSSFIRE_SHAFT_LANDING_DISTANCE = 24.0f;
+static const float CROSSFIRE_SHAFT_ROOF_MOVE_SPEED = 80.0f;
 static const float CROSSFIRE_SHAFT_DROP_MOVE_SPEED = 80.0f;
 static const float CROSSFIRE_SHAFT_ROOF_DISTANCE = 56.0f;
 static const float CROSSFIRE_SHAFT_JUMP_DISTANCE = 80.0f;
@@ -58,6 +63,9 @@ enum CrossfireShaftStage
 {
    CROSSFIRE_SHAFT_STAGE_NONE = 0,
    CROSSFIRE_SHAFT_STAGE_APPROACH,
+   CROSSFIRE_SHAFT_STAGE_RAMP_START,
+   CROSSFIRE_SHAFT_STAGE_RAMP_TOP,
+   CROSSFIRE_SHAFT_STAGE_LADDER_LANDING,
    CROSSFIRE_SHAFT_STAGE_CLIMB,
    CROSSFIRE_SHAFT_STAGE_CROSS_ROOF,
    CROSSFIRE_SHAFT_STAGE_DROP,
@@ -75,6 +83,8 @@ static int g_crossfire_bunker_route[32];
 static int g_crossfire_shaft_stage[32];
 static int g_crossfire_shaft_goal[32];
 static float g_crossfire_shaft_next_progress_log[32];
+static qboolean g_crossfire_shaft_roof_logged[32];
+static qboolean g_crossfire_shaft_slip_logged[32];
 static qboolean g_crossfire_shaft_routes_active = FALSE;
 
 
@@ -155,6 +165,8 @@ static void CrossfireTacticsClearBunkerShaftRoute(int index)
    g_crossfire_shaft_stage[index] = CROSSFIRE_SHAFT_STAGE_NONE;
    g_crossfire_shaft_goal[index] = -1;
    g_crossfire_shaft_next_progress_log[index] = 0.0f;
+   g_crossfire_shaft_roof_logged[index] = FALSE;
+   g_crossfire_shaft_slip_logged[index] = FALSE;
 }
 
 
@@ -301,6 +313,33 @@ static Vector CrossfireTacticsShaftLadder(int route, float height)
       return Vector(-447.0f, -1516.0f, height);
 
    return Vector(447.0f, -1509.0f, height);
+}
+
+
+static Vector CrossfireTacticsShaftRampStart(int route)
+{
+   if (route == CROSSFIRE_ROUTE_LEFT_SHAFT)
+      return Vector(-272.0f, -1274.0f, -1660.0f);
+
+   return Vector(374.0f, -1172.0f, -1660.0f);
+}
+
+
+static Vector CrossfireTacticsShaftRampTop(int route)
+{
+   if (route == CROSSFIRE_ROUTE_LEFT_SHAFT)
+      return Vector(-442.0f, -1437.0f, -1629.0f);
+
+   return Vector(420.0f, -1371.0f, -1660.0f);
+}
+
+
+static Vector CrossfireTacticsShaftLadderLanding(int route)
+{
+   if (route == CROSSFIRE_ROUTE_LEFT_SHAFT)
+      return Vector(-439.0f, -1495.0f, -1596.0f);
+
+   return Vector(448.0f, -1509.0f, -1582.0f);
 }
 
 
@@ -757,7 +796,7 @@ static qboolean CrossfireTacticsHandleShaftLadderMovement(
 
    if (distance > CROSSFIRE_SHAFT_LADDER_MAX_HORIZONTAL_DISTANCE)
    {
-      stage = CROSSFIRE_SHAFT_STAGE_APPROACH;
+      stage = CROSSFIRE_SHAFT_STAGE_RAMP_START;
       return FALSE;
    }
 
@@ -793,6 +832,60 @@ static qboolean CrossfireTacticsHandleShaftLadderMovement(
 }
 
 
+static qboolean CrossfireTacticsHandleShaftRampMovement(
+   bot_t &pBot, int route, int &stage)
+{
+   if (pBot.b_on_ladder || pBot.pEdict->v.movetype == MOVETYPE_FLY)
+   {
+      stage = CROSSFIRE_SHAFT_STAGE_CLIMB;
+      return CrossfireTacticsHandleShaftLadderMovement(
+         pBot, route, stage);
+   }
+
+   Vector target;
+   float speed;
+   float target_distance;
+
+   if (stage == CROSSFIRE_SHAFT_STAGE_RAMP_START)
+   {
+      target = CrossfireTacticsShaftRampStart(route);
+      speed = CROSSFIRE_SHAFT_RAMP_START_SPEED;
+      target_distance = CROSSFIRE_SHAFT_RAMP_STAGE_DISTANCE;
+   }
+   else if (stage == CROSSFIRE_SHAFT_STAGE_RAMP_TOP)
+   {
+      target = CrossfireTacticsShaftRampTop(route);
+      speed = CROSSFIRE_SHAFT_RAMP_CLIMB_SPEED;
+      target_distance = CROSSFIRE_SHAFT_RAMP_STAGE_DISTANCE;
+   }
+   else
+   {
+      target = CrossfireTacticsShaftLadderLanding(route);
+      speed = CROSSFIRE_SHAFT_LANDING_SPEED;
+      target_distance = CROSSFIRE_SHAFT_LANDING_DISTANCE;
+   }
+
+   CrossfireTacticsMovePreciselyTowardShaftTarget(
+      pBot, target, speed);
+
+   if ((pBot.pEdict->v.origin - target).Make2D().Length() > target_distance)
+      return TRUE;
+
+   if (stage == CROSSFIRE_SHAFT_STAGE_RAMP_START)
+      stage = CROSSFIRE_SHAFT_STAGE_RAMP_TOP;
+   else if (stage == CROSSFIRE_SHAFT_STAGE_RAMP_TOP)
+      stage = CROSSFIRE_SHAFT_STAGE_LADDER_LANDING;
+   else
+      stage = CROSSFIRE_SHAFT_STAGE_CLIMB;
+
+   if (stage == CROSSFIRE_SHAFT_STAGE_CLIMB)
+      return CrossfireTacticsHandleShaftLadderMovement(
+         pBot, route, stage);
+
+   return TRUE;
+}
+
+
 qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
 {
    if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL)
@@ -819,23 +912,39 @@ qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
    CrossfireTacticsLogShaftProgress(pBot, bot_index, route, goal);
 
    if (stage == CROSSFIRE_SHAFT_STAGE_APPROACH ||
+       stage == CROSSFIRE_SHAFT_STAGE_RAMP_START ||
+       stage == CROSSFIRE_SHAFT_STAGE_RAMP_TOP ||
+       stage == CROSSFIRE_SHAFT_STAGE_LADDER_LANDING ||
        stage == CROSSFIRE_SHAFT_STAGE_CLIMB)
    {
       if (CrossfireTacticsBotReachedShaftRoof(pBot, route))
       {
          stage = CROSSFIRE_SHAFT_STAGE_CROSS_ROOF;
-         UTIL_ConsolePrintf("[jk_botti] %s reached the %s tower roof",
-            pBot.name, CrossfireTacticsShaftName(route));
+
+         if (!g_crossfire_shaft_roof_logged[bot_index])
+         {
+            g_crossfire_shaft_roof_logged[bot_index] = TRUE;
+            UTIL_ConsolePrintf("[jk_botti] %s reached the %s tower roof",
+               pBot.name, CrossfireTacticsShaftName(route));
+         }
       }
       else
       {
          if (stage == CROSSFIRE_SHAFT_STAGE_APPROACH &&
              CrossfireTacticsShouldTakeOverShaftLadder(pBot, route, goal))
          {
-            stage = CROSSFIRE_SHAFT_STAGE_CLIMB;
-            UTIL_ConsolePrintf("[jk_botti] %s is climbing the %s tower ladder",
+            stage = (pBot.b_on_ladder || pEdict->v.movetype == MOVETYPE_FLY)
+               ? CROSSFIRE_SHAFT_STAGE_CLIMB
+               : CROSSFIRE_SHAFT_STAGE_RAMP_START;
+            UTIL_ConsolePrintf("[jk_botti] %s is lining up with the %s tower ramp",
                pBot.name, CrossfireTacticsShaftName(route));
          }
+
+         if (stage == CROSSFIRE_SHAFT_STAGE_RAMP_START ||
+             stage == CROSSFIRE_SHAFT_STAGE_RAMP_TOP ||
+             stage == CROSSFIRE_SHAFT_STAGE_LADDER_LANDING)
+            return CrossfireTacticsHandleShaftRampMovement(
+               pBot, route, stage);
 
          if (stage == CROSSFIRE_SHAFT_STAGE_CLIMB)
             return CrossfireTacticsHandleShaftLadderMovement(
@@ -851,11 +960,17 @@ qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
 
       if (pEdict->v.origin.z < roof_entry.z - 96.0f)
       {
-         stage = CROSSFIRE_SHAFT_STAGE_CLIMB;
-         UTIL_ConsolePrintf(
-            "[jk_botti] %s slipped from the %s tower roof and is retrying",
-            pBot.name, CrossfireTacticsShaftName(route));
-         return CrossfireTacticsHandleShaftLadderMovement(
+         stage = CROSSFIRE_SHAFT_STAGE_RAMP_START;
+
+         if (!g_crossfire_shaft_slip_logged[bot_index])
+         {
+            g_crossfire_shaft_slip_logged[bot_index] = TRUE;
+            UTIL_ConsolePrintf(
+               "[jk_botti] %s slipped from the %s tower roof and is retrying",
+               pBot.name, CrossfireTacticsShaftName(route));
+         }
+
+         return CrossfireTacticsHandleShaftRampMovement(
             pBot, route, stage);
       }
 
@@ -863,10 +978,7 @@ qboolean CrossfireTacticsHandleBunkerShaftMovement(bot_t &pBot)
          pBot, roof_entry, CROSSFIRE_SHAFT_ROOF_MOVE_SPEED);
 
       if (pBot.b_on_ladder || pEdict->v.movetype == MOVETYPE_FLY)
-      {
-         pEdict->v.button |= IN_JUMP;
          pBot.ladder_dir = LADDER_UNKNOWN;
-      }
 
       if ((pEdict->v.origin - roof_entry).Make2D().Length() >
           CROSSFIRE_SHAFT_ROOF_DISTANCE)

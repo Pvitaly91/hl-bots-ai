@@ -317,13 +317,32 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    ASSERT_INT(bots[3].wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(bots[3].waypoint_goal, 0);
 
+   bots[1].curr_waypoint_index = 1;
+   bots[1].pEdict->v.origin = Vector(-368.0f, -1456.0f, -1660.0f);
+   bots[1].pEdict->v.button = 0;
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[1]));
+   ASSERT_FLOAT(bots[1].f_move_speed, 180.0f);
+   ASSERT_TRUE(bots[1].pEdict->v.ideal_yaw > 0.0f);
+
    bots[2].curr_waypoint_index = 2;
    bots[2].pEdict->v.origin = Vector(475.0f, -1456.0f, -1660.0f);
    bots[2].pEdict->v.button = 0;
    ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
    ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_FORWARD));
-   ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
+   ASSERT_FLOAT(bots[2].f_move_speed, 180.0f);
    ASSERT_TRUE(bots[2].b_not_maxspeed);
+
+   bots[2].pEdict->v.origin = Vector(374.0f, -1172.0f, -1660.0f);
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_FLOAT(bots[2].f_move_speed, 180.0f);
+
+   bots[2].pEdict->v.origin = Vector(420.0f, -1371.0f, -1660.0f);
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_FLOAT(bots[2].f_move_speed, 120.0f);
+
+   bots[2].pEdict->v.origin = Vector(448.0f, -1509.0f, -1582.0f);
+   ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
+   ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
 
    bots[2].pEdict->v.origin = Vector(447.0f, -1509.0f, -1500.0f);
    bots[2].pEdict->v.movetype = MOVETYPE_FLY;
@@ -336,14 +355,14 @@ static int test_bots_use_both_tower_shafts_for_bunker_ingress(void)
    bots[2].pEdict->v.origin = waypoints[2].origin;
    bots[2].pEdict->v.button = 0;
    ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
-   ASSERT_TRUE(FBitSet(bots[2].pEdict->v.button, IN_JUMP));
-   ASSERT_FLOAT(bots[2].f_move_speed, 120.0f);
+   ASSERT_FALSE(FBitSet(bots[2].pEdict->v.button, IN_JUMP));
+   ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
 
    bots[2].pEdict->v.origin = Vector(447.0f, -1509.0f, -1500.0f);
    bots[2].pEdict->v.movetype = MOVETYPE_WALK;
    bots[2].b_on_ladder = FALSE;
    ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[2]));
-   ASSERT_FLOAT(bots[2].f_move_speed, 80.0f);
+   ASSERT_FLOAT(bots[2].f_move_speed, 180.0f);
 
    bots[1].pEdict->v.origin = waypoints[1].origin;
    ASSERT_TRUE(CrossfireTacticsHandleBunkerShaftMovement(bots[1]));
