@@ -63,6 +63,8 @@ static int mock_WaypointFindPath_call = 0;
 static edict_t *mock_WaypointFindItem_result = NULL;
 static int mock_WaypointFindNearestGoal_result = -1;
 static int mock_WaypointFindRandomGoal_result = -1;
+static int mock_WaypointFindNearestGoal_flags = 0;
+static int mock_WaypointFindNearestGoal_itemflags = 0;
 
 // Override waypoint functions (non-weak, beats engine_mock's weak stubs)
 int WaypointFindNearest(const Vector &v_origin, const Vector &v_offset,
@@ -110,8 +112,10 @@ edict_t *WaypointFindItem(int wpt_index)
 int WaypointFindNearestGoal(edict_t *pEntity, int src, int flags, int itemflags,
                             int exclude[], float range, const Vector *pv_src)
 {
-   (void)pEntity; (void)src; (void)flags; (void)itemflags; (void)exclude;
+   (void)pEntity; (void)src; (void)exclude;
    (void)range; (void)pv_src;
+   mock_WaypointFindNearestGoal_flags = flags;
+   mock_WaypointFindNearestGoal_itemflags = itemflags;
    return mock_WaypointFindNearestGoal_result;
 }
 
@@ -220,6 +224,8 @@ static void reset_navigate_mocks(void)
    mock_WaypointFindItem_result = NULL;
    mock_WaypointFindNearestGoal_result = -1;
    mock_WaypointFindRandomGoal_result = -1;
+   mock_WaypointFindNearestGoal_flags = 0;
+   mock_WaypointFindNearestGoal_itemflags = 0;
 
    mock_random_long_ret = 0;
    mock_random_float_ret = 0.0f;
@@ -2371,6 +2377,59 @@ static int test_find_waypoint_goal_enemy(void)
    PASS();
    return 0;
 }
+
+static int test_find_waypoint_goal_weak_weapon_prioritizes_upgrade(void)
+{
+   TEST("BotFindWaypointGoal: Glock bot keeps weapon upgrade over enemy");
+   mock_reset();
+   reset_navigate_mocks();
+
+   bot_weapon_select_t saved_select[3];
+   memcpy(saved_select, weapon_select, sizeof(saved_select));
+   memset(weapon_select, 0, sizeof(saved_select));
+
+   weapon_select[0].iId = VALVE_WEAPON_GLOCK;
+   weapon_select[0].type = WEAPON_FIRE;
+   weapon_select[0].primary_skill_level = SKILL5;
+   weapon_select[0].secondary_skill_level = NOSKILL;
+   weapon_select[0].waypoint_flag = W_IFL_GLOCK;
+
+   weapon_select[1].iId = VALVE_WEAPON_SHOTGUN;
+   weapon_select[1].type = WEAPON_FIRE;
+   weapon_select[1].primary_skill_level = SKILL5;
+   weapon_select[1].secondary_skill_level = NOSKILL;
+   weapon_select[1].waypoint_flag = W_IFL_SHOTGUN;
+
+   edict_t *pEdict = mock_alloc_edict();
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   bot.weapon_skill = SKILL5;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
+      W_IFL_SHOTGUN);
+
+   mock_WaypointFindNearestGoal_result = 3;
+   mock_WaypointFindNearest_result = 7;
+
+   BotFindWaypointGoal(bot);
+
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_WEAPON);
+   ASSERT_INT(bot.waypoint_goal, 3);
+   ASSERT_PTR_EQ(bot.pBotEnemy, pEnemy);
+   ASSERT_INT(mock_WaypointFindNearestGoal_flags, W_FL_WEAPON);
+   ASSERT_TRUE(mock_WaypointFindNearestGoal_itemflags & W_IFL_SHOTGUN);
+   ASSERT_FALSE(mock_WaypointFindNearestGoal_itemflags & W_IFL_GLOCK);
+
+   memcpy(weapon_select, saved_select, sizeof(saved_select));
+   PASS();
+   return 0;
+}
+
 
 static int test_find_waypoint_goal_fallback_random(void)
 {
@@ -5456,6 +5515,7 @@ int main(void)
    printf("=== BotFindWaypointGoal tests ===\n");
    failures += test_find_waypoint_goal_critical_health();
    failures += test_find_waypoint_goal_enemy();
+   failures += test_find_waypoint_goal_weak_weapon_prioritizes_upgrade();
    failures += test_find_waypoint_goal_fallback_random();
    failures += test_find_waypoint_goal_needs_health();
    failures += test_find_waypoint_goal_crossfire_strike_prioritizes_bunker();

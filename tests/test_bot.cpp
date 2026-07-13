@@ -181,7 +181,13 @@ void WaypointInit(void) {}
 // ============================================================
 
 static qboolean mock_BotHeadTowardWaypoint_ret = FALSE;
-qboolean BotHeadTowardWaypoint(bot_t &pBot) { (void)pBot; return mock_BotHeadTowardWaypoint_ret; }
+static int mock_BotHeadTowardWaypoint_count = 0;
+qboolean BotHeadTowardWaypoint(bot_t &pBot)
+{
+   (void)pBot;
+   mock_BotHeadTowardWaypoint_count++;
+   return mock_BotHeadTowardWaypoint_ret;
+}
 
 static qboolean mock_BotStuckInCorner_ret = FALSE;
 qboolean BotStuckInCorner(bot_t &pBot) { (void)pBot; return mock_BotStuckInCorner_ret; }
@@ -392,6 +398,7 @@ static void setup_engine_funcs(void)
 
    // Reset controllable stub returns
    mock_BotHeadTowardWaypoint_ret = FALSE;
+   mock_BotHeadTowardWaypoint_count = 0;
    mock_BotStuckInCorner_ret = FALSE;
    mock_BotCantMoveForward_ret = FALSE;
    mock_BotCanJumpUp_ret = FALSE;
@@ -1745,6 +1752,37 @@ static int test_BotFindItem_spawn_weapon_priority(void)
    PASS();
    return 0;
 }
+
+static int test_BotFindItem_weak_loadout_weapon_priority(void)
+{
+   TEST("BotFindItem: Glock loadout keeps visible weapon priority");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_CROWBAR) |
+      (1u << VALVE_WEAPON_GLOCK);
+   e->v.armorvalue = 20;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_find_item = 0;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+
+   edict_t *battery = mock_alloc_edict();
+   mock_set_classname(battery, "item_battery");
+   battery->v.origin = Vector(40, 0, 0);
+
+   edict_t *weapon = mock_alloc_edict();
+   mock_set_classname(weapon, "weapon_shotgun");
+   weapon->v.origin = Vector(120, 0, 0);
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, weapon);
+   PASS();
+   return 0;
+}
+
 
 static int test_BotFindItem_weaponbox(void)
 {
@@ -5228,9 +5266,9 @@ static void setup_weapon_defs_for_weak_weapon_tests(void)
    weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo2 = -1;
 }
 
-static int test_BotThink_weak_weapon_no_seek(void)
+static int test_BotThink_weak_weapon_scans_while_seeking_upgrade(void)
 {
-   TEST("BotThink: only Glock, not attacked -> no enemy seek");
+   TEST("BotThink: only Glock scans for return-fire targets");
    setup_engine_funcs();
    setup_weapon_defs_for_weak_weapon_tests();
 
@@ -5248,11 +5286,60 @@ static int test_BotThink_weak_weapon_no_seek(void)
 
    BotThink(bot);
 
-   // Bot should NOT have found an enemy (engagement path skipped)
+   // The bot keeps scanning while its movement goal remains weapon acquisition.
    ASSERT_PTR_NULL(bot.pBotEnemy);
-   ASSERT_INT(mock_BotFindEnemy_count, 0);
-   // b_only_has_weak_weapons should be set
+   ASSERT_TRUE(mock_BotFindEnemy_count > 0);
    ASSERT_INT(bot.b_only_has_weak_weapons, TRUE);
+
+   PASS();
+   return 0;
+}
+
+
+static int test_BotThink_weak_weapon_moves_to_upgrade_while_firing(void)
+{
+   TEST("BotThink: Glock bot fires while moving to weapon upgrade");
+   setup_engine_funcs();
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"stalkyard";
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *enemy = mock_alloc_edict();
+   bot_t bot;
+   setup_alive_bot(bot, e);
+
+   enemy->v.origin = Vector(200.0f, 0.0f, 0.0f);
+   enemy->v.flags = FL_CLIENT;
+   enemy->v.health = 100.0f;
+   enemy->v.deadflag = DEAD_NO;
+
+   bot.pBotEnemy = enemy;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.wpt_goal_type = WPT_GOAL_WEAPON;
+   bot.waypoint_goal = 0;
+   bot.curr_waypoint_index = 0;
+   bot.f_find_item = gpGlobals->time + 10.0f;
+   bot.f_look_for_waypoint_time = 0.0f;
+   bot.f_move_speed = bot.f_max_speed;
+   skill_settings[bot.bot_skill].pause_frequency = 0;
+
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(0.0f, 500.0f, 0.0f);
+   e->v.idealpitch = -8.0f;
+   e->v.ideal_yaw = 15.0f;
+   e->v.v_angle = Vector(0.0f, 0.0f, 0.0f);
+   mock_BotHeadTowardWaypoint_ret = TRUE;
+
+   BotThinkHandleNavigation(bot, TRUE, 2.0f);
+
+   ASSERT_TRUE(mock_BotHeadTowardWaypoint_count > 0);
+   ASSERT_TRUE(bot.f_move_speed > 0.0f);
+   ASSERT_FLOAT(e->v.idealpitch, -8.0f);
+   ASSERT_FLOAT(e->v.ideal_yaw, 15.0f);
+
+   BotDoStrafe(bot);
+   ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
+   ASSERT_TRUE(bot.f_move_speed > 100.0f);
 
    PASS();
    return 0;
@@ -5470,9 +5557,9 @@ static int test_BotThink_weak_weapon_fights_back(void)
    return 0;
 }
 
-static int test_BotThink_weak_weapon_disengages_after_1s(void)
+static int test_BotThink_weak_weapon_keeps_scanning_after_1s(void)
 {
-   TEST("BotThink: only Glock, attacked 2s ago -> disengages (1s window)");
+   TEST("BotThink: only Glock keeps scanning after old attack expires");
    setup_engine_funcs();
    setup_weapon_defs_for_weak_weapon_tests();
 
@@ -5484,15 +5571,16 @@ static int test_BotThink_weak_weapon_disengages_after_1s(void)
    e->v.weapons = (1u << VALVE_WEAPON_GLOCK);
    bot.m_rgAmmo[1] = 50;
    bot.pBotEnemy = NULL;
-   // Attacked 2s ago: outside 1s weak window, inside 3s strong window
+   // The old weak-weapon combat timer has expired.
    bot.f_last_time_attacked = gpGlobals->time - 2.0f;
    bot.need_to_initialize = TRUE;
    bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
 
    BotThink(bot);
 
-   // Bot should NOT have found an enemy (disengaged)
+   // Weapon acquisition keeps enemy scanning active independently of that timer.
    ASSERT_PTR_NULL(bot.pBotEnemy);
+   ASSERT_TRUE(mock_BotFindEnemy_count > 0);
    ASSERT_INT(bot.b_only_has_weak_weapons, TRUE);
 
    PASS();
@@ -5706,6 +5794,7 @@ int main(void)
    fail |= test_BotFindItem_battery();
    fail |= test_BotFindItem_battery_priority();
    fail |= test_BotFindItem_spawn_weapon_priority();
+   fail |= test_BotFindItem_weak_loadout_weapon_priority();
    fail |= test_BotFindItem_weaponbox();
    fail |= test_BotFindItem_tripmine();
    fail |= test_BotFindItem_tripmine_shootable();
@@ -5837,10 +5926,11 @@ int main(void)
    fail |= test_BotThink_low_health_attacked_seeks();
 
    // Phase 6c: BotThink weak weapon behavior
-   fail |= test_BotThink_weak_weapon_no_seek();
+   fail |= test_BotThink_weak_weapon_scans_while_seeking_upgrade();
+   fail |= test_BotThink_weak_weapon_moves_to_upgrade_while_firing();
    fail |= test_BotThink_spawned_weak_weapon_seeks();
    fail |= test_BotThink_weak_weapon_fights_back();
-   fail |= test_BotThink_weak_weapon_disengages_after_1s();
+   fail |= test_BotThink_weak_weapon_keeps_scanning_after_1s();
    fail |= test_BotThink_strong_weapon_seeks();
 
    // Narrow path behavior

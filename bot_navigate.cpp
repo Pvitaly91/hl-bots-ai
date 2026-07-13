@@ -550,10 +550,59 @@ static void BotFindWaypointGoalSearchHealthArmor(bot_t &pBot, int &index, float 
 }
 
 
+static int BotCollectDesiredWeaponFlags(bot_t &pBot, qboolean strong_only)
+{
+   bot_weapon_select_t *pSelect = &weapon_select[0];
+   int weaponflags = 0;
+   int select_index = -1;
+
+   while(pSelect[++select_index].iId)
+   {
+      if(pSelect[select_index].avoid_this_gun ||
+         !BotCanUseWeapon(pBot, pSelect[select_index]))
+         continue;
+
+      if(strong_only &&
+         (((pSelect[select_index].type & WEAPON_FIRE) != WEAPON_FIRE) ||
+          BotIsWeakWeapon(pSelect[select_index].iId)))
+         continue;
+
+      weaponflags |= pSelect[select_index].waypoint_flag;
+   }
+
+   return weaponflags;
+}
+
+
+static qboolean BotFindWaypointGoalPrioritizedWeapon(bot_t &pBot)
+{
+   if(!pBot.b_only_has_weak_weapons)
+      return FALSE;
+
+   int weaponflags = BotCollectDesiredWeaponFlags(pBot, TRUE);
+   if(!weaponflags)
+      return FALSE;
+
+   int index = WaypointFindNearestGoal(pBot.pEdict,
+      pBot.curr_waypoint_index, W_FL_WEAPON, weaponflags,
+      pBot.exclude_points);
+
+   if(index == -1)
+      index = WaypointFindRandomGoal(pBot.pEdict, W_FL_WEAPON,
+         weaponflags, pBot.exclude_points);
+
+   if(index == -1)
+      return FALSE;
+
+   pBot.wpt_goal_type = WPT_GOAL_WEAPON;
+   pBot.waypoint_goal = index;
+   return TRUE;
+}
+
+
 static void BotFindWaypointGoalSearchWeaponAmmo(bot_t &pBot, int &index, float &mindistance, int &goal_type)
 {
    edict_t *pEdict = pBot.pEdict;
-   bot_weapon_select_t *pSelect = &weapon_select[0];
 
    if (!pBot.b_longjump && skill_settings[pBot.bot_skill].can_longjump)
    {
@@ -581,21 +630,7 @@ static void BotFindWaypointGoalSearchWeaponAmmo(bot_t &pBot, int &index, float &
    if (BotGetGoodWeaponCount(pBot, 1)==0 || !pBot.b_has_enough_ammo_for_good_weapon
        || pBot.b_only_has_weak_weapons)
    {
-      // find weapons that bot can use
-      int select_index = -1;
-      int weaponflags = 0;
-
-      // collect item flags of desired weapons
-      while(pSelect[++select_index].iId)
-      {
-         if(pSelect[select_index].avoid_this_gun)
-            continue;
-
-         if(!BotCanUseWeapon(pBot, pSelect[select_index]))
-            continue;
-
-         weaponflags |= pSelect[select_index].waypoint_flag;
-      }
+      int weaponflags = BotCollectDesiredWeaponFlags(pBot, FALSE);
 
       if(weaponflags)
       {
@@ -695,6 +730,14 @@ static void BotFindWaypointGoal( bot_t &pBot )
    // look for health if we're pretty dead
    if (BotFindWaypointGoalCriticalHealth(pBot))
       return;
+
+   // A bot with only weak weapons keeps the nearest upgrade as its movement
+   // goal even while retaining an enemy for return fire.
+   if (BotFindWaypointGoalPrioritizedWeapon(pBot))
+   {
+      BotTrace(pBot, "goal set: weapon-upgrade wpt=%d", pBot.waypoint_goal);
+      return;
+   }
 
    if (pBot.pBotEnemy == NULL)
    {

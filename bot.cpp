@@ -1545,8 +1545,9 @@ static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name)
    if(strcmp("item_battery", item_name) == 0)
       return 2;
 
-   // Immediately after spawning, securing a real weapon is the primary task.
-   if(BotIsInSpawnWeaponSearchWindow(pBot) &&
+   // A weak loadout keeps visible weapon upgrades ahead of incidental pickups.
+   if((BotIsInSpawnWeaponSearchWindow(pBot) ||
+       pBot.b_only_has_weak_weapons) &&
       (GetWeaponItemFlag(item_name) != 0 || strcmp("weaponbox", item_name) == 0))
       return 3;
 
@@ -2057,7 +2058,10 @@ static void BotWanderFreeRoam(bot_t &pBot, float moved_distance)
    // it is time to look for a waypoint AND
    // there are waypoints in this level...
 
-   if ((pBot.pBotPickupItem == NULL) &&
+   const qboolean force_weapon_route = pBot.pBotEnemy != NULL &&
+      pBot.b_only_has_weak_weapons;
+
+   if ((pBot.pBotPickupItem == NULL || force_weapon_route) &&
        (pBot.f_look_for_waypoint_time <= gpGlobals->time) &&
        (num_waypoints != 0))
    {
@@ -2448,13 +2452,19 @@ static void BotDoStrafeLadder(bot_t &pBot)
 }
 
 
-static qboolean BotDoStrafeStrategic(bot_t &pBot)
+static qboolean BotDoStrafeGoalDirectedCombat(bot_t &pBot)
 {
-   if (!MapProfileShouldYieldToStrategicMovement(pBot))
+   const qboolean strategic_movement =
+      MapProfileShouldYieldToStrategicMovement(pBot);
+   const qboolean weapon_movement = pBot.pBotEnemy != NULL &&
+      pBot.b_only_has_weak_weapons &&
+      pBot.wpt_goal_type == WPT_GOAL_WEAPON;
+
+   if (!strategic_movement && !weapon_movement)
       return FALSE;
 
    // Precise ladder/shaft movement has already supplied its own controls.
-   if (MapProfileShouldSuppressCombat(pBot))
+   if (strategic_movement && MapProfileShouldSuppressCombat(pBot))
       return TRUE;
 
    if (pBot.curr_waypoint_index >= 0 &&
@@ -2466,7 +2476,7 @@ static qboolean BotDoStrafeStrategic(bot_t &pBot)
       pBot.f_move_speed = speed * pBot.f_move_direction;
    }
 
-   // Never let ordinary combat strafing redirect an evacuating bot.
+   // Keep the route authoritative while the upper body tracks the enemy.
    return TRUE;
 }
 
@@ -2517,7 +2527,7 @@ static void BotDoStrafe(bot_t &pBot)
 {
    edict_t *pEdict = pBot.pEdict;
 
-   if (BotDoStrafeStrategic(pBot))
+   if (BotDoStrafeGoalDirectedCombat(pBot))
       return;
 
    // combat strafe
@@ -2932,6 +2942,7 @@ static void BotThinkHandleEnemy_FindAndAim(bot_t &pBot)
        (pBot.b_has_enough_ammo_for_good_weapon && !pBot.b_low_health
          && !pBot.b_only_has_weak_weapons)
        || BotIsInSpawnWeaponSearchWindow(pBot)
+       || pBot.b_only_has_weak_weapons
        || pBot.f_last_time_attacked > gpGlobals->time - BotCombatDisengageTime(pBot)))
    {
       // get enemy
@@ -3048,8 +3059,11 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float moved_distance)
 {
    edict_t *pEdict = pBot.pEdict;
+   const qboolean weapon_acquisition_movement = did_shoot &&
+      pBot.b_only_has_weak_weapons;
    const qboolean preserve_combat_aim = did_shoot &&
-      MapProfileShouldYieldToStrategicMovement(pBot);
+      (MapProfileShouldYieldToStrategicMovement(pBot) ||
+       weapon_acquisition_movement);
    const float combat_pitch = pEdict->v.idealpitch;
    const float combat_yaw = pEdict->v.ideal_yaw;
 
