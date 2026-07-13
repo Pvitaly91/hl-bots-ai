@@ -28,6 +28,8 @@ Vector UTIL_VecToAngles(const Vector &forward);
 
 int UTIL_GetBotIndex(const edict_t *pEdict);
 bot_t *UTIL_GetBotPointer(const edict_t *pEdict);
+qboolean UTIL_ShouldYieldPickup(const bot_t &pBot, const bot_t &otherBot,
+   const Vector &pickup_origin);
 
 Vector UTIL_AdjustOriginWithExtent(bot_t &pBot, const Vector & v_target_origin, edict_t *pTarget);
 

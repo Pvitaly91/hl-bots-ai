@@ -1091,12 +1091,66 @@ static qboolean BotEntityIsVisible( bot_t &pBot, const Vector & dest )
 }
 
 
+static qboolean BotFindItemIsWeaponPickup(const edict_t *pItem)
+{
+   if (!pItem || pItem->v.classname == 0)
+      return FALSE;
+
+   const char *item_name = STRING(pItem->v.classname);
+   return GetWeaponItemFlag(item_name) != 0 ||
+      strcmp("weaponbox", item_name) == 0;
+}
+
+
+static qboolean BotFindItemPickupMatchesWaypoint(const edict_t *pItem,
+   int waypoint_index)
+{
+   return waypoint_index >= 0 && waypoint_index < num_waypoints &&
+      (waypoints[waypoint_index].flags & W_FL_WEAPON) &&
+      (pItem->v.origin - waypoints[waypoint_index].origin).Length() <= 64.0f;
+}
+
+
+static qboolean BotFindItemClaimedByVisibleBot(const bot_t &pBot,
+   edict_t *pItem)
+{
+   if (!BotFindItemIsWeaponPickup(pItem))
+      return FALSE;
+
+   for (int i = 0; i < 32; i++)
+   {
+      const bot_t &otherBot = bots[i];
+      qboolean claims_item = otherBot.pBotPickupItem == pItem;
+
+      if (!claims_item && otherBot.wpt_goal_type == WPT_GOAL_WEAPON)
+      {
+         claims_item = BotFindItemPickupMatchesWaypoint(pItem,
+            otherBot.waypoint_goal);
+      }
+
+      if (claims_item &&
+          UTIL_ShouldYieldPickup(pBot, otherBot, pItem->v.origin))
+         return TRUE;
+   }
+
+   return FALSE;
+}
+
+
 static qboolean BotFindItemCheckExpiry(bot_t &pBot)
 {
    // forget about our item if it's been five seconds
    if (pBot.f_last_item_found > 0 && pBot.f_last_item_found + 5.0 < gpGlobals->time)
    {
       pBot.f_find_item = gpGlobals->time + 2.0;
+      pBot.f_last_item_found = -1;
+      pBot.pBotPickupItem = NULL;
+   }
+
+   // Reconsider a weapon target when a visible, closer bot has committed to it.
+   if (pBot.pBotPickupItem &&
+       BotFindItemClaimedByVisibleBot(pBot, pBot.pBotPickupItem))
+   {
       pBot.f_last_item_found = -1;
       pBot.pBotPickupItem = NULL;
    }
@@ -1509,7 +1563,7 @@ static qboolean BotFindItem_CheckHealthArmorItems(bot_t &pBot, edict_t *pent,
    // check if entity is a packed up weapons box...
    else if (strcmp("weaponbox", item_name) == 0)
    {
-      return TRUE;
+      return !(pent->v.effects & EF_NODRAW) && !(pent->v.frame > 0);
    }
 
    return FALSE;
@@ -1538,6 +1592,16 @@ static qboolean BotIsInSpawnWeaponSearchWindow(const bot_t &pBot)
    float time_since_spawn = gpGlobals->time - pBot.f_bot_spawn_time;
    return time_since_spawn >= 0.0f && time_since_spawn <= 12.0f;
 }
+
+
+static qboolean BotHasPriorityWeaponPickup(const bot_t &pBot)
+{
+   edict_t *pItem = pBot.pBotPickupItem;
+   return pItem && !(pItem->v.effects & EF_NODRAW) &&
+      !(pItem->v.frame > 0) && BotFindItemIsWeaponPickup(pItem) &&
+      (pBot.b_only_has_weak_weapons || BotIsInSpawnWeaponSearchWindow(pBot));
+}
+
 
 static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name)
 {
@@ -1577,8 +1641,10 @@ static void BotFindItem( bot_t &pBot )
    // try find again after 0.1sec
    pBot.f_find_item = gpGlobals->time + 0.1;
 
-   // use a smaller search radius when waypoints are available
-   if ((num_waypoints > 0) && (pBot.curr_waypoint_index != -1))
+   // Weak and newly spawned bots use the full visible pickup radius so a
+   // dropped weaponbox competes with map-spawned weapon goals.
+   if ((num_waypoints > 0) && (pBot.curr_waypoint_index != -1) &&
+       !pBot.b_only_has_weak_weapons && !BotIsInSpawnWeaponSearchWindow(pBot))
       radius = 320.0;
    else
       radius = 520.0;
@@ -1643,6 +1709,9 @@ static void BotFindItem( bot_t &pBot )
 
       if (can_pickup) // if the bot found something it can pickup...
       {
+         if (BotFindItemClaimedByVisibleBot(pBot, pent))
+            continue;
+
          float distance = (entity_origin - pEdict->v.origin).Length( );
          int priority = BotFindItem_GetPriority(pBot, item_name);
 
@@ -2059,7 +2128,7 @@ static void BotWanderFreeRoam(bot_t &pBot, float moved_distance)
    // there are waypoints in this level...
 
    const qboolean force_weapon_route = pBot.pBotEnemy != NULL &&
-      pBot.b_only_has_weak_weapons;
+      pBot.b_only_has_weak_weapons && !BotHasPriorityWeaponPickup(pBot);
 
    if ((pBot.pBotPickupItem == NULL || force_weapon_route) &&
        (pBot.f_look_for_waypoint_time <= gpGlobals->time) &&
@@ -2379,13 +2448,11 @@ static void BotDoStrafeLadder_AlignWithVelocity(bot_t &pBot)
 }
 
 
-static void BotDoStrafeLadder_AlignWithWaypoint(bot_t &pBot)
+static void BotDoStrafe_AlignWithTarget(bot_t &pBot, const Vector &target)
 {
    edict_t *pEdict = pBot.pEdict;
 
-   // Then move towards waypoint sideways
-   Vector v_wp = waypoints[pBot.curr_waypoint_index].origin;
-   Vector v_dir = (v_wp - pEdict->v.origin);
+   Vector v_dir = target - pEdict->v.origin;
 
    Vector v_angles = UTIL_VecToAngles(v_dir);
 
@@ -2418,6 +2485,13 @@ static void BotDoStrafeLadder_AlignWithWaypoint(bot_t &pBot)
       pBot.f_strafe_direction = 0.0;
       pBot.f_move_direction = 1.0;
    }
+}
+
+
+static void BotDoStrafeLadder_AlignWithWaypoint(bot_t &pBot)
+{
+   BotDoStrafe_AlignWithTarget(pBot,
+      waypoints[pBot.curr_waypoint_index].origin);
 }
 
 
@@ -2456,9 +2530,11 @@ static qboolean BotDoStrafeGoalDirectedCombat(bot_t &pBot)
 {
    const qboolean strategic_movement =
       MapProfileShouldYieldToStrategicMovement(pBot);
+   const qboolean pickup_movement = pBot.pBotEnemy != NULL &&
+      BotHasPriorityWeaponPickup(pBot);
    const qboolean weapon_movement = pBot.pBotEnemy != NULL &&
-      pBot.b_only_has_weak_weapons &&
-      pBot.wpt_goal_type == WPT_GOAL_WEAPON;
+      ((pBot.b_only_has_weak_weapons &&
+        pBot.wpt_goal_type == WPT_GOAL_WEAPON) || pickup_movement);
 
    if (!strategic_movement && !weapon_movement)
       return FALSE;
@@ -2467,13 +2543,32 @@ static qboolean BotDoStrafeGoalDirectedCombat(bot_t &pBot)
    if (strategic_movement && MapProfileShouldSuppressCombat(pBot))
       return TRUE;
 
-   if (pBot.curr_waypoint_index >= 0 &&
-       pBot.curr_waypoint_index < num_waypoints &&
-       pBot.f_move_speed != 0.0f)
+   if (pBot.f_move_speed != 0.0f)
    {
-      const float speed = fabs(pBot.f_move_speed);
-      BotDoStrafeLadder_AlignWithWaypoint(pBot);
-      pBot.f_move_speed = speed * pBot.f_move_direction;
+      Vector movement_target;
+      qboolean has_movement_target = FALSE;
+
+      if (strategic_movement || !pickup_movement)
+      {
+         if (pBot.curr_waypoint_index >= 0 &&
+             pBot.curr_waypoint_index < num_waypoints)
+         {
+            movement_target = waypoints[pBot.curr_waypoint_index].origin;
+            has_movement_target = TRUE;
+         }
+      }
+      else
+      {
+         movement_target = pBot.pBotPickupItem->v.origin;
+         has_movement_target = TRUE;
+      }
+
+      if (has_movement_target)
+      {
+         const float speed = fabs(pBot.f_move_speed);
+         BotDoStrafe_AlignWithTarget(pBot, movement_target);
+         pBot.f_move_speed = speed * pBot.f_move_direction;
+      }
    }
 
    // Keep the route authoritative while the upper body tracks the enemy.
@@ -3060,7 +3155,7 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
 {
    edict_t *pEdict = pBot.pEdict;
    const qboolean weapon_acquisition_movement = did_shoot &&
-      pBot.b_only_has_weak_weapons;
+      (pBot.b_only_has_weak_weapons || BotHasPriorityWeaponPickup(pBot));
    const qboolean preserve_combat_aim = did_shoot &&
       (MapProfileShouldYieldToStrategicMovement(pBot) ||
        weapon_acquisition_movement);

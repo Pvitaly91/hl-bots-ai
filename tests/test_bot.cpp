@@ -1807,6 +1807,109 @@ static int test_BotFindItem_weaponbox(void)
    return 0;
 }
 
+static int test_BotFindItem_weak_loadout_weaponbox_priority(void)
+{
+   TEST("BotFindItem: Glock bot prioritizes distant visible weaponbox");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.f_find_item = 0.0f;
+   bot.curr_waypoint_index = 0;
+   num_waypoints = 1;
+
+   edict_t *battery = mock_alloc_edict();
+   mock_set_classname(battery, "item_battery");
+   battery->v.origin = Vector(40.0f, 0.0f, 0.0f);
+
+   edict_t *weaponbox = mock_alloc_edict();
+   mock_set_classname(weaponbox, "weaponbox");
+   weaponbox->v.origin = Vector(480.0f, 0.0f, 0.0f);
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, weaponbox);
+   PASS();
+   return 0;
+}
+
+
+static int test_BotFindItem_yields_claimed_weaponbox(void)
+{
+   TEST("BotFindItem: visible closer claimant gets weaponbox");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *other_edict = mock_alloc_edict();
+   bot_t bot;
+   bot_t otherBot;
+   setup_bot_for_test(bot, e);
+   setup_bot_for_test(otherBot, other_edict);
+   mock_set_classname(other_edict, "player");
+   other_edict->v.origin = Vector(90.0f, 0.0f, 0.0f);
+
+   edict_t *claimed = mock_alloc_edict();
+   mock_set_classname(claimed, "weaponbox");
+   claimed->v.origin = Vector(120.0f, 0.0f, 0.0f);
+
+   edict_t *alternate = mock_alloc_edict();
+   mock_set_classname(alternate, "weapon_shotgun");
+   alternate->v.origin = Vector(200.0f, 40.0f, 0.0f);
+
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.f_find_item = 0.0f;
+   bot.pBotPickupItem = claimed;
+   otherBot.pBotPickupItem = claimed;
+   bots[0] = bot;
+   bots[1] = otherBot;
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, alternate);
+   PASS();
+   return 0;
+}
+
+
+static int test_BotFindItem_does_not_yield_to_hidden_claimant(void)
+{
+   TEST("BotFindItem: claimant outside view does not reserve weaponbox");
+   setup_engine_funcs();
+
+   // Allocate the claimant first so it would win the stable tie-break if seen.
+   edict_t *other_edict = mock_alloc_edict();
+   edict_t *e = mock_alloc_edict();
+   bot_t otherBot;
+   bot_t bot;
+   setup_bot_for_test(otherBot, other_edict);
+   setup_bot_for_test(bot, e);
+   mock_set_classname(other_edict, "player");
+   other_edict->v.origin = Vector(-10.0f, 0.0f, 0.0f);
+
+   edict_t *claimed = mock_alloc_edict();
+   mock_set_classname(claimed, "weaponbox");
+   claimed->v.origin = Vector(100.0f, 0.0f, 0.0f);
+
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.f_find_item = 0.0f;
+   bot.pBotPickupItem = claimed;
+   otherBot.pBotPickupItem = claimed;
+   bots[0] = bot;
+   bots[1] = otherBot;
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, claimed);
+   PASS();
+   return 0;
+}
+
+
 static int test_BotFindItem_tripmine(void)
 {
    TEST("BotFindItem: sees tripmine, sets b_see_tripmine");
@@ -5346,6 +5449,60 @@ static int test_BotThink_weak_weapon_moves_to_upgrade_while_firing(void)
 }
 
 
+static int test_BotThink_weak_weaponbox_moves_while_firing(void)
+{
+   TEST("BotThink: Glock bot fires while moving to weaponbox");
+   setup_engine_funcs();
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"stalkyard";
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *enemy = mock_alloc_edict();
+   edict_t *weaponbox = mock_alloc_edict();
+   bot_t bot;
+   setup_alive_bot(bot, e);
+
+   enemy->v.origin = Vector(200.0f, 0.0f, 0.0f);
+   enemy->v.flags = FL_CLIENT;
+   enemy->v.health = 100.0f;
+   enemy->v.deadflag = DEAD_NO;
+
+   mock_set_classname(weaponbox, "weaponbox");
+   weaponbox->v.origin = Vector(0.0f, 500.0f, 0.0f);
+
+   bot.pBotEnemy = enemy;
+   bot.pBotPickupItem = weaponbox;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.wpt_goal_type = WPT_GOAL_WEAPON;
+   bot.waypoint_goal = 0;
+   bot.curr_waypoint_index = 0;
+   bot.f_find_item = gpGlobals->time + 10.0f;
+   bot.f_look_for_waypoint_time = 0.0f;
+   bot.f_move_speed = bot.f_max_speed;
+   skill_settings[bot.bot_skill].pause_frequency = 0;
+
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(0.0f, -500.0f, 0.0f);
+   e->v.idealpitch = -8.0f;
+   e->v.ideal_yaw = 15.0f;
+   e->v.v_angle = Vector(0.0f, 0.0f, 0.0f);
+
+   BotThinkHandleNavigation(bot, TRUE, 2.0f);
+
+   ASSERT_INT(mock_BotHeadTowardWaypoint_count, 0);
+   ASSERT_FLOAT(e->v.idealpitch, -8.0f);
+   ASSERT_FLOAT(e->v.ideal_yaw, 15.0f);
+
+   BotDoStrafe(bot);
+   ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
+   ASSERT_TRUE(bot.f_move_speed > 100.0f);
+
+   PASS();
+   return 0;
+}
+
+
 static int test_BotThink_crossfire_strike_keeps_combat_and_bunker_goal(void)
 {
    TEST("BotThink: Crossfire strike keeps combat and assigns bunker goal");
@@ -5796,6 +5953,9 @@ int main(void)
    fail |= test_BotFindItem_spawn_weapon_priority();
    fail |= test_BotFindItem_weak_loadout_weapon_priority();
    fail |= test_BotFindItem_weaponbox();
+   fail |= test_BotFindItem_weak_loadout_weaponbox_priority();
+   fail |= test_BotFindItem_yields_claimed_weaponbox();
+   fail |= test_BotFindItem_does_not_yield_to_hidden_claimant();
    fail |= test_BotFindItem_tripmine();
    fail |= test_BotFindItem_tripmine_shootable();
    fail |= test_BotFindItem_behind_fov();
@@ -5928,6 +6088,7 @@ int main(void)
    // Phase 6c: BotThink weak weapon behavior
    fail |= test_BotThink_weak_weapon_scans_while_seeking_upgrade();
    fail |= test_BotThink_weak_weapon_moves_to_upgrade_while_firing();
+   fail |= test_BotThink_weak_weaponbox_moves_while_firing();
    fail |= test_BotThink_spawned_weak_weapon_seeks();
    fail |= test_BotThink_weak_weapon_fights_back();
    fail |= test_BotThink_weak_weapon_keeps_scanning_after_1s();

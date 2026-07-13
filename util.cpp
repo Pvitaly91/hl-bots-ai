@@ -442,6 +442,34 @@ bot_t *UTIL_GetBotPointer(const edict_t *pEdict)
 }
 
 
+qboolean UTIL_ShouldYieldPickup(const bot_t &pBot, const bot_t &otherBot,
+   const Vector &pickup_origin)
+{
+   if (&pBot == &otherBot || !pBot.pEdict || !otherBot.is_used ||
+       !otherBot.pEdict || pBot.pEdict == otherBot.pEdict ||
+       !IsAlive(otherBot.pEdict))
+      return FALSE;
+
+   const Vector other_origin = otherBot.pEdict->v.origin;
+   if (!FInViewCone(other_origin, pBot.pEdict) ||
+       !FVisibleEnemy(other_origin, pBot.pEdict, otherBot.pEdict))
+      return FALSE;
+
+   const float distance_margin = 24.0f;
+   const float bot_distance = (pickup_origin - pBot.pEdict->v.origin).Length();
+   const float other_distance =
+      (pickup_origin - otherBot.pEdict->v.origin).Length();
+
+   if (other_distance + distance_margin < bot_distance)
+      return TRUE;
+   if (bot_distance + distance_margin < other_distance)
+      return FALSE;
+
+   // A stable tie-break prevents two nearby bots from repeatedly swapping goals.
+   return ENTINDEX(otherBot.pEdict) < ENTINDEX(pBot.pEdict);
+}
+
+
 Vector UTIL_AdjustOriginWithExtent(bot_t &pBot, const Vector & v_target_origin, edict_t *pTarget)
 {
    // mins/maxs are absolute values for SOLID_BSP
