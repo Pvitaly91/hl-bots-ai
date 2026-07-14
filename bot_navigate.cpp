@@ -576,7 +576,7 @@ static int BotCollectDesiredWeaponFlags(bot_t &pBot, qboolean strong_only)
 
 static qboolean BotNavigateIsWeaponPickup(const edict_t *pItem)
 {
-   if (!pItem || pItem->v.classname == 0 ||
+   if (!pItem || pItem->free || pItem->v.classname == 0 ||
        (pItem->v.effects & EF_NODRAW) || pItem->v.frame > 0)
       return FALSE;
 
@@ -586,53 +586,29 @@ static qboolean BotNavigateIsWeaponPickup(const edict_t *pItem)
 }
 
 
-static int BotFindPickupWeaponWaypoint(const edict_t *pItem)
+static qboolean BotGetWeaponClaimOrigin(const bot_t &otherBot,
+   Vector &claim_origin)
 {
-   int nearest_index = -1;
-   float nearest_distance = 64.0f;
-
-   for (int i = 0; i < num_waypoints; i++)
-   {
-      if (!(waypoints[i].flags & W_FL_WEAPON))
-         continue;
-
-      float distance = (pItem->v.origin - waypoints[i].origin).Length();
-      if (distance <= nearest_distance)
-      {
-         nearest_index = i;
-         nearest_distance = distance;
-      }
-   }
-
-   return nearest_index;
-}
-
-
-static int BotGetClaimedWeaponWaypoint(const bot_t &otherBot,
-   Vector &pickup_origin)
-{
-   if (!otherBot.is_used || !otherBot.pEdict)
-      return -1;
+   if (!otherBot.is_used || !otherBot.pEdict || otherBot.pEdict->free ||
+       !IsAlive(otherBot.pEdict))
+      return FALSE;
 
    if (BotNavigateIsWeaponPickup(otherBot.pBotPickupItem))
    {
-      int index = BotFindPickupWeaponWaypoint(otherBot.pBotPickupItem);
-      if (index != -1)
-      {
-         pickup_origin = otherBot.pBotPickupItem->v.origin;
-         return index;
-      }
+      claim_origin = otherBot.pBotPickupItem->v.origin;
+      return TRUE;
    }
 
    if (otherBot.wpt_goal_type == WPT_GOAL_WEAPON &&
        otherBot.waypoint_goal >= 0 &&
-       otherBot.waypoint_goal < num_waypoints)
+       otherBot.waypoint_goal < num_waypoints &&
+       (waypoints[otherBot.waypoint_goal].flags & W_FL_WEAPON))
    {
-      pickup_origin = waypoints[otherBot.waypoint_goal].origin;
-      return otherBot.waypoint_goal;
+      claim_origin = waypoints[otherBot.waypoint_goal].origin;
+      return TRUE;
    }
 
-   return -1;
+   return FALSE;
 }
 
 
@@ -679,11 +655,11 @@ static qboolean BotWeaponWaypointClaimedByVisibleBot(const bot_t &pBot,
 }
 
 
-#define BOT_WEAPON_GOAL_EXCLUDES (EXCLUDE_POINTS_COUNT + 32 + 1)
+static const float BOT_WEAPON_GOAL_ZONE_RADIUS = 512.0f;
 
 static void BotAddWeaponGoalExclude(int excludes[], int &count, int index)
 {
-   if (index < 0 || count >= BOT_WEAPON_GOAL_EXCLUDES - 1)
+   if (index < 0 || index >= MAX_WAYPOINTS || count >= MAX_WAYPOINTS)
       return;
 
    for (int i = 0; i < count; i++)
@@ -708,14 +684,24 @@ static void BotBuildWeaponGoalExcludes(const bot_t &pBot, int excludes[])
 
    for (int i = 0; i < 32; i++)
    {
-      Vector pickup_origin;
       const bot_t &otherBot = bots[i];
-      int claimed_index = BotGetClaimedWeaponWaypoint(otherBot, pickup_origin);
+      if (&otherBot == &pBot || otherBot.pEdict == pBot.pEdict)
+         continue;
 
-      if (claimed_index != -1 &&
-          UTIL_ShouldYieldPickup(pBot, otherBot, pickup_origin))
+      Vector claim_origin;
+      if (!BotGetWeaponClaimOrigin(otherBot, claim_origin))
+         continue;
+
+      for (int waypoint_index = 0; waypoint_index < num_waypoints;
+           waypoint_index++)
       {
-         BotAddWeaponGoalExclude(excludes, count, claimed_index);
+         if (!(waypoints[waypoint_index].flags & W_FL_WEAPON))
+            continue;
+
+         float zone_distance = (waypoints[waypoint_index].origin -
+            claim_origin).Make2D().Length();
+         if (zone_distance <= BOT_WEAPON_GOAL_ZONE_RADIUS)
+            BotAddWeaponGoalExclude(excludes, count, waypoint_index);
       }
    }
 
@@ -725,15 +711,28 @@ static void BotBuildWeaponGoalExcludes(const bot_t &pBot, int excludes[])
 
 static int BotFindAvailableWeaponGoal(bot_t &pBot, int weaponflags)
 {
-   int excludes[BOT_WEAPON_GOAL_EXCLUDES];
-   BotBuildWeaponGoalExcludes(pBot, excludes);
+   int strategic_excludes[MAX_WAYPOINTS + 1];
+   BotBuildWeaponGoalExcludes(pBot, strategic_excludes);
 
    int index = WaypointFindNearestGoal(pBot.pEdict,
-      pBot.curr_waypoint_index, W_FL_WEAPON, weaponflags, excludes);
+      pBot.curr_waypoint_index, W_FL_WEAPON, weaponflags,
+      strategic_excludes);
 
    if (index == -1)
       index = WaypointFindRandomGoal(pBot.pEdict, W_FL_WEAPON,
-         weaponflags, excludes);
+         weaponflags, strategic_excludes);
+
+   if (index != -1)
+      return index;
+
+   // If every separate zone is occupied, relax shared reservations only.
+   index = WaypointFindNearestGoal(pBot.pEdict,
+      pBot.curr_waypoint_index, W_FL_WEAPON, weaponflags,
+      pBot.exclude_points);
+
+   if (index == -1)
+      index = WaypointFindRandomGoal(pBot.pEdict, W_FL_WEAPON,
+         weaponflags, pBot.exclude_points);
 
    return index;
 }
