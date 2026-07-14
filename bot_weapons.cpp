@@ -20,6 +20,9 @@ extern bot_weapon_t weapon_defs[MAX_WEAPONS];
 extern int submod_id;
 extern int submod_weaponflag;
 
+static const float BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE = 160.0f;
+static const float BOT_CROWBAR_OPPORTUNISTIC_DISTANCE = 64.0f;
+
 // weapons are stored in priority order, most desired weapon should be at
 // the start of the array and least desired should be at the end
 
@@ -27,7 +30,7 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
 {
    {VALVE_WEAPON_CROWBAR, WEAPON_SUBMOD_ALL, "weapon_crowbar", WEAPON_MELEE, 1.0,
     SKILL4, NOSKILL, FALSE, FALSE,
-    0.0, 40.0, 0, 0, 1.0,
+    0.0, BOT_CROWBAR_OPPORTUNISTIC_DISTANCE, 0, 0, 1.0,
     20, TRUE, 100, 0, 0, TRUE, FALSE, FALSE, FALSE, 0.0, 0.0, FALSE, -1, -1,
     W_IFL_CROWBAR, 0, 0, FALSE, FALSE },
 
@@ -99,11 +102,11 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
     60, TRUE, 100, 1, 0, FALSE, FALSE, FALSE, FALSE, 0.0, 0.0, FALSE, 2, -1,
     W_IFL_RPG, W_IFL_AMMO_RPG, 0, TRUE, FALSE },
 
-   // Favor the Glock's fast secondary fire at close and medium range while
-   // retaining accurate primary fire for longer shots.
+   // Secondary fire is opportunistic at close contact. Primary remains
+   // available outside that range without requiring forward pursuit.
    {VALVE_WEAPON_GLOCK, WEAPON_SUBMOD_ALL, "weapon_9mmhandgun", WEAPON_FIRE, 1.0,
     SKILL5, SKILL5, FALSE, TRUE,
-    250.0, 1500.0, 32.0, 700.0, 300.0,
+    32.0, 1500.0, 32.0, BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE, 300.0,
     20, TRUE, 70, 1, 1, TRUE, TRUE, FALSE, FALSE, 0.0, 0.0, TRUE, 30, -1,
     W_IFL_GLOCK, W_IFL_AMMO_9MM, 0, TRUE, FALSE },
 
@@ -529,6 +532,13 @@ qboolean IsValidPrimaryAttack(bot_t &pBot, const bot_weapon_select_t &select, co
 
    primary_in_range = (always_in_range) || (distance >= select.primary_min_distance && distance <= select.primary_max_distance);
 
+   // Fallback weapon selection may bypass ordinary table ranges. Crowbar
+   // contact remains opportunistic even on that path (distance 0 is the
+   // inventory/ammo capability probe, not a combat target).
+   if (weapon_index == VALVE_WEAPON_CROWBAR && distance >
+       BOT_CROWBAR_OPPORTUNISTIC_DISTANCE)
+      primary_in_range = FALSE;
+
    // no ammo required for this weapon OR
    // enough ammo available to fire AND
    // the bot is far enough away to use primary fire AND
@@ -545,6 +555,12 @@ qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, 
 
    // target is close enough
    secondary_in_range = (always_in_range) || (distance >= select.secondary_min_distance && distance <= select.secondary_max_distance);
+
+   // Never let explicit/fallback selection extend Glock burst fire back to
+   // medium range. This choice affects attack only, never locomotion.
+   if (weapon_index == VALVE_WEAPON_GLOCK && distance >
+       BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE)
+      secondary_in_range = FALSE;
 
    // see if there is enough secondary ammo AND
    // the bot is far enough away to use secondary fire AND
@@ -799,7 +815,7 @@ qboolean BotHasOnlyWeakWeapons(bot_t &pBot)
 
 qboolean BotShouldUseCrowbarAtCloseRange(bot_t &pBot, float distance)
 {
-   return distance <= 64.0f &&
+   return distance <= BOT_CROWBAR_OPPORTUNISTIC_DISTANCE &&
       BotIsCarryingWeapon(pBot, VALVE_WEAPON_CROWBAR);
 }
 

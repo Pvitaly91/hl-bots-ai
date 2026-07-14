@@ -657,30 +657,24 @@ static qboolean BotWeaponWaypointClaimedByVisibleBot(const bot_t &pBot,
 
 static const float BOT_WEAPON_GOAL_ZONE_RADIUS = 512.0f;
 
-static void BotAddWeaponGoalExclude(int excludes[], int &count, int index)
+static qboolean BotWeaponGoalIsPersonallyExcluded(const bot_t &pBot,
+   int waypoint_index)
 {
-   if (index < 0 || index >= MAX_WAYPOINTS || count >= MAX_WAYPOINTS)
-      return;
-
-   for (int i = 0; i < count; i++)
-   {
-      if (excludes[i] == index)
-         return;
-   }
-
-   excludes[count++] = index;
-}
-
-
-static void BotBuildWeaponGoalExcludes(const bot_t &pBot, int excludes[])
-{
-   int count = 0;
-
    for (int i = 0; i < EXCLUDE_POINTS_COUNT &&
         pBot.exclude_points[i] != -1; i++)
    {
-      BotAddWeaponGoalExclude(excludes, count, pBot.exclude_points[i]);
+      if (pBot.exclude_points[i] == waypoint_index)
+         return TRUE;
    }
+
+   return FALSE;
+}
+
+
+static int BotCountWeaponGoalZoneClaims(const bot_t &pBot,
+   int waypoint_index)
+{
+   int claim_count = 0;
 
    for (int i = 0; i < 32; i++)
    {
@@ -692,49 +686,88 @@ static void BotBuildWeaponGoalExcludes(const bot_t &pBot, int excludes[])
       if (!BotGetWeaponClaimOrigin(otherBot, claim_origin))
          continue;
 
-      for (int waypoint_index = 0; waypoint_index < num_waypoints;
-           waypoint_index++)
-      {
-         if (!(waypoints[waypoint_index].flags & W_FL_WEAPON))
-            continue;
-
-         float zone_distance = (waypoints[waypoint_index].origin -
-            claim_origin).Make2D().Length();
-         if (zone_distance <= BOT_WEAPON_GOAL_ZONE_RADIUS)
-            BotAddWeaponGoalExclude(excludes, count, waypoint_index);
-      }
+      float zone_distance = (waypoints[waypoint_index].origin -
+         claim_origin).Make2D().Length();
+      if (zone_distance <= BOT_WEAPON_GOAL_ZONE_RADIUS)
+         claim_count++;
    }
 
-   excludes[count] = -1;
+   return claim_count;
+}
+
+
+static qboolean BotWeaponGoalCandidate(bot_t &pBot, int waypoint_index,
+   int weaponflags, float &route_distance,
+   qboolean allow_current_waypoint = FALSE)
+{
+   if (waypoint_index < 0 || waypoint_index >= num_waypoints ||
+       (!allow_current_waypoint &&
+        waypoint_index == pBot.curr_waypoint_index))
+      return FALSE;
+
+   if (waypoints[waypoint_index].flags & (W_FL_DELETED | W_FL_AIMING))
+      return FALSE;
+
+   if (!(waypoints[waypoint_index].flags & W_FL_WEAPON) ||
+       !(waypoints[waypoint_index].itemflags & weaponflags) ||
+       BotWeaponGoalIsPersonallyExcluded(pBot, waypoint_index))
+      return FALSE;
+
+   edict_t *pItem = WaypointFindItem(waypoint_index);
+   if (!pItem || (pItem->v.effects & EF_NODRAW) || pItem->v.frame > 0)
+      return FALSE;
+
+   if (pBot.curr_waypoint_index >= 0 &&
+       pBot.curr_waypoint_index < num_waypoints)
+   {
+      route_distance = WaypointDistanceFromTo(pBot.curr_waypoint_index,
+         waypoint_index);
+      if (route_distance >= (float)WAYPOINT_MAX_DISTANCE)
+         return FALSE;
+   }
+   else
+   {
+      route_distance = (waypoints[waypoint_index].origin -
+         pBot.pEdict->v.origin).Length();
+   }
+
+   return TRUE;
 }
 
 
 static int BotFindAvailableWeaponGoal(bot_t &pBot, int weaponflags)
 {
-   int strategic_excludes[MAX_WAYPOINTS + 1];
-   BotBuildWeaponGoalExcludes(pBot, strategic_excludes);
+   int best_index = -1;
+   int best_claim_count = 33;
+   float best_route_distance = (float)WAYPOINT_UNREACHABLE;
 
-   int index = WaypointFindNearestGoal(pBot.pEdict,
-      pBot.curr_waypoint_index, W_FL_WEAPON, weaponflags,
-      strategic_excludes);
+   // Shared reservations are a soft load. Personal excludes remain hard.
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      float route_distance;
+      if (!BotWeaponGoalCandidate(pBot, index, weaponflags,
+          route_distance))
+         continue;
 
-   if (index == -1)
-      index = WaypointFindRandomGoal(pBot.pEdict, W_FL_WEAPON,
-         weaponflags, strategic_excludes);
+      int claim_count = BotCountWeaponGoalZoneClaims(pBot, index);
 
-   if (index != -1)
-      return index;
+      if (claim_count < best_claim_count ||
+          (claim_count == best_claim_count &&
+           (route_distance < best_route_distance ||
+            (route_distance == best_route_distance && index < best_index))))
+      {
+         best_index = index;
+         best_claim_count = claim_count;
+         best_route_distance = route_distance;
+      }
+   }
 
-   // If every separate zone is occupied, relax shared reservations only.
-   index = WaypointFindNearestGoal(pBot.pEdict,
-      pBot.curr_waypoint_index, W_FL_WEAPON, weaponflags,
-      pBot.exclude_points);
+   pBot.weapon_goal_zone_load = best_index == -1 ? -1 : best_claim_count;
+   if (best_index != -1)
+      BotTrace(pBot, "weapon zone selected: wpt=%d load=%d route=%.0f",
+         best_index, best_claim_count, best_route_distance);
 
-   if (index == -1)
-      index = WaypointFindRandomGoal(pBot.pEdict, W_FL_WEAPON,
-         weaponflags, pBot.exclude_points);
-
-   return index;
+   return best_index;
 }
 
 
@@ -747,6 +780,17 @@ static qboolean BotFindWaypointGoalPrioritizedWeapon(bot_t &pBot)
    if(!weaponflags)
       return FALSE;
 
+   float existing_distance;
+   if (pBot.wpt_goal_type == WPT_GOAL_WEAPON &&
+       BotWeaponGoalCandidate(pBot, pBot.waypoint_goal, weaponflags,
+          existing_distance, TRUE))
+   {
+      pBot.weapon_goal_zone_load = BotCountWeaponGoalZoneClaims(pBot,
+         pBot.waypoint_goal);
+      pBot.b_weak_retreat_goal = FALSE;
+      return TRUE;
+   }
+
    int index = BotFindAvailableWeaponGoal(pBot, weaponflags);
 
    if(index == -1)
@@ -754,6 +798,7 @@ static qboolean BotFindWaypointGoalPrioritizedWeapon(bot_t &pBot)
 
    pBot.wpt_goal_type = WPT_GOAL_WEAPON;
    pBot.waypoint_goal = index;
+   pBot.b_weak_retreat_goal = FALSE;
    return TRUE;
 }
 
@@ -843,6 +888,12 @@ static void BotFindWaypointGoalSearchWeaponAmmo(bot_t &pBot, int &index, float &
 
 static qboolean BotFindWaypointGoalEnemy(bot_t &pBot)
 {
+   if (pBot.b_only_has_weak_weapons)
+   {
+      BotTrace(pBot, "weak enemy goal suppressed: requested wpt pursuit");
+      return FALSE;
+   }
+
    if(FNullEnt(pBot.pBotEnemy))
       return FALSE;
 
@@ -859,6 +910,53 @@ static qboolean BotFindWaypointGoalEnemy(bot_t &pBot)
 
    BotTrace(pBot, "goal set: enemy wpt=%d", index);
 
+   return TRUE;
+}
+
+
+static qboolean BotFindWaypointGoalWeakRetreatOrRoam(bot_t &pBot)
+{
+   if (!pBot.b_only_has_weak_weapons)
+      return FALSE;
+
+   int index = -1;
+   qboolean is_retreat = FALSE;
+
+   if (!FNullEnt(pBot.pBotEnemy))
+   {
+      int self_waypoint = pBot.curr_waypoint_index;
+      if (self_waypoint < 0 || self_waypoint >= num_waypoints)
+         self_waypoint = WaypointFindNearest(pBot.pEdict, 1024);
+
+      int enemy_waypoint = WaypointFindNearest(pBot.pBotEnemy, 1024);
+      if (self_waypoint >= 0 && enemy_waypoint >= 0)
+      {
+         index = WaypointFindRunawayPath(self_waypoint, enemy_waypoint);
+         is_retreat = index >= 0 && index < num_waypoints;
+      }
+   }
+
+   if (!is_retreat)
+      index = WaypointFindRandomGoal(pBot.pEdict, 0);
+
+   pBot.f_waypoint_goal_time = gpGlobals->time + 0.35f;
+   pBot.pTrackSoundEdict = NULL;
+   pBot.f_track_sound_time = -1.0f;
+   pBot.weapon_goal_zone_load = -1;
+   pBot.b_weak_retreat_goal = is_retreat;
+
+   if (index < 0 || index >= num_waypoints)
+   {
+      pBot.wpt_goal_type = WPT_GOAL_NONE;
+      pBot.waypoint_goal = -1;
+      BotTrace(pBot, "weak movement: no weapon route; defensive fallback");
+      return TRUE;
+   }
+
+   pBot.wpt_goal_type = WPT_GOAL_LOCATION;
+   pBot.waypoint_goal = index;
+   BotTrace(pBot, "goal set: weak_%s wpt=%d retry=0.35",
+      is_retreat ? "retreat" : "roam", index);
    return TRUE;
 }
 
@@ -882,17 +980,23 @@ static void BotFindWaypointGoal( bot_t &pBot )
    if (BotFindWaypointGoalMapProfile(pBot))
       return;
 
+   // Preserve an active upgrade route before combat or low-health logic can
+   // turn an enemy into the movement target.
+   if (BotFindWaypointGoalPrioritizedWeapon(pBot))
+   {
+      BotTrace(pBot, "goal set: weapon-upgrade wpt=%d load=%d",
+         pBot.waypoint_goal, pBot.weapon_goal_zone_load);
+      return;
+   }
+
+   // Weak movement is restricted to weapon acquisition, retreat, or roaming.
+   // Health/ammo goals must not become an accidental approach vector.
+   if (BotFindWaypointGoalWeakRetreatOrRoam(pBot))
+      return;
+
    // look for health if we're pretty dead
    if (BotFindWaypointGoalCriticalHealth(pBot))
       return;
-
-   // A bot with only weak weapons keeps the nearest upgrade as its movement
-   // goal even while retaining an enemy for return fire.
-   if (BotFindWaypointGoalPrioritizedWeapon(pBot))
-   {
-      BotTrace(pBot, "goal set: weapon-upgrade wpt=%d", pBot.waypoint_goal);
-      return;
-   }
 
    if (pBot.pBotEnemy == NULL)
    {
@@ -950,6 +1054,7 @@ static void BotFindWaypointGoal( bot_t &pBot )
    {
       pBot.wpt_goal_type = WPT_GOAL_LOCATION;
       pBot.waypoint_goal = index;
+      pBot.b_weak_retreat_goal = FALSE;
       pBot.pTrackSoundEdict = NULL;
       pBot.f_track_sound_time = -1;
 
@@ -1249,6 +1354,19 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
       pBot.f_waypoint_goal_time = 0.0f;
    }
 
+   if (pBot.b_only_has_weak_weapons &&
+       pBot.wpt_goal_type == WPT_GOAL_ENEMY)
+   {
+      BotTrace(pBot, "weak enemy goal suppressed: route wpt=%d",
+         pBot.waypoint_goal);
+      pBot.waypoint_goal = -1;
+      pBot.wpt_goal_type = WPT_GOAL_NONE;
+      pBot.curr_waypoint_index = -1;
+      pBot.f_waypoint_goal_time = 0.0f;
+      pBot.weapon_goal_zone_load = -1;
+      pBot.b_weak_retreat_goal = FALSE;
+   }
+
    if (pBot.wpt_goal_type == WPT_GOAL_WEAPON &&
        pBot.waypoint_goal >= 0 &&
        BotWeaponWaypointClaimedByVisibleBot(pBot, pBot.waypoint_goal))
@@ -1257,6 +1375,7 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
       pBot.waypoint_goal = -1;
       pBot.wpt_goal_type = WPT_GOAL_NONE;
       pBot.f_waypoint_goal_time = 0.0f;
+      pBot.weapon_goal_zone_load = -1;
    }
 
    // if the bot doesn't have a goal waypoint then pick one...
@@ -1264,7 +1383,9 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
        (pBot.f_waypoint_goal_time < gpGlobals->time))
    {
       // tracking something, pick goal much more often
-      if (pBot.pBotEnemy != NULL)
+      if (pBot.b_only_has_weak_weapons)
+         pBot.f_waypoint_goal_time = gpGlobals->time + 0.35f;
+      else if (pBot.pBotEnemy != NULL)
          pBot.f_waypoint_goal_time = gpGlobals->time + 0.5;
       else // don't pick a goal more often than every 120 seconds...
          pBot.f_waypoint_goal_time = gpGlobals->time + 120.0;

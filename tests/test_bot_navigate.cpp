@@ -53,7 +53,9 @@ float mock_RANDOM_FLOAT2(float low, float high)
 static int mock_WaypointFindNearest_result = -1;
 static int mock_WaypointFindReachable_result = -1;
 static int mock_WaypointRouteFromTo_result = -1;
+static int mock_WaypointFindRunawayPath_result = -1;
 static float mock_WaypointDistanceFromTo_result = 99999.0f;
+static float mock_WaypointDistanceFromTo_by_dest[MAX_WAYPOINTS];
 
 // WaypointFindPath: returns waypoint indices from a list, one per call
 static int mock_WaypointFindPath_results[32];
@@ -61,6 +63,8 @@ static int mock_WaypointFindPath_count = 0;
 static int mock_WaypointFindPath_call = 0;
 
 static edict_t *mock_WaypointFindItem_result = NULL;
+static qboolean mock_WaypointFindItem_active[MAX_WAYPOINTS];
+static edict_t mock_active_weapon_item;
 static int mock_WaypointFindNearestGoal_result = -1;
 static int mock_WaypointFindNearestGoal_alternate_result = -1;
 static int mock_WaypointFindRandomGoal_result = -1;
@@ -90,13 +94,6 @@ static qboolean mock_goal_is_excluded(int index)
    return mock_goal_is_excluded_from(index,
       mock_WaypointFindNearestGoal_excludes,
       mock_WaypointFindNearestGoal_exclude_count);
-}
-
-static qboolean mock_first_goal_is_excluded(int index)
-{
-   return mock_goal_is_excluded_from(index,
-      mock_WaypointFindNearestGoal_first_excludes,
-      mock_WaypointFindNearestGoal_first_exclude_count);
 }
 
 static qboolean mock_exclude_list_contains(const int exclude[], int index)
@@ -135,8 +132,17 @@ int WaypointRouteFromTo(int src, int dest)
 
 float WaypointDistanceFromTo(int src, int dest)
 {
-   (void)src; (void)dest;
+   (void)src;
+   if (dest >= 0 && dest < MAX_WAYPOINTS &&
+       mock_WaypointDistanceFromTo_by_dest[dest] >= 0.0f)
+      return mock_WaypointDistanceFromTo_by_dest[dest];
    return mock_WaypointDistanceFromTo_result;
+}
+
+int WaypointFindRunawayPath(int runner, int enemy)
+{
+   (void)runner; (void)enemy;
+   return mock_WaypointFindRunawayPath_result;
 }
 
 int WaypointFindPath(int &path_index, int waypoint_index)
@@ -152,7 +158,9 @@ int WaypointFindPath(int &path_index, int waypoint_index)
 
 edict_t *WaypointFindItem(int wpt_index)
 {
-   (void)wpt_index;
+   if (wpt_index >= 0 && wpt_index < MAX_WAYPOINTS &&
+       mock_WaypointFindItem_active[wpt_index])
+      return &mock_active_weapon_item;
    return mock_WaypointFindItem_result;
 }
 
@@ -301,10 +309,16 @@ static void reset_navigate_mocks(void)
    mock_WaypointFindNearest_result = -1;
    mock_WaypointFindReachable_result = -1;
    mock_WaypointRouteFromTo_result = -1;
+   mock_WaypointFindRunawayPath_result = -1;
    mock_WaypointDistanceFromTo_result = 99999.0f;
+   for (int i = 0; i < MAX_WAYPOINTS; i++)
+      mock_WaypointDistanceFromTo_by_dest[i] = -1.0f;
    mock_WaypointFindPath_count = 0;
    mock_WaypointFindPath_call = 0;
    mock_WaypointFindItem_result = NULL;
+   memset(mock_WaypointFindItem_active, 0,
+      sizeof(mock_WaypointFindItem_active));
+   memset(&mock_active_weapon_item, 0, sizeof(mock_active_weapon_item));
    mock_WaypointFindNearestGoal_result = -1;
    mock_WaypointFindNearestGoal_alternate_result = -1;
    mock_WaypointFindRandomGoal_result = -1;
@@ -2484,6 +2498,14 @@ static void setup_weak_weapon_goal_select(bot_weapon_select_t saved_select[3])
    weapon_select[1].waypoint_flag = W_IFL_SHOTGUN;
 }
 
+static void setup_active_weapon_waypoint(int index, Vector origin,
+   int itemflags, float route_distance)
+{
+   setup_waypoint(index, origin, W_FL_WEAPON, itemflags);
+   mock_WaypointFindItem_active[index] = TRUE;
+   mock_WaypointDistanceFromTo_by_dest[index] = route_distance;
+}
+
 
 static void restore_weak_weapon_goal_select(
    const bot_weapon_select_t saved_select[3])
@@ -2509,12 +2531,11 @@ static int test_find_waypoint_goal_weak_weapon_prioritizes_upgrade(void)
    bot.b_only_has_weak_weapons = TRUE;
    bot.pBotEnemy = pEnemy;
    bot.curr_waypoint_index = 0;
+   pEdict->v.health = 1.0f;
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-
-   mock_WaypointFindNearestGoal_result = 3;
+   setup_active_weapon_waypoint(3, Vector(100, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
    mock_WaypointFindNearest_result = 7;
 
    BotFindWaypointGoal(bot);
@@ -2522,9 +2543,7 @@ static int test_find_waypoint_goal_weak_weapon_prioritizes_upgrade(void)
    ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_WEAPON);
    ASSERT_INT(bot.waypoint_goal, 3);
    ASSERT_PTR_EQ(bot.pBotEnemy, pEnemy);
-   ASSERT_INT(mock_WaypointFindNearestGoal_flags, W_FL_WEAPON);
-   ASSERT_TRUE(mock_WaypointFindNearestGoal_itemflags & W_IFL_SHOTGUN);
-   ASSERT_FALSE(mock_WaypointFindNearestGoal_itemflags & W_IFL_GLOCK);
+   ASSERT_INT(bot.weapon_goal_zone_load, 0);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2532,9 +2551,9 @@ static int test_find_waypoint_goal_weak_weapon_prioritizes_upgrade(void)
 }
 
 
-static int test_find_waypoint_goal_reserves_entire_weapon_zone(void)
+static int test_find_waypoint_goal_weak_preserves_active_weapon_route(void)
 {
-   TEST("BotFindWaypointGoal: reserves the entire 2D weapon zone");
+   TEST("BotFindWaypointGoal: weak return fire preserves active weapon route");
    mock_reset();
    reset_navigate_mocks();
 
@@ -2542,35 +2561,27 @@ static int test_find_waypoint_goal_reserves_entire_weapon_zone(void)
    setup_weak_weapon_goal_select(saved_select);
 
    edict_t *pEdict = mock_alloc_edict();
-   edict_t *pOtherEdict = mock_alloc_edict();
-   setup_bot_for_test(bots[0], pEdict);
-   setup_bot_for_test(bots[1], pOtherEdict);
-
-   bots[0].weapon_skill = SKILL5;
-   bots[0].b_only_has_weak_weapons = TRUE;
-   bots[0].curr_waypoint_index = 0;
-   bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[1].waypoint_goal = 3;
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   bot.weapon_skill = SKILL5;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
+   bot.wpt_goal_type = WPT_GOAL_WEAPON;
+   bot.waypoint_goal = 3;
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   // The vertical separation is intentionally ignored for tactical zones.
-   setup_waypoint(4, Vector(250, 0, 900), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(5, Vector(800, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
+   setup_active_weapon_waypoint(3, Vector(1000, 0, 0),
+      W_IFL_SHOTGUN, 500.0f);
+   setup_active_weapon_waypoint(4, Vector(2200, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
 
-   mock_WaypointFindNearestGoal_result = 4;
-   mock_WaypointFindNearestGoal_alternate_result = 5;
+   BotFindWaypointGoal(bot);
 
-   BotFindWaypointGoal(bots[0]);
-
-   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_WEAPON);
-   ASSERT_INT(bots[0].waypoint_goal, 5);
-   ASSERT_TRUE(mock_goal_is_excluded(3));
-   ASSERT_TRUE(mock_goal_is_excluded(4));
-   ASSERT_FALSE(mock_goal_is_excluded(5));
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_WEAPON);
+   ASSERT_INT(bot.waypoint_goal, 3);
+   ASSERT_PTR_EQ(bot.pBotEnemy, pEnemy);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2578,9 +2589,9 @@ static int test_find_waypoint_goal_reserves_entire_weapon_zone(void)
 }
 
 
-static int test_find_waypoint_goal_avoids_visible_weapon_claim(void)
+static int test_find_waypoint_goal_weak_retreats_and_retries_quickly(void)
 {
-   TEST("BotFindWaypointGoal: avoids visible bot's weapon waypoint");
+   TEST("BotFindWaypointGoal: weak bot retreats without enemy goal");
    mock_reset();
    reset_navigate_mocks();
 
@@ -2588,31 +2599,28 @@ static int test_find_waypoint_goal_avoids_visible_weapon_claim(void)
    setup_weak_weapon_goal_select(saved_select);
 
    edict_t *pEdict = mock_alloc_edict();
-   edict_t *pOtherEdict = mock_alloc_edict();
-   setup_bot_for_test(bots[0], pEdict);
-   setup_bot_for_test(bots[1], pOtherEdict);
-
-   bots[0].weapon_skill = SKILL5;
-   bots[0].b_only_has_weak_weapons = TRUE;
-   bots[0].curr_waypoint_index = 0;
-   bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[1].waypoint_goal = 3;
-   pOtherEdict->v.origin = Vector(80.0f, 0.0f, 0.0f);
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   bot.weapon_skill = SKILL5;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
+   pEdict->v.health = 1.0f;
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(4, Vector(800, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
+   setup_waypoint(1, Vector(500, 0, 0));
+   setup_waypoint(2, Vector(-500, 0, 0));
+   mock_WaypointFindNearest_result = 1;
+   mock_WaypointFindRunawayPath_result = 2;
 
-   mock_WaypointFindNearestGoal_result = 3;
-   mock_WaypointFindNearestGoal_alternate_result = 4;
+   BotFindWaypointGoal(bot);
 
-   BotFindWaypointGoal(bots[0]);
-
-   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_WEAPON);
-   ASSERT_INT(bots[0].waypoint_goal, 4);
-   ASSERT_TRUE(mock_goal_is_excluded(3));
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_LOCATION);
+   ASSERT_INT(bot.waypoint_goal, 2);
+   ASSERT_INT(bot.b_weak_retreat_goal, TRUE);
+   ASSERT_TRUE(bot.f_waypoint_goal_time >= gpGlobals->time + 0.25f);
+   ASSERT_TRUE(bot.f_waypoint_goal_time <= gpGlobals->time + 0.5f);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2620,9 +2628,9 @@ static int test_find_waypoint_goal_avoids_visible_weapon_claim(void)
 }
 
 
-static int test_find_waypoint_goal_reserves_hidden_weapon_claim(void)
+static int test_find_waypoint_goal_weak_roams_instead_of_enemy_pursuit(void)
 {
-   TEST("BotFindWaypointGoal: hidden bot still reserves weapon zone");
+   TEST("BotFindWaypointGoal: weak bot roams when retreat is unavailable");
    mock_reset();
    reset_navigate_mocks();
 
@@ -2630,32 +2638,26 @@ static int test_find_waypoint_goal_reserves_hidden_weapon_claim(void)
    setup_weak_weapon_goal_select(saved_select);
 
    edict_t *pEdict = mock_alloc_edict();
-   edict_t *pOtherEdict = mock_alloc_edict();
-   setup_bot_for_test(bots[0], pEdict);
-   setup_bot_for_test(bots[1], pOtherEdict);
-
-   bots[0].weapon_skill = SKILL5;
-   bots[0].b_only_has_weak_weapons = TRUE;
-   bots[0].curr_waypoint_index = 0;
-   bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[1].waypoint_goal = 3;
-   pOtherEdict->v.origin = Vector(-80.0f, 0.0f, 0.0f);
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   bot.weapon_skill = SKILL5;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(-100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(4, Vector(600, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
+   setup_waypoint(3, Vector(0, 800, 0));
+   mock_WaypointFindNearest_result = 1;
+   mock_WaypointFindRunawayPath_result = -1;
+   mock_WaypointFindRandomGoal_result = 3;
 
-   mock_WaypointFindNearestGoal_result = 3;
-   mock_WaypointFindNearestGoal_alternate_result = 4;
+   BotFindWaypointGoal(bot);
 
-   BotFindWaypointGoal(bots[0]);
-
-   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_WEAPON);
-   ASSERT_INT(bots[0].waypoint_goal, 4);
-   ASSERT_TRUE(mock_goal_is_excluded(3));
-   ASSERT_FALSE(mock_goal_is_excluded(4));
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_LOCATION);
+   ASSERT_INT(bot.waypoint_goal, 3);
+   ASSERT_INT(bot.b_weak_retreat_goal, FALSE);
+   ASSERT_TRUE(bot.wpt_goal_type != WPT_GOAL_ENEMY);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2663,9 +2665,164 @@ static int test_find_waypoint_goal_reserves_hidden_weapon_claim(void)
 }
 
 
-static int test_find_waypoint_goal_pickup_reserves_weapon_zone(void)
+static int test_find_waypoint_goal_soft_balances_twelve_bots(void)
 {
-   TEST("BotFindWaypointGoal: physical weaponbox reserves nearby zone");
+   TEST("BotFindWaypointGoal: 12 bots soft-balance over 4 weapon zones");
+   mock_reset();
+   reset_navigate_mocks();
+
+   bot_weapon_select_t saved_select[3];
+   setup_weak_weapon_goal_select(saved_select);
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_weapon_waypoint(1, Vector(1000, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(2, Vector(2200, 0, 0),
+      W_IFL_SHOTGUN, 200.0f);
+   setup_active_weapon_waypoint(3, Vector(3400, 0, 0),
+      W_IFL_SHOTGUN, 300.0f);
+   setup_active_weapon_waypoint(4, Vector(4600, 0, 0),
+      W_IFL_SHOTGUN, 400.0f);
+
+   int occupancy[5] = {0, 0, 0, 0, 0};
+   for (int i = 0; i < 12; i++)
+   {
+      edict_t *pEdict = mock_alloc_edict();
+      setup_bot_for_test(bots[i], pEdict);
+      bots[i].weapon_skill = SKILL5;
+      bots[i].b_only_has_weak_weapons = TRUE;
+      bots[i].curr_waypoint_index = 0;
+
+      BotFindWaypointGoal(bots[i]);
+
+      ASSERT_INT(bots[i].wpt_goal_type, WPT_GOAL_WEAPON);
+      ASSERT_TRUE(bots[i].waypoint_goal >= 1 &&
+         bots[i].waypoint_goal <= 4);
+      occupancy[bots[i].waypoint_goal]++;
+   }
+
+   int min_occupancy = occupancy[1];
+   int max_occupancy = occupancy[1];
+   for (int i = 1; i <= 4; i++)
+   {
+      if (occupancy[i] < min_occupancy) min_occupancy = occupancy[i];
+      if (occupancy[i] > max_occupancy) max_occupancy = occupancy[i];
+   }
+   ASSERT_TRUE(max_occupancy - min_occupancy <= 1);
+   ASSERT_INT(occupancy[1] + occupancy[2] + occupancy[3] +
+      occupancy[4], 12);
+
+   restore_weak_weapon_goal_select(saved_select);
+   PASS();
+   return 0;
+}
+
+
+static int test_find_waypoint_goal_zero_load_beats_nearer_loaded_zone(void)
+{
+   TEST("BotFindWaypointGoal: zero-load zone beats nearer loaded zone");
+   mock_reset();
+   reset_navigate_mocks();
+
+   bot_weapon_select_t saved_select[3];
+   setup_weak_weapon_goal_select(saved_select);
+
+   for (int i = 0; i < 3; i++)
+      setup_bot_for_test(bots[i], mock_alloc_edict());
+   bots[0].weapon_skill = SKILL5;
+   bots[0].b_only_has_weak_weapons = TRUE;
+   bots[0].curr_waypoint_index = 0;
+   bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
+   bots[1].waypoint_goal = 1;
+   bots[2].wpt_goal_type = WPT_GOAL_WEAPON;
+   bots[2].waypoint_goal = 1;
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_weapon_waypoint(1, Vector(500, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(2, Vector(1800, 0, 0),
+      W_IFL_SHOTGUN, 900.0f);
+
+   BotFindWaypointGoal(bots[0]);
+
+   ASSERT_INT(bots[0].waypoint_goal, 2);
+   ASSERT_INT(bots[0].weapon_goal_zone_load, 0);
+
+   restore_weak_weapon_goal_select(saved_select);
+   PASS();
+   return 0;
+}
+
+
+static int test_find_waypoint_goal_load_ties_use_route_then_index(void)
+{
+   TEST("BotFindWaypointGoal: equal load uses route then stable index");
+   mock_reset();
+   reset_navigate_mocks();
+
+   bot_weapon_select_t saved_select[3];
+   setup_weak_weapon_goal_select(saved_select);
+
+   setup_bot_for_test(bots[0], mock_alloc_edict());
+   bots[0].weapon_skill = SKILL5;
+   bots[0].b_only_has_weak_weapons = TRUE;
+   bots[0].curr_waypoint_index = 0;
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_weapon_waypoint(1, Vector(1000, 0, 0),
+      W_IFL_SHOTGUN, 300.0f);
+   setup_active_weapon_waypoint(2, Vector(2200, 0, 0),
+      W_IFL_SHOTGUN, 150.0f);
+
+   BotFindWaypointGoal(bots[0]);
+   ASSERT_INT(bots[0].waypoint_goal, 2);
+
+   bots[0].waypoint_goal = -1;
+   bots[0].wpt_goal_type = WPT_GOAL_NONE;
+   mock_WaypointDistanceFromTo_by_dest[1] = 150.0f;
+   BotFindWaypointGoal(bots[0]);
+   ASSERT_INT(bots[0].waypoint_goal, 1);
+
+   restore_weak_weapon_goal_select(saved_select);
+   PASS();
+   return 0;
+}
+
+
+static int test_find_waypoint_goal_personal_excludes_stay_hard(void)
+{
+   TEST("BotFindWaypointGoal: personal weapon excludes remain hard");
+   mock_reset();
+   reset_navigate_mocks();
+
+   bot_weapon_select_t saved_select[3];
+   setup_weak_weapon_goal_select(saved_select);
+
+   setup_bot_for_test(bots[0], mock_alloc_edict());
+   bots[0].weapon_skill = SKILL5;
+   bots[0].b_only_has_weak_weapons = TRUE;
+   bots[0].curr_waypoint_index = 0;
+   bots[0].exclude_points[0] = 1;
+   bots[0].exclude_points[1] = -1;
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_weapon_waypoint(1, Vector(1000, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(2, Vector(2200, 0, 0),
+      W_IFL_SHOTGUN, 500.0f);
+
+   BotFindWaypointGoal(bots[0]);
+   ASSERT_INT(bots[0].waypoint_goal, 2);
+
+   restore_weak_weapon_goal_select(saved_select);
+   PASS();
+   return 0;
+}
+
+
+static int test_find_waypoint_goal_hidden_claim_remains_soft_load(void)
+{
+   TEST("BotFindWaypointGoal: hidden weapon claim contributes soft load");
    mock_reset();
    reset_navigate_mocks();
 
@@ -2673,36 +2830,26 @@ static int test_find_waypoint_goal_pickup_reserves_weapon_zone(void)
    setup_weak_weapon_goal_select(saved_select);
 
    edict_t *pEdict = mock_alloc_edict();
-   edict_t *pOtherEdict = mock_alloc_edict();
-   edict_t *pWeaponbox = mock_alloc_edict();
+   edict_t *pHiddenEdict = mock_alloc_edict();
    setup_bot_for_test(bots[0], pEdict);
-   setup_bot_for_test(bots[1], pOtherEdict);
-
+   setup_bot_for_test(bots[1], pHiddenEdict);
    bots[0].weapon_skill = SKILL5;
    bots[0].b_only_has_weak_weapons = TRUE;
    bots[0].curr_waypoint_index = 0;
-   bots[1].pBotPickupItem = pWeaponbox;
    bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[1].waypoint_goal = 5;
-   mock_set_classname(pWeaponbox, "weaponbox");
-   pWeaponbox->v.origin = Vector(1000, 0, 0);
+   bots[1].waypoint_goal = 1;
+   pHiddenEdict->v.origin = Vector(-200.0f, 0.0f, 0.0f);
 
    setup_waypoint(0, Vector(0, 0, 0));
-   // This waypoint is deliberately farther than the old 64-unit match.
-   setup_waypoint(4, Vector(1100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(5, Vector(1700, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-
-   mock_WaypointFindNearestGoal_result = 4;
-   mock_WaypointFindNearestGoal_alternate_result = 5;
+   setup_active_weapon_waypoint(1, Vector(500, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(2, Vector(1800, 0, 0),
+      W_IFL_SHOTGUN, 700.0f);
 
    BotFindWaypointGoal(bots[0]);
 
-   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_WEAPON);
-   ASSERT_INT(bots[0].waypoint_goal, 5);
-   ASSERT_TRUE(mock_goal_is_excluded(4));
-   ASSERT_FALSE(mock_goal_is_excluded(5));
+   ASSERT_INT(bots[0].waypoint_goal, 2);
+   ASSERT_INT(bots[0].weapon_goal_zone_load, 0);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2710,9 +2857,9 @@ static int test_find_waypoint_goal_pickup_reserves_weapon_zone(void)
 }
 
 
-static int test_find_waypoint_goal_ignores_invalid_weapon_claims(void)
+static int test_find_waypoint_goal_invalid_bots_do_not_add_load(void)
 {
-   TEST("BotFindWaypointGoal: dead inactive and free bots do not reserve");
+   TEST("BotFindWaypointGoal: dead inactive and free bots add no load");
    mock_reset();
    reset_navigate_mocks();
 
@@ -2727,42 +2874,30 @@ static int test_find_waypoint_goal_ignores_invalid_weapon_claims(void)
    setup_bot_for_test(bots[1], pDeadEdict);
    setup_bot_for_test(bots[2], pInactiveEdict);
    setup_bot_for_test(bots[3], pFreeEdict);
-
    bots[0].weapon_skill = SKILL5;
    bots[0].b_only_has_weak_weapons = TRUE;
    bots[0].curr_waypoint_index = 0;
 
-   bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[1].waypoint_goal = 3;
-   pDeadEdict->v.health = 0;
+   for (int i = 1; i <= 3; i++)
+   {
+      bots[i].wpt_goal_type = WPT_GOAL_WEAPON;
+      bots[i].waypoint_goal = 1;
+   }
+   pDeadEdict->v.health = 0.0f;
    pDeadEdict->v.deadflag = DEAD_DEAD;
-
-   bots[2].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[2].waypoint_goal = 4;
    bots[2].is_used = FALSE;
-
-   bots[3].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[3].waypoint_goal = 5;
    pFreeEdict->free = TRUE;
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(4, Vector(800, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(5, Vector(1500, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-
-   mock_WaypointFindNearestGoal_result = 3;
-   mock_WaypointFindNearestGoal_alternate_result = 4;
+   setup_active_weapon_waypoint(1, Vector(500, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(2, Vector(1800, 0, 0),
+      W_IFL_SHOTGUN, 700.0f);
 
    BotFindWaypointGoal(bots[0]);
 
-   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_WEAPON);
-   ASSERT_INT(bots[0].waypoint_goal, 3);
-   ASSERT_FALSE(mock_goal_is_excluded(3));
-   ASSERT_FALSE(mock_goal_is_excluded(4));
-   ASSERT_FALSE(mock_goal_is_excluded(5));
+   ASSERT_INT(bots[0].waypoint_goal, 1);
+   ASSERT_INT(bots[0].weapon_goal_zone_load, 0);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2770,51 +2905,36 @@ static int test_find_waypoint_goal_ignores_invalid_weapon_claims(void)
 }
 
 
-static int test_find_waypoint_goal_relaxes_occupied_weapon_zones(void)
+static int test_find_waypoint_goal_weaponbox_claim_adds_soft_load(void)
 {
-   TEST("BotFindWaypointGoal: occupied zones fall back to a weapon goal");
+   TEST("BotFindWaypointGoal: weaponbox claim contributes soft load");
    mock_reset();
    reset_navigate_mocks();
 
    bot_weapon_select_t saved_select[3];
    setup_weak_weapon_goal_select(saved_select);
 
-   edict_t *pEdict = mock_alloc_edict();
-   edict_t *pOtherEdict = mock_alloc_edict();
-   setup_bot_for_test(bots[0], pEdict);
-   setup_bot_for_test(bots[1], pOtherEdict);
-
+   setup_bot_for_test(bots[0], mock_alloc_edict());
+   setup_bot_for_test(bots[1], mock_alloc_edict());
    bots[0].weapon_skill = SKILL5;
    bots[0].b_only_has_weak_weapons = TRUE;
    bots[0].curr_waypoint_index = 0;
-   bots[0].exclude_points[0] = 6;
-   bots[0].exclude_points[1] = -1;
-   bots[1].wpt_goal_type = WPT_GOAL_WEAPON;
-   bots[1].waypoint_goal = 3;
+
+   edict_t *pWeaponbox = mock_alloc_edict();
+   mock_set_classname(pWeaponbox, "weaponbox");
+   pWeaponbox->v.origin = Vector(520, 0, 0);
+   bots[1].pBotPickupItem = pWeaponbox;
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(4, Vector(200, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(6, Vector(900, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-
-   mock_WaypointFindNearestGoal_result = 4;
-   mock_WaypointFindNearestGoal_alternate_result = -1;
+   setup_active_weapon_waypoint(1, Vector(500, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(2, Vector(1800, 0, 0),
+      W_IFL_SHOTGUN, 700.0f);
 
    BotFindWaypointGoal(bots[0]);
 
-   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_WEAPON);
-   ASSERT_INT(bots[0].waypoint_goal, 4);
-   ASSERT_INT(mock_WaypointFindNearestGoal_call_count, 2);
-   ASSERT_INT(mock_WaypointFindRandomGoal_call_count, 1);
-   ASSERT_TRUE(mock_first_goal_is_excluded(3));
-   ASSERT_TRUE(mock_first_goal_is_excluded(4));
-   ASSERT_TRUE(mock_first_goal_is_excluded(6));
-   ASSERT_FALSE(mock_goal_is_excluded(3));
-   ASSERT_FALSE(mock_goal_is_excluded(4));
-   ASSERT_TRUE(mock_goal_is_excluded(6));
+   ASSERT_INT(bots[0].waypoint_goal, 2);
+   ASSERT_INT(bots[0].weapon_goal_zone_load, 0);
 
    restore_weak_weapon_goal_select(saved_select);
    PASS();
@@ -2847,13 +2967,10 @@ static int test_weapon_goal_replans_when_claim_becomes_visible(void)
    pOtherEdict->v.origin = Vector(80.0f, 0.0f, 0.0f);
 
    setup_waypoint(0, Vector(0, 0, 0));
-   setup_waypoint(3, Vector(100, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-   setup_waypoint(4, Vector(800, 0, 0), W_FL_WEAPON,
-      W_IFL_SHOTGUN);
-
-   mock_WaypointFindNearestGoal_result = 3;
-   mock_WaypointFindNearestGoal_alternate_result = 4;
+   setup_active_weapon_waypoint(3, Vector(100, 0, 0),
+      W_IFL_SHOTGUN, 100.0f);
+   setup_active_weapon_waypoint(4, Vector(800, 0, 0),
+      W_IFL_SHOTGUN, 200.0f);
    mock_WaypointRouteFromTo_result = 4;
 
    qboolean found = BotHeadTowardWaypointFindNextRoute(bots[0], FALSE);
@@ -5954,12 +6071,16 @@ int main(void)
    failures += test_find_waypoint_goal_critical_health();
    failures += test_find_waypoint_goal_enemy();
    failures += test_find_waypoint_goal_weak_weapon_prioritizes_upgrade();
-   failures += test_find_waypoint_goal_reserves_entire_weapon_zone();
-   failures += test_find_waypoint_goal_avoids_visible_weapon_claim();
-   failures += test_find_waypoint_goal_reserves_hidden_weapon_claim();
-   failures += test_find_waypoint_goal_pickup_reserves_weapon_zone();
-   failures += test_find_waypoint_goal_ignores_invalid_weapon_claims();
-   failures += test_find_waypoint_goal_relaxes_occupied_weapon_zones();
+   failures += test_find_waypoint_goal_weak_preserves_active_weapon_route();
+   failures += test_find_waypoint_goal_weak_retreats_and_retries_quickly();
+   failures += test_find_waypoint_goal_weak_roams_instead_of_enemy_pursuit();
+   failures += test_find_waypoint_goal_soft_balances_twelve_bots();
+   failures += test_find_waypoint_goal_zero_load_beats_nearer_loaded_zone();
+   failures += test_find_waypoint_goal_load_ties_use_route_then_index();
+   failures += test_find_waypoint_goal_personal_excludes_stay_hard();
+   failures += test_find_waypoint_goal_hidden_claim_remains_soft_load();
+   failures += test_find_waypoint_goal_invalid_bots_do_not_add_load();
+   failures += test_find_waypoint_goal_weaponbox_claim_adds_soft_load();
    failures += test_weapon_goal_replans_when_claim_becomes_visible();
    failures += test_find_waypoint_goal_fallback_random();
    failures += test_find_waypoint_goal_needs_health();

@@ -1281,9 +1281,40 @@ void BotFindEnemy( bot_t &pBot )
       BotTrace(pBot, "efound: %s d=%.0f h=%.0f a=%.0f",
          STRING(pNewEnemy->v.netname), nearestdistance, pEdict->v.health, pEdict->v.armorvalue);
 
-      // clear goal waypoint
-      pBot.waypoint_goal = -1;
-      pBot.wpt_goal_type = WPT_GOAL_ENEMY;
+      if (pBot.b_only_has_weak_weapons)
+      {
+         // A weak bot may aim and return fire, but the enemy never owns its
+         // locomotion. Preserve weapon/pickup routes and suppress stale goals.
+         const qboolean preserve_movement_goal =
+            pBot.wpt_goal_type == WPT_GOAL_WEAPON ||
+            pBot.wpt_goal_type == WPT_GOAL_LOCATION ||
+            MapProfileIsStrategicGoal(pBot);
+
+         if (!preserve_movement_goal)
+         {
+            BotTrace(pBot,
+               "weak enemy movement suppressed: replan %s wpt=%d",
+               BotTraceGoalTypeName(pBot.wpt_goal_type),
+               pBot.waypoint_goal);
+            pBot.waypoint_goal = -1;
+            pBot.wpt_goal_type = WPT_GOAL_NONE;
+            pBot.curr_waypoint_index = -1;
+            pBot.f_waypoint_goal_time = 0.0f;
+            pBot.weapon_goal_zone_load = -1;
+            pBot.b_weak_retreat_goal = FALSE;
+         }
+         else
+         {
+            BotTrace(pBot, "weak enemy movement suppressed: preserve %s wpt=%d",
+               BotTraceGoalTypeName(pBot.wpt_goal_type), pBot.waypoint_goal);
+         }
+      }
+      else
+      {
+         // Strong-loadout bots retain the normal pursuit behavior.
+         pBot.waypoint_goal = -1;
+         pBot.wpt_goal_type = WPT_GOAL_ENEMY;
+      }
    }
 
    // has the bot NOT seen an ememy for at least 5 seconds (time to reload)?
@@ -1415,6 +1446,29 @@ static void BotFireSelectedWeaponSetupSpecial(bot_t &pBot, const bot_weapon_sele
 }
 
 
+static void BotTraceOpportunisticAttack(bot_t &pBot,
+   const bot_weapon_select_t &select, qboolean use_primary,
+   qboolean use_secondary)
+{
+   const qboolean glock_secondary = select.iId == VALVE_WEAPON_GLOCK &&
+      use_secondary;
+   const qboolean crowbar_contact = select.iId == VALVE_WEAPON_CROWBAR &&
+      use_primary;
+
+   if ((!glock_secondary && !crowbar_contact) || bot_trace_level <= 0 ||
+       pBot.f_opportunistic_attack_trace_time > gpGlobals->time ||
+       FNullEnt(pBot.pBotEnemy))
+      return;
+
+   const float distance = (pBot.pBotEnemy->v.origin -
+      pBot.pEdict->v.origin).Length();
+   BotTrace(pBot, "opportunistic attack: weapon=%s mode=%s d=%.0f",
+      select.weapon_name, glock_secondary ? "secondary" : "primary",
+      distance);
+   pBot.f_opportunistic_attack_trace_time = gpGlobals->time + 1.0f;
+}
+
+
 // Set shoot time for primary or secondary fire (charge, hold, or delay)
 static void BotFireSelectedWeaponSetShootTime(bot_t &pBot, const bot_weapon_select_t &select, const bot_fire_delay_t &delay, qboolean is_primary)
 {
@@ -1509,6 +1563,7 @@ static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &s
       return FALSE;
 
    BotFireSelectedWeaponSetupSpecial(pBot, select, use_primary, use_secondary);
+   BotTraceOpportunisticAttack(pBot, select, use_primary, use_secondary);
    BotFireSelectedWeaponSetShootTime(pBot, select, delay, use_primary);
 
    return TRUE;  // weapon was fired

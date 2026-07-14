@@ -77,6 +77,15 @@ typedef int BOOL;
 #define WPT_GOAL_STRIKE_BUTTON 12
 #define WPT_GOAL_BUNKER_SHAFT 13
 
+// The movement target is deliberately separate from the current aim target.
+#define BOT_MOVE_UNSET                  0
+#define BOT_MOVE_WEAK_PHYSICAL_PICKUP   1
+#define BOT_MOVE_WEAK_WEAPON_ROUTE      2
+#define BOT_MOVE_WEAK_RETREAT           3
+#define BOT_MOVE_WEAK_ROAM              4
+#define BOT_MOVE_NORMAL_COMBAT          5
+#define BOT_MOVE_CROSSFIRE_STRATEGIC    6
+
 // instant damage (from cbase.h)
 #define DMG_CRUSH       (1 << 0) // crushed by falling or moving object
 #define DMG_BURN        (1 << 3) // heat burned
@@ -217,6 +226,13 @@ typedef struct
    float f_waypoint_goal_time;
    float prev_waypoint_distance;
    int wpt_goal_type;
+   int movement_mode;
+   int trace_last_movement_mode;
+   float f_movement_trace_time;
+   float f_close_weapon_trace_time;
+   float f_opportunistic_attack_trace_time;
+   int weapon_goal_zone_load;
+   qboolean b_weak_retreat_goal;
    int trace_last_stuck_wpt;         // dedup: last wpt logged for stuck trace
    qboolean b_narrow_path;           // currently on narrow geometry (ramp, bridge, cliff)
    Vector v_prev_waypoint_origin;    // previous waypoint origin for path-following steering

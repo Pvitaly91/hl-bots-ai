@@ -2326,14 +2326,25 @@ static int test_glock_secondary_distance_policy(void)
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    PASS();
 
-   TEST("skill 5 Glock favors secondary fire at medium range");
+   TEST("skill 5 Glock uses primary fire at 500 units");
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
-   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
-   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
    PASS();
 
-   TEST("Glock uses primary fire beyond secondary range");
+   TEST("Glock uses primary fire at 300 and 250 units");
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(300, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(250, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("Glock stays on primary at long range");
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(900, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
@@ -3259,6 +3270,51 @@ static int test_bot_find_enemy_sound_enemy_path(void)
    PASS();
 
    pSoundEnt = NULL;
+   return 0;
+}
+
+
+static int test_bot_find_enemy_weak_preserves_weapon_goal(void)
+{
+   printf("BotFindEnemy weak movement invariant:\n");
+   mock_reset();
+   setup_skill_settings();
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_nohit;
+
+   edict_t *pEnemy = create_enemy_player(Vector(500, 0, 0));
+   testbot.b_only_has_weak_weapons = TRUE;
+   testbot.wpt_goal_type = WPT_GOAL_WEAPON;
+   testbot.waypoint_goal = 7;
+   testbot.curr_waypoint_index = 2;
+
+   TEST("weak bot acquires aim target without replacing weapon route");
+   BotFindEnemy(testbot);
+
+   ASSERT_PTR_EQ(testbot.pBotEnemy, pEnemy);
+   ASSERT_INT(testbot.wpt_goal_type, WPT_GOAL_WEAPON);
+   ASSERT_INT(testbot.waypoint_goal, 7);
+   ASSERT_INT(testbot.curr_waypoint_index, 2);
+   PASS();
+
+   TEST("weak bot drops a stale health route and requests replan");
+   testbot.pBotEnemy = NULL;
+   testbot.wpt_goal_type = WPT_GOAL_HEALTH;
+   testbot.waypoint_goal = 9;
+   testbot.curr_waypoint_index = 3;
+   testbot.f_waypoint_goal_time = gpGlobals->time + 60.0f;
+   BotFindEnemy(testbot);
+
+   ASSERT_PTR_EQ(testbot.pBotEnemy, pEnemy);
+   ASSERT_INT(testbot.wpt_goal_type, WPT_GOAL_NONE);
+   ASSERT_INT(testbot.waypoint_goal, -1);
+   ASSERT_INT(testbot.curr_waypoint_index, -1);
+   ASSERT_FLOAT(testbot.f_waypoint_goal_time, 0.0f);
+   PASS();
    return 0;
 }
 
@@ -5098,6 +5154,8 @@ int main(void)
    rc |= test_bot_find_enemy_jump_on_kill();
    printf("\n");
    rc |= test_bot_find_enemy_sound_enemy_path();
+   printf("\n");
+   rc |= test_bot_find_enemy_weak_preserves_weapon_goal();
    printf("\n");
    rc |= test_bot_point_gun_negative_pitch();
    printf("\n");

@@ -1784,6 +1784,123 @@ static int test_BotFindItem_weak_loadout_weapon_priority(void)
 }
 
 
+static int test_BotFindItem_close_mp5_behind_overrides_fov(void)
+{
+   TEST("BotFindItem: close MP5 behind weak bot bypasses FOV");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.f_find_item = 0.0f;
+   bot.wpt_goal_type = WPT_GOAL_WEAPON;
+   bot.waypoint_goal = 7;
+
+   edict_t *mp5 = mock_alloc_edict();
+   mock_set_classname(mp5, "weapon_9mmAR");
+   mp5->v.origin = Vector(-120.0f, 0.0f, 0.0f);
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, mp5);
+   ASSERT_INT(BotSelectMovementMode(bot), BOT_MOVE_WEAK_PHYSICAL_PICKUP);
+   ASSERT_INT(bot.waypoint_goal, 7);
+   PASS();
+   return 0;
+}
+
+
+static int test_BotFindItem_close_mp5_blocked_not_selected(void)
+{
+   TEST("BotFindItem: close MP5 behind wall is rejected");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.f_find_item = 0.0f;
+
+   edict_t *mp5 = mock_alloc_edict();
+   mock_set_classname(mp5, "weapon_9mmAR");
+   mp5->v.origin = Vector(0.0f, 120.0f, 0.0f);
+
+   mock_trace_line_fn = [](const float *v1, const float *v2,
+      int fNoMonsters, int hullNumber, edict_t *pentToSkip,
+      TraceResult *ptr)
+   {
+      (void)v1; (void)fNoMonsters; (void)hullNumber; (void)pentToSkip;
+      ptr->flFraction = 0.25f;
+      ptr->pHit = &mock_edicts[0];
+      ptr->vecEndPos[0] = v2[0];
+      ptr->vecEndPos[1] = v2[1];
+      ptr->vecEndPos[2] = v2[2];
+   };
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+   return 0;
+}
+
+
+static int test_BotFindItem_distant_mp5_behind_keeps_fov(void)
+{
+   TEST("BotFindItem: distant MP5 behind bot does not bypass FOV");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bot.f_find_item = 0.0f;
+
+   edict_t *mp5 = mock_alloc_edict();
+   mock_set_classname(mp5, "weapon_9mmAR");
+   mp5->v.origin = Vector(-400.0f, 0.0f, 0.0f);
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+   return 0;
+}
+
+
+static int test_BotFindItem_close_mp5_yields_to_closer_visible_bot(void)
+{
+   TEST("BotFindItem: close MP5 still yields to a closer visible claimant");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *other_edict = mock_alloc_edict();
+   setup_bot_for_test(bots[0], e);
+   setup_bot_for_test(bots[1], other_edict);
+   mock_set_classname(other_edict, "player");
+   other_edict->v.origin = Vector(80.0f, 0.0f, 0.0f);
+
+   edict_t *mp5 = mock_alloc_edict();
+   mock_set_classname(mp5, "weapon_9mmAR");
+   mp5->v.origin = Vector(120.0f, 0.0f, 0.0f);
+
+   bots[0].b_only_has_weak_weapons = TRUE;
+   bots[0].f_bot_spawn_time = gpGlobals->time - 30.0f;
+   bots[0].f_find_item = 0.0f;
+   bots[1].pBotPickupItem = mp5;
+
+   BotFindItem(bots[0]);
+
+   ASSERT_PTR_NULL(bots[0].pBotPickupItem);
+   PASS();
+   return 0;
+}
+
+
 static int test_BotFindItem_weaponbox(void)
 {
    TEST("BotFindItem: visible weaponbox always picked up");
@@ -5441,9 +5558,56 @@ static int test_BotThink_weak_weapon_moves_to_upgrade_while_firing(void)
    ASSERT_FLOAT(e->v.ideal_yaw, 15.0f);
 
    BotDoStrafe(bot);
+   ASSERT_INT(bot.movement_mode, BOT_MOVE_WEAK_WEAPON_ROUTE);
    ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
    ASSERT_TRUE(bot.f_move_speed > 100.0f);
 
+   PASS();
+   return 0;
+}
+
+
+static int test_BotDoStrafe_weak_bot_never_uses_forward_enemy_pursuit(void)
+{
+   TEST("BotDoStrafe: weak bot without route retreats instead of pursuing");
+   setup_engine_funcs();
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"stalkyard";
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *enemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   enemy->v.origin = Vector(500.0f, 0.0f, 0.0f);
+   enemy->v.health = 100.0f;
+   enemy->v.deadflag = DEAD_NO;
+   enemy->v.flags = FL_CLIENT;
+
+   bot.pBotEnemy = enemy;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.curr_waypoint_index = -1;
+   bot.waypoint_goal = -1;
+   bot.wpt_goal_type = WPT_GOAL_NONE;
+   bot.f_move_speed = 0.0f;
+
+   BotDoStrafe(bot);
+
+   ASSERT_INT(bot.movement_mode, BOT_MOVE_WEAK_ROAM);
+   ASSERT_TRUE(bot.f_move_speed < 0.0f);
+   ASSERT_TRUE(bot.wpt_goal_type != WPT_GOAL_ENEMY);
+
+   // A stale enemy goal and point-blank crowbar opportunity are also
+   // suppressed before ordinary melee locomotion can chase.
+   enemy->v.origin = Vector(48.0f, 0.0f, 0.0f);
+   bot.wpt_goal_type = WPT_GOAL_ENEMY;
+   bot.waypoint_goal = 4;
+   bot.curr_waypoint_index = 4;
+   bot.f_move_speed = bot.f_max_speed;
+   BotDoStrafe(bot);
+
+   ASSERT_TRUE(bot.f_move_speed <= 0.0f);
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_NONE);
+   ASSERT_INT(bot.waypoint_goal, -1);
    PASS();
    return 0;
 }
@@ -5495,6 +5659,7 @@ static int test_BotThink_weak_weaponbox_moves_while_firing(void)
    ASSERT_FLOAT(e->v.ideal_yaw, 15.0f);
 
    BotDoStrafe(bot);
+   ASSERT_INT(bot.movement_mode, BOT_MOVE_WEAK_PHYSICAL_PICKUP);
    ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
    ASSERT_TRUE(bot.f_move_speed > 100.0f);
 
@@ -5952,6 +6117,10 @@ int main(void)
    fail |= test_BotFindItem_battery_priority();
    fail |= test_BotFindItem_spawn_weapon_priority();
    fail |= test_BotFindItem_weak_loadout_weapon_priority();
+   fail |= test_BotFindItem_close_mp5_behind_overrides_fov();
+   fail |= test_BotFindItem_close_mp5_blocked_not_selected();
+   fail |= test_BotFindItem_distant_mp5_behind_keeps_fov();
+   fail |= test_BotFindItem_close_mp5_yields_to_closer_visible_bot();
    fail |= test_BotFindItem_weaponbox();
    fail |= test_BotFindItem_weak_loadout_weaponbox_priority();
    fail |= test_BotFindItem_yields_claimed_weaponbox();
@@ -6088,6 +6257,7 @@ int main(void)
    // Phase 6c: BotThink weak weapon behavior
    fail |= test_BotThink_weak_weapon_scans_while_seeking_upgrade();
    fail |= test_BotThink_weak_weapon_moves_to_upgrade_while_firing();
+   fail |= test_BotDoStrafe_weak_bot_never_uses_forward_enemy_pursuit();
    fail |= test_BotThink_weak_weaponbox_moves_while_firing();
    fail |= test_BotThink_spawned_weak_weapon_seeks();
    fail |= test_BotThink_weak_weapon_fights_back();

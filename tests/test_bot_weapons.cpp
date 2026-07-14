@@ -319,7 +319,8 @@ static int test_skill_checks(void)
    bot.weapon_skill = SKILL5;
    ASSERT_PTR_NOT_NULL(glock);
    ASSERT_INT(BotSkilledEnoughForSecondaryAttack(bot, *glock), TRUE);
-   ASSERT_FLOAT(glock->secondary_max_distance, 700.0f);
+   ASSERT_FLOAT(glock->secondary_max_distance, 160.0f);
+   ASSERT_FLOAT(glock->primary_min_distance, 32.0f);
    PASS();
 
    TEST("MP5 grenade launcher is available to skill 5 bots");
@@ -635,13 +636,20 @@ static int test_IsValidSecondaryAttack(void)
    bot.current_weapon.iAmmo2 = 0;
    PASS();
 
-   TEST("Glock secondary covers close and medium range only");
+   TEST("Glock secondary is close-only while primary covers medium range");
    bot_weapon_select_t *glock = GetWeaponSelect(VALVE_WEAPON_GLOCK);
    bot.m_rgAmmo[1] = 50;
+   ASSERT_INT(IsValidPrimaryAttack(bot, *glock, 128.0f, 0.0f, FALSE), TRUE);
    ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 128.0f, 0.0f, FALSE), TRUE);
-   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 500.0f, 0.0f, FALSE), TRUE);
-   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 700.0f, 0.0f, FALSE), TRUE);
-   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 700.1f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 160.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 160.1f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 250.0f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 300.0f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 500.0f, 0.0f, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *glock, 500.0f, 0.0f, TRUE), FALSE);
+   ASSERT_INT(IsValidPrimaryAttack(bot, *glock, 250.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidPrimaryAttack(bot, *glock, 300.0f, 0.0f, FALSE), TRUE);
+   ASSERT_INT(IsValidPrimaryAttack(bot, *glock, 500.0f, 0.0f, FALSE), TRUE);
    PASS();
 
    return 0;
@@ -1290,7 +1298,9 @@ static int test_BotShouldUseCrowbarAtCloseRange(void)
    PASS();
 
    TEST("outside melee range -> FALSE");
-   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 64.1f), FALSE);
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 96.0f), FALSE);
+   bot_weapon_select_t *crowbar = GetWeaponSelect(VALVE_WEAPON_CROWBAR);
+   ASSERT_INT(IsValidPrimaryAttack(bot, *crowbar, 96.0f, 0.0f, TRUE), FALSE);
    PASS();
 
    TEST("strong firearm available at point blank -> TRUE");
