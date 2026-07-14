@@ -524,18 +524,32 @@ qboolean IsValidWeaponChoose(bot_t &pBot, const bot_weapon_select_t &select)
    return(TRUE);
 }
 
+// Predicted aim positions can lead moving enemies by a large amount. Contact
+// attacks must use the physical player separation instead of that aim vector.
+static float BotGetPhysicalEnemyDistance(bot_t &pBot, const float requested_distance)
+{
+   // A zero distance is used by inventory/ammo capability probes.
+   if(requested_distance <= 0.0f || FNullEnt(pBot.pEdict) ||
+      FNullEnt(pBot.pBotEnemy))
+      return requested_distance;
+
+   return (pBot.pBotEnemy->v.origin - pBot.pEdict->v.origin).Length();
+}
+
 //
 qboolean IsValidPrimaryAttack(bot_t &pBot, const bot_weapon_select_t &select, const float distance, const float height, const qboolean always_in_range)
 {
    int weapon_index = select.iId;
+   const float range_distance = weapon_index == VALVE_WEAPON_CROWBAR ?
+      BotGetPhysicalEnemyDistance(pBot, distance) : distance;
    qboolean primary_in_range;
 
-   primary_in_range = (always_in_range) || (distance >= select.primary_min_distance && distance <= select.primary_max_distance);
+   primary_in_range = (always_in_range) || (range_distance >= select.primary_min_distance && range_distance <= select.primary_max_distance);
 
    // Fallback weapon selection may bypass ordinary table ranges. Crowbar
    // contact remains opportunistic even on that path (distance 0 is the
    // inventory/ammo capability probe, not a combat target).
-   if (weapon_index == VALVE_WEAPON_CROWBAR && distance >
+   if (weapon_index == VALVE_WEAPON_CROWBAR && range_distance >
        BOT_CROWBAR_OPPORTUNISTIC_DISTANCE)
       primary_in_range = FALSE;
 
@@ -550,15 +564,17 @@ qboolean IsValidPrimaryAttack(bot_t &pBot, const bot_weapon_select_t &select, co
 qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, const float distance, const float height, const qboolean always_in_range)
 {
    int weapon_index = select.iId;
+   const float range_distance = weapon_index == VALVE_WEAPON_GLOCK ?
+      BotGetPhysicalEnemyDistance(pBot, distance) : distance;
    qboolean secondary_valid = FALSE;
    qboolean secondary_in_range;
 
    // target is close enough
-   secondary_in_range = (always_in_range) || (distance >= select.secondary_min_distance && distance <= select.secondary_max_distance);
+   secondary_in_range = (always_in_range) || (range_distance >= select.secondary_min_distance && range_distance <= select.secondary_max_distance);
 
    // Never let explicit/fallback selection extend Glock burst fire back to
    // medium range. This choice affects attack only, never locomotion.
-   if (weapon_index == VALVE_WEAPON_GLOCK && distance >
+   if (weapon_index == VALVE_WEAPON_GLOCK && range_distance >
        BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE)
       secondary_in_range = FALSE;
 
@@ -815,7 +831,8 @@ qboolean BotHasOnlyWeakWeapons(bot_t &pBot)
 
 qboolean BotShouldUseCrowbarAtCloseRange(bot_t &pBot, float distance)
 {
-   return distance <= BOT_CROWBAR_OPPORTUNISTIC_DISTANCE &&
+   return BotGetPhysicalEnemyDistance(pBot, distance) <=
+         BOT_CROWBAR_OPPORTUNISTIC_DISTANCE &&
       BotIsCarryingWeapon(pBot, VALVE_WEAPON_CROWBAR);
 }
 

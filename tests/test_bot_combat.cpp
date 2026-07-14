@@ -2293,7 +2293,8 @@ static int test_glock_secondary_distance_policy(void)
    setup_bot_for_test(testbot, pBotEdict);
    testbot.bot_skill = WORST_BOT_LEVEL;
    testbot.weapon_skill = SKILL5;
-   testbot.pBotEnemy = create_enemy_player(Vector(500, 0, 0));
+   edict_t *pEnemy = create_enemy_player(Vector(500, 0, 0));
+   testbot.pBotEnemy = pEnemy;
 
    mock_trace_line_fn = trace_nohit;
    mock_trace_hull_fn = trace_nohit;
@@ -2320,6 +2321,7 @@ static int test_glock_secondary_distance_policy(void)
    fire_delay[glock_idx].iId = VALVE_WEAPON_GLOCK;
 
    TEST("skill 5 Glock uses secondary fire at close range");
+   pEnemy->v.origin = Vector(128, 0, 0);
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(128, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
@@ -2327,6 +2329,7 @@ static int test_glock_secondary_distance_policy(void)
    PASS();
 
    TEST("skill 5 Glock uses primary fire at 500 units");
+   pEnemy->v.origin = Vector(500, 0, 0);
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
@@ -2334,10 +2337,12 @@ static int test_glock_secondary_distance_policy(void)
    PASS();
 
    TEST("Glock uses primary fire at 300 and 250 units");
+   pEnemy->v.origin = Vector(300, 0, 0);
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(300, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   pEnemy->v.origin = Vector(250, 0, 0);
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(250, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
@@ -2345,10 +2350,27 @@ static int test_glock_secondary_distance_policy(void)
    PASS();
 
    TEST("Glock stays on primary at long range");
+   pEnemy->v.origin = Vector(900, 0, 0);
    pBotEdict->v.button = 0;
    ASSERT_INT(BotFireWeapon(Vector(900, 0, 0), testbot, 0), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("predicted close aim does not enable Glock secondary at medium range");
+   pEnemy->v.origin = Vector(250, 0, 0);
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(128, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("physical close range enables Glock secondary despite predicted lead");
+   pEnemy->v.origin = Vector(128, 0, 0);
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(250, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    PASS();
 
    return 0;
@@ -3498,6 +3520,76 @@ static int test_bot_fire_weapon_reuse_with_choice(void)
          ASSERT_INT(res, TRUE);
          ASSERT_INT(testbot.current_weapon_index, crow_idx);
          ASSERT_FLOAT(testbot.current_opt_distance, weapon_select[crow_idx].opt_distance);
+      }
+   }
+   PASS();
+
+   TEST("predicted contact does not force crowbar against a distant enemy");
+   {
+      mock_reset();
+      setup_skill_settings();
+      pBotEdict = mock_alloc_edict();
+      setup_bot_for_test(testbot, pBotEdict);
+      mock_trace_line_fn = trace_nohit;
+      mock_trace_hull_fn = trace_nohit;
+      pEnemy = create_enemy_player(Vector(220, 0, 0));
+      testbot.pBotEnemy = pEnemy;
+
+      int crow_idx = -1;
+      int sg_idx = -1;
+      for (int i = 0; weapon_select[i].iId; i++) {
+         if (weapon_select[i].iId == VALVE_WEAPON_CROWBAR) crow_idx = i;
+         if (weapon_select[i].iId == VALVE_WEAPON_SHOTGUN) sg_idx = i;
+      }
+
+      if (crow_idx >= 0 && sg_idx >= 0) {
+         testbot.current_weapon_index = sg_idx;
+         testbot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
+         pBotEdict->v.weapons = (1u << VALVE_WEAPON_CROWBAR) |
+                               (1u << VALVE_WEAPON_SHOTGUN);
+         int ammo1 = weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1;
+         if (ammo1 >= 0 && ammo1 < MAX_AMMO_SLOTS)
+            testbot.m_rgAmmo[ammo1] = 50;
+         fire_delay[sg_idx].iId = VALVE_WEAPON_SHOTGUN;
+
+         qboolean res = BotFireWeapon(Vector(48, 0, 0), testbot, 0);
+         ASSERT_INT(res, TRUE);
+         ASSERT_INT(testbot.current_weapon_index, sg_idx);
+      }
+   }
+   PASS();
+
+   TEST("physical contact forces crowbar despite predicted lead");
+   {
+      mock_reset();
+      setup_skill_settings();
+      pBotEdict = mock_alloc_edict();
+      setup_bot_for_test(testbot, pBotEdict);
+      mock_trace_line_fn = trace_nohit;
+      mock_trace_hull_fn = trace_nohit;
+      pEnemy = create_enemy_player(Vector(48, 0, 0));
+      testbot.pBotEnemy = pEnemy;
+
+      int crow_idx = -1;
+      int sg_idx = -1;
+      for (int i = 0; weapon_select[i].iId; i++) {
+         if (weapon_select[i].iId == VALVE_WEAPON_CROWBAR) crow_idx = i;
+         if (weapon_select[i].iId == VALVE_WEAPON_SHOTGUN) sg_idx = i;
+      }
+
+      if (crow_idx >= 0 && sg_idx >= 0) {
+         testbot.current_weapon_index = sg_idx;
+         testbot.current_weapon.iId = VALVE_WEAPON_SHOTGUN;
+         pBotEdict->v.weapons = (1u << VALVE_WEAPON_CROWBAR) |
+                               (1u << VALVE_WEAPON_SHOTGUN);
+         int ammo1 = weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1;
+         if (ammo1 >= 0 && ammo1 < MAX_AMMO_SLOTS)
+            testbot.m_rgAmmo[ammo1] = 50;
+         fire_delay[crow_idx].iId = VALVE_WEAPON_CROWBAR;
+
+         qboolean res = BotFireWeapon(Vector(220, 0, 0), testbot, 0);
+         ASSERT_INT(res, TRUE);
+         ASSERT_INT(testbot.current_weapon_index, crow_idx);
       }
    }
    PASS();

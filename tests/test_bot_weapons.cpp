@@ -1287,6 +1287,9 @@ static int test_BotShouldUseCrowbarAtCloseRange(void)
    bot_t bot;
    setup_bot(bot, pe);
    bot.m_rgAmmo[1] = 50;
+   edict_t *enemy = mock_alloc_edict();
+   enemy->v.origin = Vector(48.0f, 0.0f, 0.0f);
+   bot.pBotEnemy = enemy;
 
    TEST("crowbar + Glock at melee range -> TRUE");
    pe->v.weapons = (1u << VALVE_WEAPON_CROWBAR) | (1u << VALVE_WEAPON_GLOCK);
@@ -1294,16 +1297,19 @@ static int test_BotShouldUseCrowbarAtCloseRange(void)
    PASS();
 
    TEST("exact melee boundary -> TRUE");
+   enemy->v.origin = Vector(64.0f, 0.0f, 0.0f);
    ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 64.0f), TRUE);
    PASS();
 
    TEST("outside melee range -> FALSE");
+   enemy->v.origin = Vector(96.0f, 0.0f, 0.0f);
    ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 96.0f), FALSE);
    bot_weapon_select_t *crowbar = GetWeaponSelect(VALVE_WEAPON_CROWBAR);
    ASSERT_INT(IsValidPrimaryAttack(bot, *crowbar, 96.0f, 0.0f, TRUE), FALSE);
    PASS();
 
    TEST("strong firearm available at point blank -> TRUE");
+   enemy->v.origin = Vector(48.0f, 0.0f, 0.0f);
    pe->v.weapons |= (1u << VALVE_WEAPON_SHOTGUN);
    bot.m_rgAmmo[3] = 20;
    ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), TRUE);
@@ -1312,6 +1318,19 @@ static int test_BotShouldUseCrowbarAtCloseRange(void)
    TEST("no crowbar -> FALSE");
    pe->v.weapons = (1u << VALVE_WEAPON_GLOCK);
    ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), FALSE);
+   PASS();
+
+   TEST("predicted contact does not override physical distance");
+   pe->v.weapons = (1u << VALVE_WEAPON_CROWBAR) | (1u << VALVE_WEAPON_GLOCK);
+   enemy->v.origin = Vector(220.0f, 0.0f, 0.0f);
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 48.0f), FALSE);
+   ASSERT_INT(IsValidPrimaryAttack(bot, *crowbar, 48.0f, 0.0f, TRUE), FALSE);
+   PASS();
+
+   TEST("physical contact overrides predicted lead");
+   enemy->v.origin = Vector(48.0f, 0.0f, 0.0f);
+   ASSERT_INT(BotShouldUseCrowbarAtCloseRange(bot, 220.0f), TRUE);
+   ASSERT_INT(IsValidPrimaryAttack(bot, *crowbar, 220.0f, 0.0f, FALSE), TRUE);
    PASS();
 
    return 0;
