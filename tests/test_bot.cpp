@@ -5159,6 +5159,72 @@ static int test_BotFindItem_ammo_proximity_policy(void)
 }
 
 
+static int test_BotTraceAmmoDecision_is_bounded(void)
+{
+   TEST("BotTraceAmmoDecision: alternating entities cannot bypass rate limits");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   edict_t *ammo1 = mock_alloc_edict();
+   edict_t *ammo2 = mock_alloc_edict();
+   mock_set_classname(ammo1, "ammo_9mmAR");
+   mock_set_classname(ammo2, "ammo_buckshot");
+
+   bot_ammo_need_info_t info;
+   memset(&info, 0, sizeof(info));
+   info.need = BOT_AMMO_NEED_OPPORTUNISTIC;
+   info.ammo_index = 1;
+   info.current = 100;
+   info.maximum = 250;
+
+   bot_trace_level = BOT_TRACE_LOG;
+   gpGlobals->time = 100.0f;
+   BotTraceAmmoDecision(bot, ammo1, info, 80.0f, 90,
+      BOT_AMMO_TRACE_SKIPPED, "inactive");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo1);
+   ASSERT_FLOAT(bot.f_ammo_skip_trace_time, 105.0f);
+
+   BotTraceAmmoDecision(bot, ammo2, info, 80.0f, 90,
+      BOT_AMMO_TRACE_SKIPPED, "inactive");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo1);
+
+   // Candidate and pass-by channels stay independent from rejected-item
+   // throttling, but each channel has its own hard per-bot rate limit.
+   BotTraceAmmoDecision(bot, ammo2, info, 80.0f, 90,
+      BOT_AMMO_TRACE_CANDIDATE, "useful");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo2);
+   ASSERT_FLOAT(bot.f_ammo_candidate_trace_time, 102.0f);
+   BotTraceAmmoDecision(bot, ammo1, info, 40.0f, 90,
+      BOT_AMMO_TRACE_CANDIDATE, "useful");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo2);
+
+   BotTraceAmmoDecision(bot, ammo1, info, 40.0f, 90,
+      BOT_AMMO_TRACE_PASS_BY, "pass_by");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo1);
+   ASSERT_FLOAT(bot.f_ammo_pass_by_trace_time, 110.0f);
+   BotTraceAmmoDecision(bot, ammo2, info, 40.0f, 90,
+      BOT_AMMO_TRACE_PASS_BY, "pass_by");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo1);
+
+   gpGlobals->time = 105.1f;
+   BotTraceAmmoDecision(bot, ammo2, info, 80.0f, 90,
+      BOT_AMMO_TRACE_SKIPPED, "inactive");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo2);
+
+   // A real selection transition is never delayed by diagnostic throttles.
+   gpGlobals->time = 105.2f;
+   BotTraceAmmoDecision(bot, ammo1, info, 80.0f, 90,
+      BOT_AMMO_TRACE_INTERCEPTED, "selected");
+   ASSERT_PTR_EQ(bot.pAmmoTraceItem, ammo1);
+
+   bot_trace_level = BOT_TRACE_OFF;
+   PASS();
+   return 0;
+}
+
+
 static int test_BotFindItem_ammo_low_critical_and_secondary(void)
 {
    TEST("BotFindItem: low 9mm behind bot intercepts at 180 units");
@@ -6600,6 +6666,7 @@ int main(void)
    fail |= test_BotFindItem_pickup_cleared_nodraw();
    fail |= test_BotFindItem_func_outside_fov();
    fail |= test_BotFindItem_ammo_proximity_policy();
+   fail |= test_BotTraceAmmoDecision_is_bounded();
    fail |= test_BotFindItem_ammo_low_critical_and_secondary();
    fail |= test_BotFindItem_ammo_claim_priority_and_cleanup();
    fail |= test_ammo_movement_return_fire_and_crossfire_priority();

@@ -126,6 +126,9 @@ static void BotSpawnInit_TimersAndPhysics( bot_t &pBot )
    pBot.f_close_weapon_trace_time = 0.0f;
    pBot.f_opportunistic_attack_trace_time = 0.0f;
    pBot.f_ammo_trace_time = 0.0f;
+   pBot.f_ammo_candidate_trace_time = 0.0f;
+   pBot.f_ammo_skip_trace_time = 0.0f;
+   pBot.f_ammo_pass_by_trace_time = 0.0f;
    pBot.pAmmoTraceItem = NULL;
    pBot.trace_last_ammo_event = 0;
    pBot.trace_last_ammo_reason = 0;
@@ -1792,6 +1795,11 @@ static qboolean BotFindItemAmmoDetourAcceptable(const bot_t &pBot,
 #define BOT_AMMO_TRACE_SKIPPED      3
 #define BOT_AMMO_TRACE_PASS_BY      4
 
+static const float BOT_AMMO_TRACE_CANDIDATE_INTERVAL = 2.0f;
+static const float BOT_AMMO_TRACE_SKIPPED_INTERVAL = 5.0f;
+static const float BOT_AMMO_TRACE_PASS_BY_INTERVAL = 10.0f;
+static const float BOT_AMMO_TRACE_SAME_EVENT_INTERVAL = 10.0f;
+
 static const char *BotMovementModeName(int movement_mode);
 
 static void BotTraceAmmoDecision(bot_t &pBot, edict_t *pItem,
@@ -1813,6 +1821,31 @@ static void BotTraceAmmoDecision(bot_t &pBot, edict_t *pItem,
        pBot.trace_last_ammo_reason == reason_code &&
        pBot.trace_last_ammo_need == info.need &&
        pBot.f_ammo_trace_time > gpGlobals->time)
+      return;
+
+   // The item scan can visit many entities every frame. A single-item dedup
+   // is insufficient because alternating entities continually evict it.
+   // Keep independent per-bot limits so rejected items cannot hide useful
+   // candidates, while real target transitions remain immediate.
+   float *next_trace_time = NULL;
+   float trace_interval = 0.0f;
+   if (event == BOT_AMMO_TRACE_CANDIDATE)
+   {
+      next_trace_time = &pBot.f_ammo_candidate_trace_time;
+      trace_interval = BOT_AMMO_TRACE_CANDIDATE_INTERVAL;
+   }
+   else if (event == BOT_AMMO_TRACE_SKIPPED)
+   {
+      next_trace_time = &pBot.f_ammo_skip_trace_time;
+      trace_interval = BOT_AMMO_TRACE_SKIPPED_INTERVAL;
+   }
+   else if (event == BOT_AMMO_TRACE_PASS_BY)
+   {
+      next_trace_time = &pBot.f_ammo_pass_by_trace_time;
+      trace_interval = BOT_AMMO_TRACE_PASS_BY_INTERVAL;
+   }
+
+   if (next_trace_time && *next_trace_time > gpGlobals->time)
       return;
 
    const char *item_name = STRING(pItem->v.classname);
@@ -1850,7 +1883,10 @@ static void BotTraceAmmoDecision(bot_t &pBot, edict_t *pItem,
    pBot.trace_last_ammo_event = event;
    pBot.trace_last_ammo_reason = reason_code;
    pBot.trace_last_ammo_need = info.need;
-   pBot.f_ammo_trace_time = gpGlobals->time + 2.0f;
+   pBot.f_ammo_trace_time = gpGlobals->time +
+      BOT_AMMO_TRACE_SAME_EVENT_INTERVAL;
+   if (next_trace_time)
+      *next_trace_time = gpGlobals->time + trace_interval;
 }
 
 
@@ -2049,8 +2085,9 @@ static void BotFindItem( bot_t &pBot )
          {
             if ((pent->v.effects & EF_NODRAW) || pent->v.frame > 0)
             {
-               BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
-                  angle_to_entity, BOT_AMMO_TRACE_SKIPPED, "inactive");
+               if (distance <= BOT_AMMO_CRITICAL_RADIUS)
+                  BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                     angle_to_entity, BOT_AMMO_TRACE_SKIPPED, "inactive");
                continue;
             }
 

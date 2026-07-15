@@ -234,6 +234,9 @@ typedef struct
    float f_close_weapon_trace_time;
    float f_opportunistic_attack_trace_time;
    float f_ammo_trace_time;
+   float f_ammo_candidate_trace_time;
+   float f_ammo_skip_trace_time;
+   float f_ammo_pass_by_trace_time;
    edict_t *pAmmoTraceItem;
    int trace_last_ammo_event;
    int trace_last_ammo_reason;
