@@ -182,6 +182,18 @@ static void BotSpawnInit_CombatState( bot_t &pBot )
    pBot.f_shoot_time = gpGlobals->time;
    pBot.f_primary_charging = -1.0;
    pBot.f_secondary_charging = -1.0;
+   pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_IDLE;
+   pBot.f_gauss_secondary_start_time = 0.0f;
+   pBot.f_gauss_secondary_release_time = 0.0f;
+   pBot.f_gauss_secondary_hard_release_time = 0.0f;
+   pBot.f_gauss_secondary_cooldown_time = 0.0f;
+   pBot.f_gauss_secondary_lost_time = 0.0f;
+   pBot.f_gauss_secondary_trace_time = 0.0f;
+   pBot.gauss_secondary_ammo_before = 0;
+   pBot.gauss_secondary_self_health_before = 0.0f;
+   pBot.gauss_secondary_target_health_before = 0.0f;
+   pBot.pGaussSecondaryTarget = NULL;
+   pBot.v_gauss_secondary_aim = Vector(0.0f, 0.0f, 0.0f);
    pBot.f_satchel_detonate_time = 0;
    pBot.f_satchel_check_time = 0;
    pBot.b_satchel_detonating = FALSE;
@@ -3813,6 +3825,9 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
 
    BotThinkHandleEnemy_FindAndAim(pBot);
 
+   const qboolean gauss_charge_handled =
+      BotGaussUpdateSecondaryCharge(pBot);
+
    if (MapProfileShouldSuppressCombat(pBot))
    {
       pBot.f_pause_time = 0.0f;
@@ -3820,6 +3835,9 @@ static qboolean BotThinkHandleEnemy(bot_t &pBot)
    }
 
    BotDetonateSatchel(pBot);
+
+   if (gauss_charge_handled)
+      return TRUE;
 
    qboolean DidShootAtEnemy = FALSE;
 
@@ -4010,6 +4028,17 @@ static void BotThinkAdjustSpeedForWaypoint(bot_t &pBot)
          pBot.b_not_maxspeed = TRUE;
       }
    }
+}
+
+
+static qboolean BotThinkLockMovementForGaussCharge(bot_t &pBot)
+{
+   if (pBot.gauss_secondary_state != BOT_GAUSS_SECONDARY_HOLD)
+      return FALSE;
+
+   pBot.f_move_speed = 0.0f;
+   pBot.f_strafe_direction = 0.0f;
+   return TRUE;
 }
 
 
@@ -4228,7 +4257,8 @@ void BotThink( bot_t &pBot )
    if (pBot.f_pause_time > gpGlobals->time || pBot.f_longjump_time > gpGlobals->time)
       pBot.f_move_speed = pBot.f_strafe_direction = 0;  // don't move while pausing
 
-   BotDoRandomJumpingAndDuckingAndLongJumping(pBot, moved_distance);
+   if (!BotThinkLockMovementForGaussCharge(pBot))
+      BotDoRandomJumpingAndDuckingAndLongJumping(pBot, moved_distance);
 
    BotThinkFinalizeMovement(pBot);
 }

@@ -152,6 +152,33 @@ static void trace_nohit(const float *v1, const float *v2,
    ptr->vecEndPos[2] = v2[2];
 }
 
+// Clear horizontal sight/recoil traces with solid ground below the projected
+// recoil landing point.
+static void trace_gauss_safe(const float *v1, const float *v2,
+                             int fNoMonsters, int hullNumber,
+                             edict_t *pentToSkip, TraceResult *ptr)
+{
+   (void)fNoMonsters; (void)hullNumber; (void)pentToSkip;
+   const qboolean downward = v2[2] < v1[2] - 20.0f;
+   ptr->flFraction = downward ? 0.5f : 1.0f;
+   ptr->pHit = NULL;
+   ptr->vecEndPos[0] = downward ? (v1[0] + v2[0]) / 2.0f : v2[0];
+   ptr->vecEndPos[1] = downward ? (v1[1] + v2[1]) / 2.0f : v2[1];
+   ptr->vecEndPos[2] = downward ? (v1[2] + v2[2]) / 2.0f : v2[2];
+}
+
+static void trace_gauss_blocked_los(const float *v1, const float *v2,
+                                    int fNoMonsters, int hullNumber,
+                                    edict_t *pentToSkip, TraceResult *ptr)
+{
+   trace_gauss_safe(v1, v2, fNoMonsters, hullNumber, pentToSkip, ptr);
+   if (v2[0] > v1[0] + 300.0f && fabs(v2[2] - v1[2]) < 64.0f)
+   {
+      ptr->flFraction = 0.5f;
+      ptr->vecEndPos[0] = (v1[0] + v2[0]) / 2.0f;
+   }
+}
+
 // Trace context for targeted breakable
 static edict_t *g_trace_hit_edict = NULL;
 
@@ -203,6 +230,68 @@ static void give_bot_weapon(bot_t &pBot, int weapon_id, int clip, int ammo1, int
       if (ammo2_idx >= 0 && ammo2_idx < MAX_AMMO_SLOTS)
          pBot.m_rgAmmo[ammo2_idx] = ammo2;
    }
+}
+
+static int setup_gauss_for_test(bot_t &pBot, edict_t *pBotEdict,
+                                edict_t *pEnemy, int skill, int uranium)
+{
+   bot_weapon_select_t *gauss = GetWeaponSelect(VALVE_WEAPON_GAUSS);
+   if (gauss == NULL)
+      return -1;
+
+   const int gauss_index = (int)(gauss - weapon_select);
+   weapon_defs[VALVE_WEAPON_GAUSS].iId = VALVE_WEAPON_GAUSS;
+   weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1 = 6;
+   weapon_defs[VALVE_WEAPON_GAUSS].iAmmo2 = -1;
+   fire_delay[gauss_index].iId = VALVE_WEAPON_GAUSS;
+
+   pBot.pBotEnemy = pEnemy;
+   pBot.weapon_skill = skill;
+   pBot.current_weapon_index = gauss_index;
+   pBot.current_weapon.iId = VALVE_WEAPON_GAUSS;
+   pBot.current_weapon.iClip = -1;
+   pBot.m_rgAmmo[6] = uranium;
+   pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_IDLE;
+   pBot.f_gauss_secondary_cooldown_time = 0.0f;
+   pBot.f_shoot_time = 0.0f;
+   pBot.f_weaponchange_time = 0.0f;
+   pBot.b_on_ground = TRUE;
+   pBot.b_on_ladder = FALSE;
+   pBot.b_in_water = FALSE;
+   pBot.movement_mode = BOT_MOVE_NORMAL_COMBAT;
+   pBotEdict->v.flags |= FL_ONGROUND;
+   pBotEdict->v.weapons = (1u << VALVE_WEAPON_GAUSS);
+   pBotEdict->v.button = 0;
+   return gauss_index;
+}
+
+static qboolean restart_gauss_charge(bot_t &pBot, edict_t *pEnemy,
+                                     int gauss_index)
+{
+   MapProfileReset();
+   gpGlobals->mapname = 0;
+   BotGaussResetSecondaryCharge(pBot, BOT_GAUSS_SECONDARY_IDLE);
+   pBot.pBotEnemy = pEnemy;
+   pEnemy->v.origin = pBot.pEdict->v.origin + Vector(900.0f, 0.0f, 0.0f);
+   pEnemy->v.health = 100.0f;
+   pEnemy->v.deadflag = DEAD_NO;
+   pBot.current_weapon_index = gauss_index;
+   pBot.current_weapon.iId = VALVE_WEAPON_GAUSS;
+   pBot.m_rgAmmo[6] = 50;
+   pBot.pEdict->v.health = 100.0f;
+   pBot.pEdict->v.deadflag = DEAD_NO;
+   pBot.pEdict->v.button = 0;
+   pBot.b_on_ground = TRUE;
+   pBot.b_on_ladder = FALSE;
+   pBot.b_in_water = FALSE;
+   pBot.f_grenade_found_time = 0.0f;
+   pBot.wpt_goal_type = WPT_GOAL_NONE;
+   pBot.waypoint_goal = -1;
+   mock_trace_line_fn = trace_gauss_safe;
+   mock_random_long_ret = 1;
+   mock_random_float_ret = 0.0f;
+   return BotFireSelectedWeapon(pBot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE);
 }
 
 // ============================================================
@@ -2540,6 +2629,322 @@ static int test_crossbow_distance_and_ammo_policy(void)
    ASSERT_INT(testbot.current_weapon_index, glock_index);
    PASS();
 
+   return 0;
+}
+
+
+static int test_gauss_secondary_policy_and_state_machine(void)
+{
+   printf("Gauss secondary policy and state machine:\n");
+   mock_reset();
+   setup_skill_settings();
+   MapProfileReset();
+   gpGlobals->mapname = 0;
+   gpGlobals->time = 100.0f;
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   edict_t *pEnemy = create_enemy_player(Vector(900.0f, 0.0f, 0.0f));
+   const int gauss_index = setup_gauss_for_test(
+      testbot, pBotEdict, pEnemy, SKILL5, 50);
+   ASSERT_TRUE(gauss_index >= 0);
+   mock_trace_line_fn = trace_gauss_safe;
+   mock_trace_hull_fn = trace_nohit;
+
+   TEST("skill 3-5 can start a far Gauss secondary charge");
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+   {
+      gpGlobals->time += 2.0f;
+      testbot.weapon_skill = skill;
+      ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+      ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_HOLD);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   }
+   PASS();
+
+   TEST("lethal Gauss damage remains a confirmed hit below zero health");
+   pEnemy->v.health = -20.0f;
+   ASSERT_INT(BotGaussTargetHealthDecreased(pEnemy, 100.0f), TRUE);
+   pEnemy->v.health = 100.0f;
+   ASSERT_INT(BotGaussTargetHealthDecreased(pEnemy, 100.0f), FALSE);
+   ASSERT_INT(BotGaussTargetHealthDecreased(NULL, 100.0f), FALSE);
+   PASS();
+
+   TEST("close target uses primary and never starts secondary");
+   BotGaussResetSecondaryCharge(testbot, BOT_GAUSS_SECONDARY_IDLE);
+   testbot.pBotEnemy = pEnemy;
+   pEnemy->v.origin = Vector(250.0f, 0.0f, 0.0f);
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("medium target normally keeps primary under deterministic roll");
+   pEnemy->v.origin = Vector(500.0f, 0.0f, 0.0f);
+   mock_random_long_ret = 100;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("secondary-only request that is declined presses no fire button");
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], FALSE, TRUE), FALSE);
+   ASSERT_TRUE((pBotEdict->v.button & (IN_ATTACK | IN_ATTACK2)) == 0);
+   PASS();
+
+   TEST("far charge holds ATTACK2 over ticks then releases once");
+   testbot.weapon_skill = SKILL5;
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   const float charge_start = testbot.f_gauss_secondary_start_time;
+   const float desired_release = testbot.f_gauss_secondary_release_time;
+   const int preserved_goal = 17;
+   testbot.waypoint_goal = preserved_goal;
+
+   gpGlobals->time = charge_start + 0.10f;
+   pBotEdict->v.button = 0;
+   testbot.f_move_speed = 320.0f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_FLOAT(testbot.f_move_speed, 0.0f);
+   ASSERT_INT(testbot.waypoint_goal, preserved_goal);
+
+   gpGlobals->time = charge_start + 0.20f;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+
+   gpGlobals->time = desired_release + 0.001f;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+
+   gpGlobals->time += 0.05f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+
+   testbot.m_rgAmmo[6] = 40;
+   pEnemy->v.health = 60.0f;
+   gpGlobals->time += 0.06f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_COOLDOWN);
+   qboolean use_primary = TRUE;
+   qboolean use_secondary = TRUE;
+   BotGaussSelectAttack(testbot, use_primary, use_secondary);
+   ASSERT_INT(use_primary, TRUE);
+   ASSERT_INT(use_secondary, FALSE);
+
+   gpGlobals->time = testbot.f_gauss_secondary_cooldown_time + 0.001f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   PASS();
+
+   TEST("insufficient uranium falls back to primary without stuck ATTACK2");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 5);
+   pEnemy->v.origin = Vector(900.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_gauss_safe;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("unsafe recoil edge blocks secondary but leaves primary available");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   pEnemy->v.origin = Vector(900.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_nohit;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   MapProfileReset();
+   gpGlobals->mapname = 0;
+   return 0;
+}
+
+
+static int test_gauss_secondary_interruptions(void)
+{
+   printf("Gauss secondary interruptions:\n");
+   mock_reset();
+   setup_skill_settings();
+   gpGlobals->time = 200.0f;
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   edict_t *pEnemy = create_enemy_player(Vector(900.0f, 0.0f, 0.0f));
+   const int gauss_index = setup_gauss_for_test(
+      testbot, pBotEdict, pEnemy, SKILL4, 50);
+   ASSERT_TRUE(gauss_index >= 0);
+   mock_trace_hull_fn = trace_nohit;
+
+   TEST("close threat releases charge without chasing");
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   pEnemy->v.origin = Vector(200.0f, 0.0f, 0.0f);
+   pBotEdict->v.button = 0;
+   testbot.f_move_speed = 320.0f;
+   gpGlobals->time += 0.10f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+   ASSERT_FLOAT(testbot.f_move_speed, 0.0f);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("lost target and blocked LOS use a bounded grace period");
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   testbot.pBotEnemy = NULL;
+   pBotEdict->v.button = 0;
+   gpGlobals->time += 0.01f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_HOLD);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   pBotEdict->v.button = 0;
+   gpGlobals->time += BOT_GAUSS_TARGET_LOST_GRACE + 0.01f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   mock_trace_line_fn = trace_gauss_blocked_los;
+   pBotEdict->v.button = 0;
+   gpGlobals->time += 0.01f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_HOLD);
+   pBotEdict->v.button = 0;
+   gpGlobals->time += BOT_GAUSS_TARGET_LOST_GRACE + 0.01f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+   PASS();
+
+   TEST("ammo, grenade, critical health, and dead target release charge");
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   testbot.m_rgAmmo[6] = 0;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   testbot.f_grenade_found_time = gpGlobals->time;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   pBotEdict->v.health = BOT_GAUSS_CRITICAL_HEALTH;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   pEnemy->v.deadflag = DEAD_DEAD;
+   pEnemy->v.health = 0.0f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+   PASS();
+
+   TEST("Crossfire strike interrupts charge and preserves bunker route");
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   testbot.wpt_goal_type = WPT_GOAL_BUNKER;
+   testbot.waypoint_goal = 23;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+   ASSERT_INT(testbot.wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(testbot.waypoint_goal, 23);
+   ASSERT_TRUE(MapProfileIsStrategicEventActive());
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   MapProfileReset();
+   gpGlobals->mapname = 0;
+   PASS();
+
+   TEST("ladder, water, and airborne states forbid charge start");
+   const int blocked_modes = 3;
+   for (int mode = 0; mode < blocked_modes; mode++)
+   {
+      BotGaussResetSecondaryCharge(testbot, BOT_GAUSS_SECONDARY_IDLE);
+      testbot.pBotEnemy = pEnemy;
+      pEnemy->v.origin = Vector(900.0f, 0.0f, 0.0f);
+      pEnemy->v.health = 100.0f;
+      pEnemy->v.deadflag = DEAD_NO;
+      testbot.current_weapon.iId = VALVE_WEAPON_GAUSS;
+      testbot.m_rgAmmo[6] = 50;
+      testbot.b_on_ground = mode != 2;
+      testbot.b_on_ladder = mode == 0;
+      testbot.b_in_water = mode == 1;
+      mock_trace_line_fn = trace_gauss_safe;
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+         fire_delay[gauss_index], TRUE, TRUE), TRUE);
+      ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   }
+   PASS();
+
+   TEST("weapon switch and death clear state and ATTACK2");
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   testbot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_COOLDOWN);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   pBotEdict->v.deadflag = DEAD_DEAD;
+   pBotEdict->v.health = 0.0f;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
+   ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("hard timeout forces release before overcharge");
+   gpGlobals->time += 2.0f;
+   ASSERT_INT(restart_gauss_charge(testbot, pEnemy, gauss_index), TRUE);
+   const float hard_release = testbot.f_gauss_secondary_hard_release_time;
+   testbot.f_gauss_secondary_release_time = hard_release + 10.0f;
+   gpGlobals->time = hard_release + 0.001f;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+   ASSERT_INT(testbot.gauss_secondary_state,
+      BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   ASSERT_TRUE(gpGlobals->time - testbot.f_gauss_secondary_start_time < 2.0f);
+   PASS();
+
+   MapProfileReset();
+   gpGlobals->mapname = 0;
    return 0;
 }
 
@@ -5378,6 +5783,10 @@ int main(void)
    rc |= test_glock_secondary_distance_policy();
    printf("\n");
    rc |= test_crossbow_distance_and_ammo_policy();
+   printf("\n");
+   rc |= test_gauss_secondary_policy_and_state_machine();
+   printf("\n");
+   rc |= test_gauss_secondary_interruptions();
    printf("\n");
    rc |= test_mp5_secondary_attack_policy();
    printf("\n");

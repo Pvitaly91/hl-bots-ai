@@ -138,6 +138,7 @@ void BotFindEnemy(bot_t &pBot)
 }
 static int mock_BotShootAtEnemy_count = 0;
 void BotShootAtEnemy(bot_t &pBot) { (void)pBot; mock_BotShootAtEnemy_count++; }
+qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot) { (void)pBot; return FALSE; }
 static qboolean mock_BotShootTripmine_ret_early = FALSE;
 qboolean BotShootTripmine(bot_t &pBot) { (void)pBot; return mock_BotShootTripmine_ret_early; }
 qboolean BotDetonateSatchel(bot_t &pBot) { (void)pBot; return FALSE; }
@@ -653,6 +654,13 @@ static int test_BotSpawnInit_resets_fields(void)
    bot.b_see_tripmine = TRUE;
    bot.blinded_time = 999;
    bot.curr_waypoint_index = 5;
+   bot.gauss_secondary_state = BOT_GAUSS_SECONDARY_HOLD;
+   bot.f_gauss_secondary_start_time = 10.0f;
+   bot.f_gauss_secondary_release_time = 11.0f;
+   bot.f_gauss_secondary_hard_release_time = 12.0f;
+   bot.f_gauss_secondary_cooldown_time = 13.0f;
+   bot.pGaussSecondaryTarget = e;
+   e->v.button |= IN_ATTACK2;
 
    BotSpawnInit(bot);
 
@@ -676,6 +684,12 @@ static int test_BotSpawnInit_resets_fields(void)
    ASSERT_INT(bot.current_weapon_index, -1);
    ASSERT_TRUE(bot.current_weapon.iId == 0);
    ASSERT_FLOAT(bot.f_max_speed, 320.0f);
+   ASSERT_INT(bot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_FLOAT(bot.f_gauss_secondary_start_time, 0.0f);
+   ASSERT_FLOAT(bot.f_gauss_secondary_release_time, 0.0f);
+   ASSERT_FLOAT(bot.f_gauss_secondary_hard_release_time, 0.0f);
+   ASSERT_FLOAT(bot.f_gauss_secondary_cooldown_time, 0.0f);
+   ASSERT_PTR_NULL(bot.pGaussSecondaryTarget);
 
    PASS();
    return 0;
@@ -5450,6 +5464,33 @@ static int test_ammo_movement_return_fire_and_crossfire_priority(void)
    return 0;
 }
 
+static int test_BotThinkLockMovementForGaussCharge(void)
+{
+   TEST("Gauss hold locks locomotion but release hands it back");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   bot.gauss_secondary_state = BOT_GAUSS_SECONDARY_HOLD;
+   bot.f_move_speed = 320.0f;
+   bot.f_strafe_direction = 1.0f;
+
+   ASSERT_TRUE(BotThinkLockMovementForGaussCharge(bot));
+   ASSERT_FLOAT(bot.f_move_speed, 0.0f);
+   ASSERT_FLOAT(bot.f_strafe_direction, 0.0f);
+
+   bot.gauss_secondary_state = BOT_GAUSS_SECONDARY_RELEASE_WAIT;
+   bot.f_move_speed = 240.0f;
+   bot.f_strafe_direction = -0.5f;
+   ASSERT_FALSE(BotThinkLockMovementForGaussCharge(bot));
+   ASSERT_FLOAT(bot.f_move_speed, 240.0f);
+   ASSERT_FLOAT(bot.f_strafe_direction, -0.5f);
+
+   PASS();
+   return 0;
+}
+
 // ============================================================
 // Phase 5: BotDoRandom longjump
 // ============================================================
@@ -6454,6 +6495,7 @@ int main(void)
    // BotSpawnInit
    fail |= test_BotSpawnInit_resets_fields();
    fail |= test_BotSpawnInit_wander_dir();
+   fail |= test_BotThinkLockMovementForGaussCharge();
 
    // BotPickName
    fail |= test_BotPickName_no_names();

@@ -89,6 +89,11 @@ typedef int BOOL;
 #define BOT_MOVE_PRIORITY_AMMO_PICKUP   7
 #define BOT_MOVE_AMMO_ROUTE             8
 
+#define BOT_GAUSS_SECONDARY_IDLE         0
+#define BOT_GAUSS_SECONDARY_HOLD         1
+#define BOT_GAUSS_SECONDARY_RELEASE_WAIT 2
+#define BOT_GAUSS_SECONDARY_COOLDOWN     3
+
 // instant damage (from cbase.h)
 #define DMG_CRUSH       (1 << 0) // crushed by falling or moving object
 #define DMG_BURN        (1 << 3) // heat burned
@@ -289,6 +294,18 @@ typedef struct
    float f_shoot_time;
    float f_primary_charging;
    float f_secondary_charging;
+   int gauss_secondary_state;
+   float f_gauss_secondary_start_time;
+   float f_gauss_secondary_release_time;
+   float f_gauss_secondary_hard_release_time;
+   float f_gauss_secondary_cooldown_time;
+   float f_gauss_secondary_lost_time;
+   float f_gauss_secondary_trace_time;
+   int gauss_secondary_ammo_before;
+   float gauss_secondary_self_health_before;
+   float gauss_secondary_target_health_before;
+   edict_t *pGaussSecondaryTarget;
+   Vector v_gauss_secondary_aim;
    float f_satchel_detonate_time;  // >0 = satchels deployed, value = force-detonate deadline
    float f_satchel_check_time;     // throttle for proximity checks
    qboolean b_satchel_detonating;  // TRUE = committed to detonation, waiting for weapon switch

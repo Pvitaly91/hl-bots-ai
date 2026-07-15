@@ -61,9 +61,11 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
     W_IFL_EGON, W_IFL_AMMO_GAUSS, 0, TRUE, FALSE },
 
    {VALVE_WEAPON_GAUSS, WEAPON_SUBMOD_ALL, "weapon_gauss", WEAPON_FIRE, 1.0,
-    SKILL4, SKILL2, FALSE, TRUE,
-    32.0, 500.0, 100.0, 3000.0, 500.0,
-    60, FALSE, 80, 1, 10, TRUE, FALSE, FALSE, TRUE, 0.0, 0.8, TRUE, 30, 30,
+    SKILL5, SKILL5, FALSE, FALSE,
+    32.0, 4000.0, BOT_GAUSS_SECONDARY_MIN_DISTANCE,
+    BOT_GAUSS_SECONDARY_MAX_DISTANCE, 500.0,
+    60, FALSE, 80, 2, BOT_GAUSS_SECONDARY_MIN_AMMO,
+    TRUE, FALSE, FALSE, TRUE, 0.0, 0.8, TRUE, 30, 30,
     W_IFL_GAUSS, W_IFL_AMMO_GAUSS, 0, TRUE, FALSE },
 
    {VALVE_WEAPON_SHOTGUN, WEAPON_SUBMOD_ALL, "weapon_shotgun", WEAPON_FIRE, 1.0,
@@ -542,7 +544,9 @@ static float BotGetPhysicalEnemyDistance(bot_t &pBot, const float requested_dist
 qboolean IsValidPrimaryAttack(bot_t &pBot, const bot_weapon_select_t &select, const float distance, const float height, const qboolean always_in_range)
 {
    int weapon_index = select.iId;
-   const float range_distance = weapon_index == VALVE_WEAPON_CROWBAR ?
+   const float range_distance =
+      (weapon_index == VALVE_WEAPON_CROWBAR ||
+       weapon_index == VALVE_WEAPON_GAUSS) ?
       BotGetPhysicalEnemyDistance(pBot, distance) : distance;
    qboolean primary_in_range;
 
@@ -566,7 +570,9 @@ qboolean IsValidPrimaryAttack(bot_t &pBot, const bot_weapon_select_t &select, co
 qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, const float distance, const float height, const qboolean always_in_range)
 {
    int weapon_index = select.iId;
-   const float range_distance = weapon_index == VALVE_WEAPON_GLOCK ?
+   const float range_distance =
+      (weapon_index == VALVE_WEAPON_GLOCK ||
+       weapon_index == VALVE_WEAPON_GAUSS) ?
       BotGetPhysicalEnemyDistance(pBot, distance) : distance;
    qboolean secondary_valid = FALSE;
    qboolean secondary_in_range;
@@ -579,6 +585,9 @@ qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, 
    if (weapon_index == VALVE_WEAPON_GLOCK && range_distance >
        BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE)
       secondary_in_range = FALSE;
+   if (weapon_index == VALVE_WEAPON_GAUSS && range_distance <
+       BOT_GAUSS_SECONDARY_MIN_DISTANCE)
+      secondary_in_range = FALSE;
 
    // see if there is enough secondary ammo AND
    // the bot is far enough away to use secondary fire AND
@@ -587,7 +596,9 @@ qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, 
        ((weapon_defs[weapon_index].iAmmo2 == -1 && !select.secondary_use_primary_ammo) ||
          (weapon_defs[weapon_index].iAmmo2 != -1 && pBot.m_rgAmmo[weapon_defs[weapon_index].iAmmo2] >= select.min_secondary_ammo) ||
          (select.secondary_use_primary_ammo &&
-          (weapon_defs[weapon_index].iAmmo1 == -1 || pBot.m_rgAmmo[weapon_defs[weapon_index].iAmmo1] >= select.min_primary_ammo))))
+          (weapon_defs[weapon_index].iAmmo1 == -1 ||
+           pBot.m_rgAmmo[weapon_defs[weapon_index].iAmmo1] >=
+              select.min_secondary_ammo))))
    {
       secondary_valid = TRUE;
 
@@ -1268,6 +1279,38 @@ int BotGetBetterWeaponChoice(bot_t &pBot, const bot_weapon_select_t &current, co
       }
 
       *use_primary = FALSE;
+   }
+
+   if (current.iId == VALVE_WEAPON_GLOCK)
+   {
+      select_index = -1;
+      while (pSelect[++select_index].iId)
+      {
+         if (pSelect[select_index].iId != VALVE_WEAPON_GAUSS)
+            continue;
+
+         if (!IsValidWeaponChoose(pBot, pSelect[select_index]) ||
+             !IsValidToFireAtTheMoment(pBot, pSelect[select_index]) ||
+             !BotCanUseWeapon(pBot, pSelect[select_index]))
+            break;
+
+         *use_primary =
+            BotSkilledEnoughForPrimaryAttack(pBot, pSelect[select_index]) &&
+            IsValidPrimaryAttack(pBot, pSelect[select_index],
+               distance, height, FALSE);
+         *use_secondary =
+            BotSkilledEnoughForSecondaryAttack(pBot, pSelect[select_index]) &&
+            IsValidSecondaryAttack(pBot, pSelect[select_index],
+               distance, height, FALSE);
+
+         if (*use_primary || *use_secondary)
+            return select_index;
+
+         break;
+      }
+
+      *use_primary = FALSE;
+      *use_secondary = FALSE;
    }
 
    // check if we don't like current weapon.

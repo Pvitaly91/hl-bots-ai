@@ -270,18 +270,25 @@ static int test_skill_checks(void)
    bot_t bot;
    setup_bot(bot, pe);
 
-   // Gauss: primary=SKILL4, secondary=SKILL2
+   // The live pool uses weapon skills 3-5. Gauss must not be disabled by a
+   // hard skill gate for any of those bots.
    bot_weapon_select_t *gauss = GetWeaponSelect(VALVE_WEAPON_GAUSS);
    ASSERT_PTR_NOT_NULL(gauss);
 
-   TEST("skilled enough for primary (SKILL3 <= SKILL4)");
-   bot.weapon_skill = SKILL3;
-   ASSERT_INT(BotSkilledEnoughForPrimaryAttack(bot, *gauss), TRUE);
+   TEST("Gauss primary is available to live skill 3-5 bots");
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+   {
+      bot.weapon_skill = skill;
+      ASSERT_INT(BotSkilledEnoughForPrimaryAttack(bot, *gauss), TRUE);
+   }
    PASS();
 
-   TEST("not skilled enough for primary (SKILL5 > SKILL4)");
-   bot.weapon_skill = SKILL5;
-   ASSERT_INT(BotSkilledEnoughForPrimaryAttack(bot, *gauss), FALSE);
+   TEST("Gauss secondary is available to live skill 3-5 bots");
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+   {
+      bot.weapon_skill = skill;
+      ASSERT_INT(BotSkilledEnoughForSecondaryAttack(bot, *gauss), TRUE);
+   }
    PASS();
 
    TEST("NOSKILL always returns FALSE");
@@ -304,14 +311,31 @@ static int test_skill_checks(void)
    }
    PASS();
 
-   TEST("BotCanUseWeapon: secondary skill match suffices");
-   // Gauss: primary=SKILL4, secondary=SKILL2
-   bot.weapon_skill = SKILL5;
-   // 5>4 fails primary, 5>2 fails secondary -> FALSE
-   ASSERT_INT(BotCanUseWeapon(bot, *gauss), FALSE);
-   bot.weapon_skill = SKILL2;
-   // 2<=4 primary ok -> TRUE
-   ASSERT_INT(BotCanUseWeapon(bot, *gauss), TRUE);
+   TEST("Gauss remains usable across the live skill pool");
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+   {
+      bot.weapon_skill = skill;
+      ASSERT_INT(BotCanUseWeapon(bot, *gauss), TRUE);
+   }
+   PASS();
+
+   TEST("Gauss secondary uses physical range and a useful uranium minimum");
+   edict_t *enemy = mock_alloc_edict();
+   bot.pBotEnemy = enemy;
+   pe->v.weapons = (1u << VALVE_WEAPON_GAUSS);
+   bot.m_rgAmmo[6] = 50;
+
+   enemy->v.origin = Vector(250.0f, 0.0f, 0.0f);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
+      1000.0f, 0.0f, FALSE), FALSE);
+
+   enemy->v.origin = Vector(900.0f, 0.0f, 0.0f);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
+      50.0f, 0.0f, FALSE), TRUE);
+
+   bot.m_rgAmmo[6] = 5;
+   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
+      900.0f, 0.0f, FALSE), FALSE);
    PASS();
 
    TEST("Glock secondary fire is available to skill 5 bots");
@@ -352,19 +376,22 @@ static int test_BotSelectAttack(void)
 
    qboolean use_primary, use_secondary;
 
-   // Gauss: prefer_higher_skill_attack=TRUE, primary=SKILL4, secondary=SKILL2
+   // Use a local fixture so Gauss can keep its dedicated tactical selector.
    bot_weapon_select_t *gauss = GetWeaponSelect(VALVE_WEAPON_GAUSS);
 
    TEST("prefer_higher_skill: secondary preferred (lower=better)");
+   bot_weapon_select_t custom = *gauss;
+   custom.prefer_higher_skill_attack = TRUE;
+   custom.primary_skill_level = SKILL4;
+   custom.secondary_skill_level = SKILL2;
    bot.weapon_skill = SKILL2; // <= both SKILL4 and SKILL2
-   BotSelectAttack(bot, *gauss, use_primary, use_secondary);
+   BotSelectAttack(bot, custom, use_primary, use_secondary);
    ASSERT_INT(use_secondary, TRUE);
    ASSERT_INT(use_primary, FALSE);
    PASS();
 
    TEST("prefer_higher_skill: primary if secondary > primary");
    // Construct a weapon where primary has lower (better) skill
-   bot_weapon_select_t custom = *gauss;
    custom.primary_skill_level = SKILL2;
    custom.secondary_skill_level = SKILL4;
    bot.weapon_skill = SKILL1;
@@ -610,7 +637,7 @@ static int test_IsValidSecondaryAttack(void)
    // Gauss: secondary_use_primary_ammo=TRUE, iAmmo1=6 (uranium)
    bot_weapon_select_t *gauss = GetWeaponSelect(VALVE_WEAPON_GAUSS);
    bot.m_rgAmmo[6] = 50;
-   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss, 200.0, 0.0, FALSE), TRUE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss, 900.0, 0.0, FALSE), TRUE);
    PASS();
 
    TEST("out of range -> FALSE");
@@ -632,7 +659,7 @@ static int test_IsValidSecondaryAttack(void)
    // the fact that primary ammo is empty.
    bot.current_weapon.iAmmo2 = 999; // this is what m_rgAmmo[-1] would read
    bot.m_rgAmmo[6] = 0; // no primary (uranium) ammo
-   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss, 200.0, 0.0, FALSE), FALSE);
+   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss, 900.0, 0.0, FALSE), FALSE);
    bot.current_weapon.iAmmo2 = 0;
    PASS();
 
@@ -1107,6 +1134,19 @@ static int test_BotGetBetterWeaponChoice(void)
    idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
       1000.0f, 0.0f, &use_primary, &use_secondary);
    ASSERT_INT(idx, -1);
+   PASS();
+
+   TEST("skill 5 switches from Glock to a carried Gauss");
+   pe->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_GAUSS);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[1] = 50;
+   bot.m_rgAmmo[6] = 50;
+   idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
+      1000.0f, 0.0f, &use_primary, &use_secondary);
+   ASSERT_TRUE(idx >= 0);
+   ASSERT_INT(weapon_select[idx].iId, VALVE_WEAPON_GAUSS);
+   ASSERT_TRUE(use_primary || use_secondary);
    PASS();
 
    return 0;
