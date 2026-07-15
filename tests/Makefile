@@ -171,7 +171,7 @@ test_engine: $(ENGINE_OBJS)
 
 # Crossfire map profile tests
 MAP_PROFILE_CROSSFIRE_OBJS = engine_mock.o test_map_profile_crossfire.o \
-	map_profile.o map_profile_crossfire.o util.o safe_snprintf.o random_num.o
+	map_profile.o map_profile_crossfire.o bot_weapons.o util.o safe_snprintf.o random_num.o
 
 test_map_profile_crossfire: $(MAP_PROFILE_CROSSFIRE_OBJS)
 	${CXX} $(COVERAGE_FLAGS) -o $@ $(MAP_PROFILE_CROSSFIRE_OBJS) -lm

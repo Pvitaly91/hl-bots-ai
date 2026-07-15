@@ -76,6 +76,7 @@ typedef int BOOL;
 #define WPT_GOAL_BUNKER    11
 #define WPT_GOAL_STRIKE_BUTTON 12
 #define WPT_GOAL_BUNKER_SHAFT 13
+#define WPT_GOAL_CROSSBOW_HOLD 14
 
 // The movement target is deliberately separate from the current aim target.
 #define BOT_MOVE_UNSET                  0
@@ -296,6 +297,9 @@ typedef struct
    float f_grenade_found_time;
    int current_weapon_index;
    float current_opt_distance;
+   int crossbow_zoom_request;
+   float f_crossbow_zoom_request_time;
+   float f_crossbow_zoom_toggle_time;
 
    float f_move_speed;
    float f_pause_time;

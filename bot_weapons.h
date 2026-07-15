@@ -213,6 +213,21 @@ typedef struct
 #define VALVE_MAX_NORMAL_BATTERY   100
 #define VALVE_HORNET_MAX_CARRY      8
 
+#define BOT_CROSSBOW_MIN_DISTANCE 256.0f
+#define BOT_CROSSBOW_ZOOM_DISTANCE 700.0f
+
+enum bot_crossbow_zoom_request_t {
+   BOT_CROSSBOW_ZOOM_NONE = 0,
+   BOT_CROSSBOW_ZOOM_IN,
+   BOT_CROSSBOW_ZOOM_OUT,
+};
+
+enum bot_crossbow_zoom_result_t {
+   BOT_CROSSBOW_ZOOM_WAITING = 0,
+   BOT_CROSSBOW_ZOOM_READY,
+   BOT_CROSSBOW_ZOOM_TOGGLED,
+};
+
 typedef struct
 {
    char szClassname[64];
@@ -268,6 +283,8 @@ qboolean BotWeaponCanAttack(bot_t &pBot, const qboolean GoodWeaponsOnly);
 qboolean BotIsWeakWeapon(int iId);
 qboolean BotHasOnlyWeakWeapons(bot_t &pBot);
 qboolean BotShouldUseCrowbarAtCloseRange(bot_t &pBot, float distance);
+bot_crossbow_zoom_result_t BotCrossbowEnsureZoomState(
+   bot_t &pBot, qboolean want_zoom);
 float BotCombatDisengageTime(const bot_t &pBot);
 qboolean BotGetGoodWeaponCount(bot_t &pBot, const int stop_count);
 #endif // BOT_WEAPONS_H

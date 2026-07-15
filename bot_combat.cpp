@@ -1421,13 +1421,81 @@ static qboolean CheckWeaponFireConditions(bot_t & pBot, const bot_weapon_select_
 }
 
 
+static float BotCrossbowEnemyDistance(const bot_t &pBot)
+{
+   if (FNullEnt(pBot.pEdict) || FNullEnt(pBot.pBotEnemy))
+      return 0.0f;
+
+   return (pBot.pBotEnemy->v.origin - pBot.pEdict->v.origin).Length();
+}
+
+
+static qboolean BotCrossbowMustStayUnzoomed(
+   const bot_t &pBot, float distance)
+{
+   if (distance < BOT_CROSSBOW_ZOOM_DISTANCE ||
+       MapProfileIsStrategicEventActive() || pBot.b_on_ladder ||
+       pBot.pEdict->v.velocity.Make2D().Length() > 120.0f ||
+       pBot.b_see_tripmine)
+      return TRUE;
+
+   return pBot.f_grenade_found_time > 0.0f &&
+      pBot.f_grenade_found_time + 1.0f > gpGlobals->time;
+}
+
+
+static qboolean BotFireSelectedWeaponSetupCrossbow(
+   bot_t &pBot, qboolean &use_primary, qboolean &use_secondary)
+{
+   const float distance = BotCrossbowEnemyDistance(pBot);
+   const qboolean want_zoom = distance >= BOT_CROSSBOW_ZOOM_DISTANCE &&
+      !BotCrossbowMustStayUnzoomed(pBot, distance);
+   const bot_crossbow_zoom_result_t zoom_result =
+      BotCrossbowEnsureZoomState(pBot, want_zoom);
+
+   if (zoom_result == BOT_CROSSBOW_ZOOM_WAITING)
+   {
+      use_primary = FALSE;
+      use_secondary = FALSE;
+      return FALSE;
+   }
+
+   if (zoom_result == BOT_CROSSBOW_ZOOM_TOGGLED)
+   {
+      use_primary = FALSE;
+      use_secondary = TRUE;
+      BotTrace(pBot, "crossbow zoom: request=%s d=%.0f fov=%.0f",
+         want_zoom ? "in" : "out", distance, pBot.pEdict->v.fov);
+      return TRUE;
+   }
+
+   use_primary = TRUE;
+   use_secondary = FALSE;
+
+   int bolts = -1;
+   const int ammo_index = weapon_defs[VALVE_WEAPON_CROSSBOW].iAmmo1;
+   if (ammo_index >= 0 && ammo_index < MAX_AMMO_SLOTS)
+      bolts = pBot.m_rgAmmo[ammo_index];
+   BotTrace(pBot, "crossbow fire: primary d=%.0f fov=%.0f bolts=%d",
+      distance, pBot.pEdict->v.fov, bolts);
+
+   return TRUE;
+}
+
+
 // Setup special weapon behaviors (zoom, eagle aimspot, M249 duck)
-static void BotFireSelectedWeaponSetupSpecial(bot_t &pBot, const bot_weapon_select_t &select, qboolean &use_primary, qboolean &use_secondary)
+static qboolean BotFireSelectedWeaponSetupSpecial(bot_t &pBot, const bot_weapon_select_t &select, qboolean &use_primary, qboolean &use_secondary)
 {
    edict_t *pEdict = pBot.pEdict;
 
-   // use secondary once to enable zoom
-   if(use_primary && (select.type & WEAPON_FIRE_ZOOM) == WEAPON_FIRE_ZOOM && pEdict->v.fov == 0)
+   if (use_primary && select.iId == VALVE_WEAPON_CROSSBOW &&
+       !BotFireSelectedWeaponSetupCrossbow(
+          pBot, use_primary, use_secondary))
+      return FALSE;
+
+   // Preserve the upstream behavior for other zoom weapons.
+   if(use_primary && select.iId != VALVE_WEAPON_CROSSBOW &&
+      (select.type & WEAPON_FIRE_ZOOM) == WEAPON_FIRE_ZOOM && pEdict->v.fov == 0)
       use_primary = !(use_secondary = TRUE);
 
    // use secondary once to enable aimspot
@@ -1443,6 +1511,8 @@ static void BotFireSelectedWeaponSetupSpecial(bot_t &pBot, const bot_weapon_sele
       pBot.f_duck_time = gpGlobals->time + 0.5f;
       pEdict->v.button |= IN_DUCK;
    }
+
+   return TRUE;
 }
 
 
@@ -1562,7 +1632,12 @@ static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &s
       !CheckWeaponFireConditions(pBot, select, use_primary, use_secondary))
       return FALSE;
 
-   BotFireSelectedWeaponSetupSpecial(pBot, select, use_primary, use_secondary);
+   // A pending crossbow FOV transition is a valid handled attack state. Do
+   // not remove the enemy merely because no button should be pressed yet.
+   if (!BotFireSelectedWeaponSetupSpecial(
+          pBot, select, use_primary, use_secondary))
+      return TRUE;
+
    BotTraceOpportunisticAttack(pBot, select, use_primary, use_secondary);
    BotFireSelectedWeaponSetShootTime(pBot, select, delay, use_primary);
 
@@ -1987,6 +2062,41 @@ static qboolean BotFireWeaponTryPrioritizedMP5Grenade(bot_t &pBot, const bot_wea
 }
 
 
+static qboolean BotFireWeaponHandleCrossbowZoomExit(
+   bot_t &pBot, const bot_weapon_select_t *pSelect,
+   float distance, float height)
+{
+   const int select_index = pBot.current_weapon_index;
+   if (select_index < 0 ||
+       pSelect[select_index].iId != VALVE_WEAPON_CROSSBOW)
+      return FALSE;
+
+   const qboolean primary_valid =
+      IsValidPrimaryAttack(pBot, pSelect[select_index],
+         distance, height, FALSE) &&
+      BotSkilledEnoughForPrimaryAttack(pBot, pSelect[select_index]);
+
+   if (primary_valid &&
+       !BotCrossbowMustStayUnzoomed(pBot, distance))
+      return FALSE;
+
+   const bot_crossbow_zoom_result_t zoom_result =
+      BotCrossbowEnsureZoomState(pBot, FALSE);
+   if (zoom_result == BOT_CROSSBOW_ZOOM_READY)
+      return FALSE;
+
+   if (zoom_result == BOT_CROSSBOW_ZOOM_TOGGLED)
+   {
+      pBot.pEdict->v.button |= IN_ATTACK2;
+      pBot.f_shoot_time = gpGlobals->time + 0.1f;
+      BotTrace(pBot, "crossbow zoom: request=out d=%.0f reason=%s",
+         distance, primary_valid ? "movement" : "range-or-ammo");
+   }
+
+   return TRUE;
+}
+
+
 // specifing a weapon_choice allows you to choose the weapon the bot will
 // use (assuming enough ammo exists for that weapon)
 // BotFireWeapon will return TRUE if weapon was fired, FALSE otherwise
@@ -2010,6 +2120,10 @@ static qboolean BotFireWeapon(const Vector & v_enemy, bot_t &pBot, int weapon_ch
    if (BotFireWeaponHandleCharging(pBot, pSelect, pDelay, TRUE))
       return TRUE;
    if (BotFireWeaponHandleCharging(pBot, pSelect, pDelay, FALSE))
+      return TRUE;
+
+   if (BotFireWeaponHandleCrossbowZoomExit(
+          pBot, pSelect, distance, height))
       return TRUE;
 
    if(BotFireWeaponTryPrioritizedMP5Grenade(

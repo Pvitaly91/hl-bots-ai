@@ -190,6 +190,9 @@ static void BotSpawnInit_CombatState( bot_t &pBot )
    pBot.f_grenade_found_time = 0.0;
    pBot.current_weapon_index = -1;
    pBot.current_opt_distance = 99999.0;
+   pBot.crossbow_zoom_request = BOT_CROSSBOW_ZOOM_NONE;
+   pBot.f_crossbow_zoom_request_time = 0.0f;
+   pBot.f_crossbow_zoom_toggle_time = 0.0f;
 
    pBot.f_pause_time = 0.0;
    pBot.f_sound_update_time = 0.0;
@@ -3736,6 +3739,17 @@ static void BotThinkHandleEnemy_FindAndAim(bot_t &pBot)
       {
          // if has zoom weapon and zooming, click off zoom
          if(pBot.current_weapon_index != -1 &&
+            weapon_select[pBot.current_weapon_index].iId ==
+               VALVE_WEAPON_CROSSBOW &&
+            !(pEdict->v.button & (IN_ATTACK|IN_ATTACK2)))
+         {
+            const bot_crossbow_zoom_result_t zoom_result =
+               BotCrossbowEnsureZoomState(pBot, FALSE);
+
+            if (zoom_result == BOT_CROSSBOW_ZOOM_TOGGLED)
+               pEdict->v.button |= IN_ATTACK2;
+         }
+         else if(pBot.current_weapon_index != -1 &&
             (weapon_select[pBot.current_weapon_index].type & WEAPON_FIRE_ZOOM) == WEAPON_FIRE_ZOOM &&
             pEdict->v.fov != 0 &&
             !(pEdict->v.button & (IN_ATTACK|IN_ATTACK2)))

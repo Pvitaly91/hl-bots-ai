@@ -22,6 +22,8 @@ extern int submod_weaponflag;
 
 static const float BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE = 160.0f;
 static const float BOT_CROWBAR_OPPORTUNISTIC_DISTANCE = 64.0f;
+static const float BOT_CROSSBOW_ZOOM_TOGGLE_COOLDOWN = 0.75f;
+static const float BOT_CROSSBOW_ZOOM_REQUEST_TIMEOUT = 1.25f;
 
 // weapons are stored in priority order, most desired weapon should be at
 // the start of the array and least desired should be at the end
@@ -91,8 +93,8 @@ bot_weapon_select_t valve_weapon_select[NUM_OF_WEAPON_SELECTS] =
     W_IFL_MP5, W_IFL_AMMO_9MM, W_IFL_AMMO_ARGRENADES, TRUE, FALSE },
 
    {VALVE_WEAPON_CROSSBOW, WEAPON_SUBMOD_ALL, "weapon_crossbow", WEAPON_FIRE_ZOOM, 1.0,
-    SKILL2, NOSKILL, FALSE, FALSE,
-    128.0, 4000.0, 0, 0, 1000.0,
+    SKILL5, NOSKILL, FALSE, FALSE,
+    BOT_CROSSBOW_MIN_DISTANCE, 4000.0, 0, 0, 1000.0,
     55, TRUE, 100, 1, 0, FALSE, FALSE, FALSE, FALSE, 0.0, 0.0, FALSE, 5, -1,
     W_IFL_CROSSBOW, W_IFL_AMMO_CROSSBOW, 0, TRUE, FALSE },
 
@@ -1197,11 +1199,76 @@ qboolean BotShouldUseCrowbarAtCloseRange(bot_t &pBot, float distance)
       BotIsCarryingWeapon(pBot, VALVE_WEAPON_CROWBAR);
 }
 
+
+bot_crossbow_zoom_result_t BotCrossbowEnsureZoomState(
+   bot_t &pBot, qboolean want_zoom)
+{
+   if (FNullEnt(pBot.pEdict))
+      return BOT_CROSSBOW_ZOOM_WAITING;
+
+   const qboolean zoomed = pBot.pEdict->v.fov != 0;
+
+   if ((pBot.crossbow_zoom_request == BOT_CROSSBOW_ZOOM_IN && zoomed) ||
+       (pBot.crossbow_zoom_request == BOT_CROSSBOW_ZOOM_OUT && !zoomed))
+      pBot.crossbow_zoom_request = BOT_CROSSBOW_ZOOM_NONE;
+   else if (pBot.crossbow_zoom_request != BOT_CROSSBOW_ZOOM_NONE &&
+            pBot.f_crossbow_zoom_request_time +
+               BOT_CROSSBOW_ZOOM_REQUEST_TIMEOUT <= gpGlobals->time)
+      pBot.crossbow_zoom_request = BOT_CROSSBOW_ZOOM_NONE;
+
+   // Wait for the engine to acknowledge an earlier toggle before making a
+   // contrary decision. This avoids delayed FOV updates causing oscillation.
+   if (pBot.crossbow_zoom_request != BOT_CROSSBOW_ZOOM_NONE)
+      return BOT_CROSSBOW_ZOOM_WAITING;
+
+   if ((want_zoom && zoomed) || (!want_zoom && !zoomed))
+      return BOT_CROSSBOW_ZOOM_READY;
+
+   if (pBot.f_crossbow_zoom_toggle_time > gpGlobals->time)
+      return BOT_CROSSBOW_ZOOM_WAITING;
+
+   pBot.crossbow_zoom_request = want_zoom ?
+      BOT_CROSSBOW_ZOOM_IN : BOT_CROSSBOW_ZOOM_OUT;
+   pBot.f_crossbow_zoom_request_time = gpGlobals->time;
+   pBot.f_crossbow_zoom_toggle_time = gpGlobals->time +
+      BOT_CROSSBOW_ZOOM_TOGGLE_COOLDOWN;
+
+   return BOT_CROSSBOW_ZOOM_TOGGLED;
+}
+
 // Check if want to change to better weapon
 int BotGetBetterWeaponChoice(bot_t &pBot, const bot_weapon_select_t &current, const bot_weapon_select_t *pSelect, const float distance, const float height, qboolean *use_primary, qboolean *use_secondary) {
    int select_index;
    *use_primary = FALSE;
    *use_secondary = FALSE;
+
+   // The normal reuse policy deliberately keeps a valid current weapon. The
+   // Crossfire live loadout exposed one narrow exception: Glock otherwise
+   // prevents a carried crossbow from ever being reconsidered at range.
+   if (current.iId == VALVE_WEAPON_GLOCK &&
+       distance >= BOT_CROSSBOW_MIN_DISTANCE)
+   {
+      select_index = -1;
+      while (pSelect[++select_index].iId)
+      {
+         if (pSelect[select_index].iId != VALVE_WEAPON_CROSSBOW)
+            continue;
+
+         *use_primary =
+            IsValidWeaponChoose(pBot, pSelect[select_index]) &&
+            IsValidToFireAtTheMoment(pBot, pSelect[select_index]) &&
+            BotSkilledEnoughForPrimaryAttack(pBot, pSelect[select_index]) &&
+            IsValidPrimaryAttack(pBot, pSelect[select_index],
+               distance, height, FALSE);
+
+         if (*use_primary)
+            return select_index;
+
+         break;
+      }
+
+      *use_primary = FALSE;
+   }
 
    // check if we don't like current weapon.
    if(!current.avoid_this_gun)

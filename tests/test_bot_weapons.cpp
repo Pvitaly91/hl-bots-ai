@@ -291,17 +291,17 @@ static int test_skill_checks(void)
    ASSERT_INT(BotSkilledEnoughForSecondaryAttack(bot, *crowbar), FALSE);
    PASS();
 
-   TEST("BotCanUseWeapon: primary-only weapon ok");
-   // Crossbow: primary=SKILL2, secondary=NOSKILL
+   TEST("Crossbow primary is available to live skill 3-5 bots");
    bot_weapon_select_t *xbow = GetWeaponSelect(VALVE_WEAPON_CROSSBOW);
-   bot.weapon_skill = SKILL2;
-   ASSERT_INT(BotCanUseWeapon(bot, *xbow), TRUE);
-   PASS();
-
-   TEST("BotCanUseWeapon: neither skill matches");
-   bot.weapon_skill = SKILL5;
-   // Crossbow primary=SKILL2, 5>2 fails; secondary=NOSKILL fails
-   ASSERT_INT(BotCanUseWeapon(bot, *xbow), FALSE);
+   pe->v.weapons = (1u << VALVE_WEAPON_CROSSBOW);
+   bot.m_rgAmmo[4] = 5;
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+   {
+      bot.weapon_skill = skill;
+      ASSERT_INT(BotSkilledEnoughForPrimaryAttack(bot, *xbow), TRUE);
+      ASSERT_INT(BotCanUseWeapon(bot, *xbow), TRUE);
+      ASSERT_INT(IsValidPrimaryAttack(bot, *xbow, 900.0f, 0.0f, FALSE), TRUE);
+   }
    PASS();
 
    TEST("BotCanUseWeapon: secondary skill match suffices");
@@ -1073,6 +1073,39 @@ static int test_BotGetBetterWeaponChoice(void)
    bot.m_rgAmmo[2] = 36;  // 357 ammo for eagle
    bot.m_rgAmmo[11] = 5;  // handgrenade ammo
    idx = BotGetBetterWeaponChoice(bot, *hg, weapon_select, 500.0, 0.0, &use_primary, &use_secondary);
+   ASSERT_INT(idx, -1);
+   PASS();
+
+   TEST("crossbow replaces Glock at medium and long range");
+   bot_weapon_select_t *glock = GetWeaponSelect(VALVE_WEAPON_GLOCK);
+   bot_weapon_select_t *crossbow = GetWeaponSelect(VALVE_WEAPON_CROSSBOW);
+   ASSERT_PTR_NOT_NULL(crossbow);
+   pe->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_CROSSBOW);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[1] = 50;
+   bot.m_rgAmmo[4] = 5;
+   idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
+      1000.0f, 0.0f, &use_primary, &use_secondary);
+   ASSERT_TRUE(idx >= 0);
+   ASSERT_INT(weapon_select[idx].iId, VALVE_WEAPON_CROSSBOW);
+   ASSERT_INT(use_primary, TRUE);
+   ASSERT_INT(use_secondary, FALSE);
+
+   idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
+      500.0f, 0.0f, &use_primary, &use_secondary);
+   ASSERT_TRUE(idx >= 0);
+   ASSERT_INT(weapon_select[idx].iId, VALVE_WEAPON_CROSSBOW);
+   PASS();
+
+   TEST("crossbow does not replace Glock at close range or without bolts");
+   idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
+      192.0f, 0.0f, &use_primary, &use_secondary);
+   ASSERT_INT(idx, -1);
+
+   bot.m_rgAmmo[4] = 0;
+   idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
+      1000.0f, 0.0f, &use_primary, &use_secondary);
    ASSERT_INT(idx, -1);
    PASS();
 

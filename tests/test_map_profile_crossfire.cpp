@@ -12,6 +12,7 @@
 #include <meta_api.h>
 
 #include "bot.h"
+#include "bot_weapons.h"
 #include "waypoint.h"
 #include "map_profile.h"
 
@@ -21,6 +22,7 @@
 extern bot_t bots[32];
 extern WAYPOINT waypoints[MAX_WAYPOINTS];
 extern int num_waypoints;
+extern bot_weapon_t weapon_defs[MAX_WEAPONS];
 
 static float mock_route_distances[MAX_WAYPOINTS];
 static int mock_touch_count = 0;
@@ -56,6 +58,36 @@ static void setup_crossfire(void)
    mock_touch_count = 0;
    mock_touched = NULL;
    mock_toucher = NULL;
+}
+
+
+static void setup_crossbow_bot(bot_t &bot, edict_t *edict,
+   const Vector &origin)
+{
+   InitWeaponSelect(SUBMOD_HLDM);
+   weapon_defs[VALVE_WEAPON_GLOCK].iId = VALVE_WEAPON_GLOCK;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_CROSSBOW].iId = VALVE_WEAPON_CROSSBOW;
+   weapon_defs[VALVE_WEAPON_CROSSBOW].iAmmo1 = 4;
+
+   memset(&bot, 0, sizeof(bot));
+   bot.is_used = TRUE;
+   bot.pEdict = edict;
+   bot.weapon_skill = SKILL5;
+   bot.curr_waypoint_index = 0;
+   bot.waypoint_goal = -1;
+   bot.wpt_goal_type = WPT_GOAL_NONE;
+   bot.f_max_speed = 320.0f;
+   bot.trace_last_stuck_wpt = -2;
+   bot.m_rgAmmo[1] = 50;
+   bot.m_rgAmmo[4] = 5;
+
+   edict->v.origin = origin;
+   edict->v.health = 100.0f;
+   edict->v.deadflag = DEAD_NO;
+   edict->v.flags = FL_CLIENT | FL_FAKECLIENT;
+   edict->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_CROSSBOW);
 }
 
 
@@ -556,6 +588,80 @@ static int test_closing_main_door_reroutes_central_bot_to_shaft(void)
 }
 
 
+static int test_crossbow_balcony_hold_and_cancellation(void)
+{
+   TEST("Crossfire crossbow bot holds its balcony until danger or strike");
+
+   setup_crossfire();
+
+   num_waypoints = 4;
+   waypoints[0].flags = W_FL_WEAPON | W_FL_AMMO;
+   waypoints[0].itemflags = W_IFL_CROSSBOW | W_IFL_AMMO_CROSSBOW;
+   waypoints[0].origin = Vector(288.0f, 1024.0f, -1500.0f);
+   waypoints[1].flags = 0;
+   waypoints[1].itemflags = 0;
+   waypoints[1].origin = Vector(380.0f, 1180.0f, -1500.0f);
+   waypoints[2].flags = 0;
+   waypoints[2].itemflags = 0;
+   waypoints[2].origin = Vector(0.0f, 0.0f, -1720.0f);
+   waypoints[3].flags = 0;
+   waypoints[3].itemflags = 0;
+   waypoints[3].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   mock_route_distances[0] = 0.0f;
+   mock_route_distances[1] = 180.0f;
+   mock_route_distances[2] = 900.0f;
+   mock_route_distances[3] = 1400.0f;
+
+   setup_crossbow_bot(bots[0], mock_alloc_edict(), waypoints[0].origin);
+   strcpy(bots[0].name, "CrossbowHoldBot");
+   bots[0].pBotEnemy = mock_alloc_edict();
+   bots[0].pBotEnemy->v.flags = FL_CLIENT;
+   bots[0].pBotEnemy->v.origin = Vector(288.0f, -100.0f, -1660.0f);
+
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_TRUE(MapProfileIsStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_CROSSBOW_HOLD);
+   ASSERT_INT(bots[0].waypoint_goal, 1);
+   ASSERT_TRUE(bots[0].f_waypoint_goal_time - gpGlobals->time >= 8.0f);
+   ASSERT_TRUE(bots[0].f_waypoint_goal_time - gpGlobals->time <= 15.0f);
+   ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[0]));
+
+   bots[0].pEdict->v.origin = waypoints[1].origin;
+   bots[0].curr_waypoint_index = 1;
+   bots[0].f_move_speed = 320.0f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[0]));
+   ASSERT_FLOAT(bots[0].f_move_speed, 0.0f);
+
+   bots[0].pBotEnemy->v.origin = bots[0].pEdict->v.origin +
+      Vector(128.0f, 0.0f, 0.0f);
+   ASSERT_FALSE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_FALSE(MapProfileIsStrategicGoal(bots[0]));
+
+   gpGlobals->time += 8.1f;
+   bots[0].pBotEnemy->v.origin = Vector(288.0f, -100.0f, -1660.0f);
+   bots[0].pEdict->v.origin = waypoints[0].origin;
+   bots[0].curr_waypoint_index = 0;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+
+   bots[0].m_rgAmmo[4] = 0;
+   ASSERT_FALSE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_FALSE(MapProfileIsStrategicGoal(bots[0]));
+
+   gpGlobals->time += 8.1f;
+   bots[0].m_rgAmmo[4] = 5;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bots[0].waypoint_goal, 3);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -570,6 +676,7 @@ int main(void)
    fail |= test_bot_periodically_reaches_and_touches_strike_trigger();
    fail |= test_bots_use_both_tower_shafts_for_bunker_ingress();
    fail |= test_closing_main_door_reroutes_central_bot_to_shaft();
+   fail |= test_crossbow_balcony_hold_and_cancellation();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

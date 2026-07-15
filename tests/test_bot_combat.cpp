@@ -1927,15 +1927,82 @@ static int test_bot_fire_selected_weapon(void)
    ASSERT_INT(testbot.current_weapon_index, -1);
    PASS();
 
-   TEST("zoom weapon uses secondary first");
+   TEST("crossbow fires primary at medium range without zoom");
    select.iId = VALVE_WEAPON_CROSSBOW;
    delay.iId = VALVE_WEAPON_CROSSBOW;
    select.type = WEAPON_FIRE_ZOOM;
+   pEnemy->v.origin = Vector(500, 0, 0);
    pBotEdict->v.fov = 0; // not zoomed
    pBotEdict->v.button = 0;
    result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
    ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("crossbow requests far zoom once then waits for FOV");
+   pEnemy->v.origin = Vector(1000, 0, 0);
+   pBotEdict->v.fov = 0;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+
+   gpGlobals->time += 0.1f;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & (IN_ATTACK | IN_ATTACK2)) == 0);
+
+   pBotEdict->v.fov = 20;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("crossbow unzooms once when target moves to medium range");
+   pEnemy->v.origin = Vector(500, 0, 0);
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & (IN_ATTACK | IN_ATTACK2)) == 0);
+
+   gpGlobals->time += 0.7f;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+
+   gpGlobals->time += 0.1f;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & (IN_ATTACK | IN_ATTACK2)) == 0);
+
+   pBotEdict->v.fov = 0;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("Crossfire strike forces a zoomed crossbow to unzoom");
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   pEnemy->v.origin = Vector(1000, 0, 0);
+   gpGlobals->time += 0.8f;
+   pBotEdict->v.fov = 20;
+   pBotEdict->v.button = 0;
+   result = BotFireSelectedWeapon(testbot, select, delay, TRUE, FALSE);
+   ASSERT_INT(result, TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   MapProfileReset();
+   gpGlobals->mapname = 0;
    PASS();
 
    TEST("eagle enables secondary state");
@@ -2375,6 +2442,107 @@ static int test_glock_secondary_distance_policy(void)
 
    return 0;
 }
+
+static int test_crossbow_distance_and_ammo_policy(void)
+{
+   printf("Crossbow distance and ammo policy:\n");
+   mock_reset();
+   setup_skill_settings();
+
+   edict_t *pBotEdict = mock_alloc_edict();
+   bot_t testbot;
+   setup_bot_for_test(testbot, pBotEdict);
+   testbot.bot_skill = WORST_BOT_LEVEL;
+   testbot.weapon_skill = SKILL5;
+   edict_t *pEnemy = create_enemy_player(Vector(500, 0, 0));
+   testbot.pBotEnemy = pEnemy;
+
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_nohit;
+
+   int glock_index = -1;
+   int crossbow_index = -1;
+   for (int index = 0; weapon_select[index].iId; index++)
+   {
+      if (weapon_select[index].iId == VALVE_WEAPON_GLOCK)
+         glock_index = index;
+      else if (weapon_select[index].iId == VALVE_WEAPON_CROSSBOW)
+         crossbow_index = index;
+   }
+
+   ASSERT_TRUE(glock_index >= 0);
+   ASSERT_TRUE(crossbow_index >= 0);
+   weapon_defs[VALVE_WEAPON_GLOCK].iId = VALVE_WEAPON_GLOCK;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_CROSSBOW].iId = VALVE_WEAPON_CROSSBOW;
+   weapon_defs[VALVE_WEAPON_CROSSBOW].iAmmo1 = 4;
+   pBotEdict->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_CROSSBOW);
+   testbot.m_rgAmmo[1] = 50;
+   testbot.m_rgAmmo[4] = 5;
+   fire_delay[glock_index].iId = VALVE_WEAPON_GLOCK;
+   fire_delay[crossbow_index].iId = VALVE_WEAPON_CROSSBOW;
+
+   TEST("skill 5 switches from Glock to crossbow at medium range");
+   testbot.current_weapon_index = glock_index;
+   testbot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   testbot.current_weapon.iClip = 17;
+   pBotEdict->v.fov = 0;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, crossbow_index);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   PASS();
+
+   TEST("far crossbow toggles zoom then fires primary after FOV changes");
+   testbot.current_weapon_index = glock_index;
+   testbot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   testbot.f_weaponchange_time = 0.0f;
+   testbot.crossbow_zoom_request = BOT_CROSSBOW_ZOOM_NONE;
+   testbot.f_crossbow_zoom_toggle_time = 0.0f;
+   pEnemy->v.origin = Vector(1000, 0, 0);
+   pBotEdict->v.fov = 0;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(1000, 0, 0), testbot, 0), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, crossbow_index);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+
+   gpGlobals->time += 0.1f;
+   pBotEdict->v.fov = 20;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(1000, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("empty bolts fall back from crossbow to Glock");
+   testbot.current_weapon_index = crossbow_index;
+   testbot.current_weapon.iId = VALVE_WEAPON_CROSSBOW;
+   testbot.f_weaponchange_time = 0.0f;
+   testbot.crossbow_zoom_request = BOT_CROSSBOW_ZOOM_NONE;
+   testbot.f_crossbow_zoom_toggle_time = 0.0f;
+   testbot.m_rgAmmo[4] = 0;
+   pBotEdict->v.fov = 0;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(1000, 0, 0), testbot, 0), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, glock_index);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   PASS();
+
+   TEST("close target falls back from crossbow to Glock");
+   testbot.current_weapon_index = crossbow_index;
+   testbot.current_weapon.iId = VALVE_WEAPON_CROSSBOW;
+   testbot.f_weaponchange_time = 0.0f;
+   testbot.m_rgAmmo[4] = 5;
+   pEnemy->v.origin = Vector(192, 0, 0);
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(192, 0, 0), testbot, 0), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, glock_index);
+   PASS();
+
+   return 0;
+}
+
 
 static int test_mp5_secondary_attack_policy(void)
 {
@@ -5208,6 +5376,8 @@ int main(void)
    rc |= test_bot_fire_weapon();
    printf("\n");
    rc |= test_glock_secondary_distance_policy();
+   printf("\n");
+   rc |= test_crossbow_distance_and_ammo_policy();
    printf("\n");
    rc |= test_mp5_secondary_attack_policy();
    printf("\n");
