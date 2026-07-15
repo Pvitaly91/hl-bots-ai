@@ -142,6 +142,35 @@ enum ammo_low_t {
    AMMO_OK = 3,
 };
 
+enum bot_ammo_need_t {
+   BOT_AMMO_NEED_NONE = 0,
+   BOT_AMMO_NEED_OPPORTUNISTIC = 1,
+   BOT_AMMO_NEED_LOW = 2,
+   BOT_AMMO_NEED_CRITICAL = 3,
+};
+
+enum bot_ammo_need_reason_t {
+   BOT_AMMO_REASON_USEFUL = 0,
+   BOT_AMMO_REASON_FULL,
+   BOT_AMMO_REASON_IRRELEVANT,
+   BOT_AMMO_REASON_UNUSABLE_WEAPON,
+   BOT_AMMO_REASON_INVALID_POOL,
+};
+
+typedef struct
+{
+   bot_ammo_need_t need;
+   bot_ammo_need_reason_t reason;
+   int ammo_item_flags;
+   int ammo_index;
+   int current;
+   int maximum;
+   int low_threshold;
+   int minimum_attack_ammo;
+   int weapon_id;
+   qboolean secondary_pool;
+} bot_ammo_need_info_t;
+
 // weapon ID values for Valve's Half-Life Deathmatch
 #define VALVE_WEAPON_CROWBAR       1
 #define VALVE_WEAPON_GLOCK         2
@@ -215,6 +244,14 @@ qboolean BotCanUseWeapon(bot_t &pBot, const bot_weapon_select_t &select);
 
 ammo_low_t BotPrimaryAmmoLow(bot_t &pBot, const bot_weapon_select_t &select);
 ammo_low_t BotSecondaryAmmoLow(bot_t &pBot, const bot_weapon_select_t &select);
+bot_ammo_need_t BotGetAmmoPickupNeed(bot_t &pBot, int ammo_item_flags,
+   bot_ammo_need_info_t *pInfo);
+bot_ammo_need_t BotGetWeaponRepickupAmmoNeed(bot_t &pBot,
+   int weapon_item_flags, bot_ammo_need_info_t *pInfo);
+int BotGetAmmoNeedFlags(bot_t &pBot, bot_ammo_need_t minimum_need,
+   int *weapon_flags);
+const char *BotAmmoNeedName(bot_ammo_need_t need);
+const char *BotAmmoNeedReasonName(bot_ammo_need_reason_t reason);
 int BotGetLowAmmoFlags(bot_t &pBot, int *weapon_flags, const qboolean OnlyCarrying);
 qboolean BotAllWeaponsRunningOutOfAmmo(bot_t &pBot, const qboolean GoodWeaponsOnly);
 

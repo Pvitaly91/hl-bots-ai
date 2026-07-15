@@ -1273,6 +1273,140 @@ static int test_BotHasOnlyWeakWeapons(void)
    return 0;
 }
 
+
+static int test_BotGetAmmoPickupNeed(void)
+{
+   printf("BotGetAmmoPickupNeed:\n");
+
+   mock_reset();
+   submod_id = SUBMOD_HLDM;
+   submod_weaponflag = WEAPON_SUBMOD_HLDM;
+   InitWeaponSelect(SUBMOD_HLDM);
+   setup_weapon_defs_valve();
+
+   edict_t *pe = mock_alloc_edict();
+   bot_t bot;
+   setup_bot(bot, pe);
+   bot_ammo_need_info_t info;
+
+   TEST("irrelevant ammo requires a carried usable weapon");
+   pe->v.weapons = 0;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_9MM, &info),
+      BOT_AMMO_NEED_NONE);
+   ASSERT_INT(info.reason, BOT_AMMO_REASON_IRRELEVANT);
+   PASS();
+
+   TEST("shared Glock/MP5 9mm pool is classified once by actual ammo index");
+   pe->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 10;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_9MM, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 1);
+   ASSERT_INT(info.current, 100);
+   ASSERT_INT(info.maximum, 250);
+   ASSERT_INT(info.weapon_id, VALVE_WEAPON_MP5);
+   PASS();
+
+   TEST("MP5 9mm transitions opportunistic -> low -> critical -> full");
+   pe->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 50;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_9MM, &info),
+      BOT_AMMO_NEED_LOW);
+   bot.m_rgAmmo[1] = 0;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_9MM, &info),
+      BOT_AMMO_NEED_CRITICAL);
+   bot.m_rgAmmo[1] = 250;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_9MM, &info),
+      BOT_AMMO_NEED_NONE);
+   ASSERT_INT(info.reason, BOT_AMMO_REASON_FULL);
+   PASS();
+
+   TEST("MP5 AR grenades use iAmmo2 independently of primary 9mm");
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_ARGRENADES, &info),
+      BOT_AMMO_NEED_NONE);
+   ASSERT_INT(info.reason, BOT_AMMO_REASON_FULL);
+   bot.m_rgAmmo[1] = 250;
+   bot.m_rgAmmo[8] = 1;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_ARGRENADES, &info),
+      BOT_AMMO_NEED_LOW);
+   ASSERT_INT(info.ammo_index, 8);
+   ASSERT_INT(info.current, 1);
+   ASSERT_INT(info.maximum, 10);
+   ASSERT_TRUE(info.secondary_pool);
+   bot.m_rgAmmo[8] = 0;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_ARGRENADES, &info),
+      BOT_AMMO_NEED_CRITICAL);
+   ASSERT_INT(info.ammo_index, 8);
+   PASS();
+
+   TEST("metadata maps buckshot, 357, uranium, bolts, and rockets pools");
+   bot.weapon_skill = SKILL2;
+   pe->v.weapons = (1u << VALVE_WEAPON_SHOTGUN) |
+      (1u << VALVE_WEAPON_PYTHON) | (1u << VALVE_WEAPON_GAUSS) |
+      (1u << VALVE_WEAPON_CROSSBOW) | (1u << VALVE_WEAPON_RPG);
+   bot.m_rgAmmo[3] = 50;
+   bot.m_rgAmmo[2] = 20;
+   bot.m_rgAmmo[6] = 50;
+   bot.m_rgAmmo[4] = 20;
+   bot.m_rgAmmo[5] = 3;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_BUCKSHOT, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 3);
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_357, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 2);
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_GAUSS, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 6);
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_CROSSBOW, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 4);
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_RPG, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 5);
+   PASS();
+
+   TEST("carried but skill-ineligible weapon reports unusable_weapon");
+   pe->v.weapons = (1u << VALVE_WEAPON_PYTHON);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[2] = 0;
+   ASSERT_INT(BotGetAmmoPickupNeed(bot, W_IFL_AMMO_357, &info),
+      BOT_AMMO_NEED_NONE);
+   ASSERT_INT(info.reason, BOT_AMMO_REASON_UNUSABLE_WEAPON);
+   bot.weapon_skill = SKILL3;
+   PASS();
+
+   TEST("owned MP5 repickup is an ammo source, not a weapon upgrade");
+   pe->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 0;
+   ASSERT_INT(BotGetWeaponRepickupAmmoNeed(bot, W_IFL_MP5, &info),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   ASSERT_INT(info.ammo_index, 1);
+   bot.m_rgAmmo[1] = 250;
+   ASSERT_INT(BotGetWeaponRepickupAmmoNeed(bot, W_IFL_MP5, &info),
+      BOT_AMMO_NEED_NONE);
+   ASSERT_INT(info.reason, BOT_AMMO_REASON_FULL);
+   PASS();
+
+   TEST("strategic need flags include only low carried pools and repickups");
+   int weapon_flags = 0;
+   bot.m_rgAmmo[1] = 10;
+   bot.m_rgAmmo[8] = 10;
+   int ammo_flags = BotGetAmmoNeedFlags(bot, BOT_AMMO_NEED_LOW,
+      &weapon_flags);
+   ASSERT_TRUE((ammo_flags & W_IFL_AMMO_9MM) != 0);
+   ASSERT_TRUE((ammo_flags & W_IFL_AMMO_ARGRENADES) == 0);
+   ASSERT_TRUE((weapon_flags & W_IFL_MP5) != 0);
+   PASS();
+
+   return 0;
+}
+
 static int test_BotShouldUseCrowbarAtCloseRange(void)
 {
    printf("BotShouldUseCrowbarAtCloseRange:\n");
@@ -1479,6 +1613,8 @@ int main(void)
    rc |= test_BotPrimaryAmmoLow();
    printf("\n");
    rc |= test_BotSecondaryAmmoLow();
+   printf("\n");
+   rc |= test_BotGetAmmoPickupNeed();
    printf("\n");
    rc |= test_BotGetGoodWeaponCount();
    printf("\n");

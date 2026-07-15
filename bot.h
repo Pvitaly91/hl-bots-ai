@@ -85,6 +85,8 @@ typedef int BOOL;
 #define BOT_MOVE_WEAK_ROAM              4
 #define BOT_MOVE_NORMAL_COMBAT          5
 #define BOT_MOVE_CROSSFIRE_STRATEGIC    6
+#define BOT_MOVE_PRIORITY_AMMO_PICKUP   7
+#define BOT_MOVE_AMMO_ROUTE             8
 
 // instant damage (from cbase.h)
 #define DMG_CRUSH       (1 << 0) // crushed by falling or moving object
@@ -231,7 +233,13 @@ typedef struct
    float f_movement_trace_time;
    float f_close_weapon_trace_time;
    float f_opportunistic_attack_trace_time;
+   float f_ammo_trace_time;
+   edict_t *pAmmoTraceItem;
+   int trace_last_ammo_event;
+   int trace_last_ammo_reason;
+   int trace_last_ammo_need;
    int weapon_goal_zone_load;
+   int ammo_goal_zone_load;
    qboolean b_weak_retreat_goal;
    int trace_last_stuck_wpt;         // dedup: last wpt logged for stuck trace
    qboolean b_narrow_path;           // currently on narrow geometry (ramp, bridge, cliff)

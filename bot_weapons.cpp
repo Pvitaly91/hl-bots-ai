@@ -647,6 +647,367 @@ ammo_low_t BotSecondaryAmmoLow(bot_t &pBot, const bot_weapon_select_t &select)
    return(AMMO_OK);
 }
 
+
+typedef struct
+{
+   qboolean matched;
+   int maximum;
+   int low_threshold;
+   int minimum_attack_ammo;
+   int weapon_id;
+   qboolean secondary_pool;
+   qboolean strong_weapon;
+} bot_ammo_pool_candidate_t;
+
+
+static void BotResetAmmoNeedInfo(bot_ammo_need_info_t *pInfo,
+   int ammo_item_flags)
+{
+   if (!pInfo)
+      return;
+
+   memset(pInfo, 0, sizeof(*pInfo));
+   pInfo->need = BOT_AMMO_NEED_NONE;
+   pInfo->reason = BOT_AMMO_REASON_IRRELEVANT;
+   pInfo->ammo_item_flags = ammo_item_flags;
+   pInfo->ammo_index = -1;
+   pInfo->weapon_id = -1;
+   pInfo->low_threshold = -1;
+   pInfo->minimum_attack_ammo = -1;
+}
+
+
+static void BotAccumulateAmmoPool(bot_ammo_pool_candidate_t pools[],
+   int ammo_index, int maximum, int low_threshold, int minimum_attack_ammo,
+   int weapon_id, qboolean secondary_pool)
+{
+   if (ammo_index < 0 || ammo_index >= MAX_AMMO_SLOTS || maximum <= 0)
+      return;
+
+   bot_ammo_pool_candidate_t &pool = pools[ammo_index];
+   if (!pool.matched)
+   {
+      pool.matched = TRUE;
+      pool.maximum = maximum;
+      pool.low_threshold = low_threshold;
+      pool.minimum_attack_ammo = minimum_attack_ammo;
+      pool.weapon_id = weapon_id;
+      pool.secondary_pool = secondary_pool;
+      pool.strong_weapon = !BotIsWeakWeapon(weapon_id);
+      return;
+   }
+
+   if (maximum > pool.maximum)
+      pool.maximum = maximum;
+   if (low_threshold > pool.low_threshold)
+      pool.low_threshold = low_threshold;
+   if (minimum_attack_ammo > 0 &&
+       (pool.minimum_attack_ammo <= 0 ||
+        minimum_attack_ammo < pool.minimum_attack_ammo))
+      pool.minimum_attack_ammo = minimum_attack_ammo;
+
+   // Prefer a strong weapon as the diagnostic representative for shared pools.
+   if (!pool.strong_weapon && !BotIsWeakWeapon(weapon_id))
+   {
+      pool.weapon_id = weapon_id;
+      pool.secondary_pool = secondary_pool;
+      pool.strong_weapon = TRUE;
+   }
+}
+
+
+static qboolean BotHasUsableStrongWeaponAttack(bot_t &pBot)
+{
+   for (int i = 0; weapon_select[i].iId; i++)
+   {
+      bot_weapon_select_t &select = weapon_select[i];
+      if (!BotIsCarryingWeapon(pBot, select.iId) ||
+          !IsValidWeaponChoose(pBot, select) || select.avoid_this_gun ||
+          (select.type & WEAPON_FIRE) != WEAPON_FIRE ||
+          BotIsWeakWeapon(select.iId))
+         continue;
+
+      if (IsValidPrimaryAttack(pBot, select, 0.0f, 0.0f, TRUE) ||
+          IsValidSecondaryAttack(pBot, select, 0.0f, 0.0f, TRUE))
+         return TRUE;
+   }
+
+   return FALSE;
+}
+
+
+static qboolean BotCarriesStrongWeapon(bot_t &pBot)
+{
+   for (int i = 0; weapon_select[i].iId; i++)
+   {
+      bot_weapon_select_t &select = weapon_select[i];
+      if (BotIsCarryingWeapon(pBot, select.iId) &&
+          IsValidWeaponChoose(pBot, select) && !select.avoid_this_gun &&
+          (select.type & WEAPON_FIRE) == WEAPON_FIRE &&
+          !BotIsWeakWeapon(select.iId))
+         return TRUE;
+   }
+
+   return FALSE;
+}
+
+
+bot_ammo_need_t BotGetAmmoPickupNeed(bot_t &pBot, int ammo_item_flags,
+   bot_ammo_need_info_t *pInfo)
+{
+   BotResetAmmoNeedInfo(pInfo, ammo_item_flags);
+   if (!ammo_item_flags || FNullEnt(pBot.pEdict))
+      return BOT_AMMO_NEED_NONE;
+
+   bot_ammo_pool_candidate_t pools[MAX_AMMO_SLOTS];
+   memset(pools, 0, sizeof(pools));
+   qboolean matched_carried_weapon = FALSE;
+   qboolean matched_usable_attack = FALSE;
+   qboolean invalid_pool = FALSE;
+
+   for (int i = 0; weapon_select[i].iId; i++)
+   {
+      bot_weapon_select_t &select = weapon_select[i];
+      if (!BotIsCarryingWeapon(pBot, select.iId) ||
+          !IsValidWeaponChoose(pBot, select))
+         continue;
+
+      const int weapon_id = select.iId;
+      if ((ammo_item_flags & select.ammo1_waypoint_flag) != 0)
+      {
+         matched_carried_weapon = TRUE;
+         if (BotSkilledEnoughForPrimaryAttack(pBot, select))
+         {
+            matched_usable_attack = TRUE;
+            int ammo_index = weapon_defs[weapon_id].iAmmo1;
+            int maximum = weapon_defs[weapon_id].iAmmo1Max;
+            if (ammo_index < 0 || ammo_index >= MAX_AMMO_SLOTS || maximum <= 0)
+               invalid_pool = TRUE;
+            else
+               BotAccumulateAmmoPool(pools, ammo_index, maximum,
+                  select.low_ammo_primary, select.min_primary_ammo,
+                  weapon_id, FALSE);
+         }
+
+         // A secondary attack may consume the same primary pool (for example
+         // Gauss). Its threshold contributes to that one physical pool.
+         if (select.secondary_use_primary_ammo &&
+             BotSkilledEnoughForSecondaryAttack(pBot, select))
+         {
+            matched_usable_attack = TRUE;
+            int ammo_index = weapon_defs[weapon_id].iAmmo1;
+            int maximum = weapon_defs[weapon_id].iAmmo1Max;
+            if (ammo_index < 0 || ammo_index >= MAX_AMMO_SLOTS || maximum <= 0)
+               invalid_pool = TRUE;
+            else
+               BotAccumulateAmmoPool(pools, ammo_index, maximum,
+                  select.low_ammo_secondary, select.min_primary_ammo,
+                  weapon_id, FALSE);
+         }
+      }
+
+      if ((ammo_item_flags & select.ammo2_waypoint_flag) != 0)
+      {
+         matched_carried_weapon = TRUE;
+         if (!BotSkilledEnoughForSecondaryAttack(pBot, select))
+            continue;
+
+         matched_usable_attack = TRUE;
+         int ammo_index = select.secondary_use_primary_ammo ?
+            weapon_defs[weapon_id].iAmmo1 : weapon_defs[weapon_id].iAmmo2;
+         int maximum = select.secondary_use_primary_ammo ?
+            weapon_defs[weapon_id].iAmmo1Max : weapon_defs[weapon_id].iAmmo2Max;
+         int minimum_attack_ammo = select.secondary_use_primary_ammo ?
+            select.min_primary_ammo : select.min_secondary_ammo;
+         if (ammo_index < 0 || ammo_index >= MAX_AMMO_SLOTS || maximum <= 0)
+            invalid_pool = TRUE;
+         else
+            BotAccumulateAmmoPool(pools, ammo_index, maximum,
+               select.low_ammo_secondary, minimum_attack_ammo,
+               weapon_id, TRUE);
+      }
+   }
+
+   if (!matched_carried_weapon)
+   {
+      if (pInfo)
+         pInfo->reason = BOT_AMMO_REASON_IRRELEVANT;
+      return BOT_AMMO_NEED_NONE;
+   }
+
+   if (!matched_usable_attack)
+   {
+      if (pInfo)
+         pInfo->reason = BOT_AMMO_REASON_UNUSABLE_WEAPON;
+      return BOT_AMMO_NEED_NONE;
+   }
+
+   bot_ammo_need_t best_need = BOT_AMMO_NEED_NONE;
+   int best_index = -1;
+   qboolean found_valid_pool = FALSE;
+   qboolean found_non_full_pool = FALSE;
+   const qboolean all_strong_attacks_empty = BotCarriesStrongWeapon(pBot) &&
+      !BotHasUsableStrongWeaponAttack(pBot);
+
+   for (int ammo_index = 0; ammo_index < MAX_AMMO_SLOTS; ammo_index++)
+   {
+      bot_ammo_pool_candidate_t &pool = pools[ammo_index];
+      if (!pool.matched)
+         continue;
+
+      found_valid_pool = TRUE;
+      int current = pBot.m_rgAmmo[ammo_index];
+      if (current >= pool.maximum)
+         continue;
+
+      found_non_full_pool = TRUE;
+      bot_ammo_need_t need = BOT_AMMO_NEED_OPPORTUNISTIC;
+      if (current <= 0 ||
+          (pool.minimum_attack_ammo > 0 &&
+           current < pool.minimum_attack_ammo) ||
+          (pool.strong_weapon && all_strong_attacks_empty))
+      {
+         need = BOT_AMMO_NEED_CRITICAL;
+      }
+      else if (pool.low_threshold >= 0 && current <= pool.low_threshold)
+      {
+         need = BOT_AMMO_NEED_LOW;
+      }
+
+      if (need > best_need ||
+          (need == best_need &&
+           (best_index == -1 || current < pBot.m_rgAmmo[best_index])))
+      {
+         best_need = need;
+         best_index = ammo_index;
+      }
+   }
+
+   if (best_index == -1)
+   {
+      if (pInfo)
+      {
+         pInfo->reason = found_valid_pool && !found_non_full_pool ?
+            BOT_AMMO_REASON_FULL :
+            (invalid_pool ? BOT_AMMO_REASON_INVALID_POOL :
+             BOT_AMMO_REASON_UNUSABLE_WEAPON);
+      }
+      return BOT_AMMO_NEED_NONE;
+   }
+
+   if (pInfo)
+   {
+      bot_ammo_pool_candidate_t &pool = pools[best_index];
+      pInfo->need = best_need;
+      pInfo->reason = BOT_AMMO_REASON_USEFUL;
+      pInfo->ammo_index = best_index;
+      pInfo->current = pBot.m_rgAmmo[best_index];
+      pInfo->maximum = pool.maximum;
+      pInfo->low_threshold = pool.low_threshold;
+      pInfo->minimum_attack_ammo = pool.minimum_attack_ammo;
+      pInfo->weapon_id = pool.weapon_id;
+      pInfo->secondary_pool = pool.secondary_pool;
+   }
+
+   return best_need;
+}
+
+
+bot_ammo_need_t BotGetWeaponRepickupAmmoNeed(bot_t &pBot,
+   int weapon_item_flags, bot_ammo_need_info_t *pInfo)
+{
+   int ammo_item_flags = 0;
+
+   for (int i = 0; weapon_select[i].iId; i++)
+   {
+      bot_weapon_select_t &select = weapon_select[i];
+      if (!(weapon_item_flags & select.waypoint_flag) ||
+          !BotIsCarryingWeapon(pBot, select.iId) ||
+          !IsValidWeaponChoose(pBot, select))
+         continue;
+
+      if (select.ammo1_on_repickup)
+         ammo_item_flags |= select.ammo1_waypoint_flag;
+      if (select.ammo2_on_repickup)
+         ammo_item_flags |= select.ammo2_waypoint_flag;
+   }
+
+   return BotGetAmmoPickupNeed(pBot, ammo_item_flags, pInfo);
+}
+
+
+int BotGetAmmoNeedFlags(bot_t &pBot, bot_ammo_need_t minimum_need,
+   int *weapon_flags)
+{
+   int candidate_ammo_flags = 0;
+   int ammo_flags = 0;
+   if (weapon_flags)
+      *weapon_flags = 0;
+
+   for (int i = 0; weapon_select[i].iId; i++)
+   {
+      bot_weapon_select_t &select = weapon_select[i];
+      if (!BotIsCarryingWeapon(pBot, select.iId) ||
+          !IsValidWeaponChoose(pBot, select))
+         continue;
+
+      candidate_ammo_flags |= select.ammo1_waypoint_flag;
+      candidate_ammo_flags |= select.ammo2_waypoint_flag;
+   }
+
+   for (int bit = 0; bit < 31; bit++)
+   {
+      int ammo_flag = (1 << bit);
+      if (!(candidate_ammo_flags & ammo_flag))
+         continue;
+
+      if (BotGetAmmoPickupNeed(pBot, ammo_flag, NULL) >= minimum_need)
+         ammo_flags |= ammo_flag;
+   }
+
+   if (weapon_flags)
+   {
+      for (int i = 0; weapon_select[i].iId; i++)
+      {
+         bot_weapon_select_t &select = weapon_select[i];
+         if (!BotIsCarryingWeapon(pBot, select.iId) ||
+             !IsValidWeaponChoose(pBot, select))
+            continue;
+
+         if (BotGetWeaponRepickupAmmoNeed(pBot, select.waypoint_flag,
+             NULL) >= minimum_need)
+            *weapon_flags |= select.waypoint_flag;
+      }
+   }
+
+   return ammo_flags;
+}
+
+
+const char *BotAmmoNeedName(bot_ammo_need_t need)
+{
+   switch (need)
+   {
+      case BOT_AMMO_NEED_OPPORTUNISTIC: return "opportunistic";
+      case BOT_AMMO_NEED_LOW: return "low";
+      case BOT_AMMO_NEED_CRITICAL: return "critical";
+      default: return "none";
+   }
+}
+
+
+const char *BotAmmoNeedReasonName(bot_ammo_need_reason_t reason)
+{
+   switch (reason)
+   {
+      case BOT_AMMO_REASON_FULL: return "full";
+      case BOT_AMMO_REASON_UNUSABLE_WEAPON: return "unusable_weapon";
+      case BOT_AMMO_REASON_INVALID_POOL: return "irrelevant";
+      case BOT_AMMO_REASON_IRRELEVANT: return "irrelevant";
+      default: return "useful";
+   }
+}
+
 //
 qboolean BotGetGoodWeaponCount(bot_t &pBot, const int stop_count)
 {

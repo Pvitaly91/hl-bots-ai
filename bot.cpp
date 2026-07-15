@@ -125,7 +125,13 @@ static void BotSpawnInit_TimersAndPhysics( bot_t &pBot )
    pBot.f_movement_trace_time = 0.0f;
    pBot.f_close_weapon_trace_time = 0.0f;
    pBot.f_opportunistic_attack_trace_time = 0.0f;
+   pBot.f_ammo_trace_time = 0.0f;
+   pBot.pAmmoTraceItem = NULL;
+   pBot.trace_last_ammo_event = 0;
+   pBot.trace_last_ammo_reason = 0;
+   pBot.trace_last_ammo_need = BOT_AMMO_NEED_NONE;
    pBot.weapon_goal_zone_load = -1;
+   pBot.ammo_goal_zone_load = -1;
    pBot.b_weak_retreat_goal = FALSE;
    pBot.trace_last_stuck_wpt = -2;
    pBot.b_narrow_path = FALSE;
@@ -1109,19 +1115,57 @@ static qboolean BotFindItemIsWeaponPickup(const edict_t *pItem)
 }
 
 
+static qboolean BotFindItemIsAmmoPickup(const edict_t *pItem)
+{
+   return pItem && pItem->v.classname != 0 &&
+      GetAmmoItemFlag(STRING(pItem->v.classname)) != 0;
+}
+
+
+static bot_ammo_need_t BotFindItemGetAmmoSourceNeed(bot_t &pBot,
+   const edict_t *pItem, bot_ammo_need_info_t *pInfo)
+{
+   if (!pItem || pItem->v.classname == 0)
+      return BOT_AMMO_NEED_NONE;
+
+   const char *item_name = STRING(pItem->v.classname);
+   int ammo_item_flags = GetAmmoItemFlag(item_name);
+   if (ammo_item_flags)
+      return BotGetAmmoPickupNeed(pBot, ammo_item_flags, pInfo);
+
+   int weapon_item_flags = GetWeaponItemFlag(item_name);
+   if (weapon_item_flags)
+      return BotGetWeaponRepickupAmmoNeed(pBot, weapon_item_flags, pInfo);
+
+   return BOT_AMMO_NEED_NONE;
+}
+
+
+static qboolean BotFindItemIsCoordinatedPickup(const edict_t *pItem)
+{
+   return BotFindItemIsWeaponPickup(pItem) || BotFindItemIsAmmoPickup(pItem);
+}
+
+
 static qboolean BotFindItemPickupMatchesWaypoint(const edict_t *pItem,
    int waypoint_index)
 {
-   return waypoint_index >= 0 && waypoint_index < num_waypoints &&
-      (waypoints[waypoint_index].flags & W_FL_WEAPON) &&
-      (pItem->v.origin - waypoints[waypoint_index].origin).Length() <= 64.0f;
+   if (!pItem || waypoint_index < 0 || waypoint_index >= num_waypoints ||
+       (pItem->v.origin - waypoints[waypoint_index].origin).Length() > 64.0f)
+      return FALSE;
+
+   if (BotFindItemIsAmmoPickup(pItem))
+      return (waypoints[waypoint_index].flags & W_FL_AMMO) != 0;
+
+   return BotFindItemIsWeaponPickup(pItem) &&
+      (waypoints[waypoint_index].flags & W_FL_WEAPON) != 0;
 }
 
 
 static qboolean BotFindItemClaimedByVisibleBot(const bot_t &pBot,
    edict_t *pItem)
 {
-   if (!BotFindItemIsWeaponPickup(pItem))
+   if (!BotFindItemIsCoordinatedPickup(pItem))
       return FALSE;
 
    for (int i = 0; i < 32; i++)
@@ -1129,7 +1173,9 @@ static qboolean BotFindItemClaimedByVisibleBot(const bot_t &pBot,
       const bot_t &otherBot = bots[i];
       qboolean claims_item = otherBot.pBotPickupItem == pItem;
 
-      if (!claims_item && otherBot.wpt_goal_type == WPT_GOAL_WEAPON)
+       if (!claims_item &&
+           (otherBot.wpt_goal_type == WPT_GOAL_WEAPON ||
+            otherBot.wpt_goal_type == WPT_GOAL_AMMO))
       {
          claims_item = BotFindItemPickupMatchesWaypoint(pItem,
             otherBot.waypoint_goal);
@@ -1157,7 +1203,7 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
       pBot.pBotPickupItem = NULL;
    }
 
-   // Reconsider a weapon target when a visible, closer bot has committed to it.
+   // Reconsider a coordinated target when a visible, closer bot committed to it.
    if (pBot.pBotPickupItem &&
        BotFindItemClaimedByVisibleBot(pBot, pBot.pBotPickupItem))
    {
@@ -1167,10 +1213,35 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
 
    // forget about item if it we picked it up
    if (pBot.pBotPickupItem && ((pBot.pBotPickupItem->v.effects & EF_NODRAW) ||
+      pBot.pBotPickupItem->v.frame > 0 ||
       !BotEntityIsVisible(pBot, UTIL_GetOriginWithExtent(pBot, pBot.pBotPickupItem))))
    {
       pBot.f_last_item_found = -1;
       pBot.pBotPickupItem = NULL;
+   }
+
+   if (pBot.pBotPickupItem)
+   {
+      bot_ammo_need_info_t ammo_info;
+      bot_ammo_need_t ammo_need = BotFindItemGetAmmoSourceNeed(pBot,
+         pBot.pBotPickupItem, &ammo_info);
+      if (ammo_need != BOT_AMMO_NEED_NONE &&
+          MapProfileShouldYieldToStrategicMovement(pBot))
+      {
+         pBot.f_last_item_found = -1;
+         pBot.pBotPickupItem = NULL;
+      }
+      else if (ammo_need == BOT_AMMO_NEED_NONE &&
+               (BotFindItemIsAmmoPickup(pBot.pBotPickupItem) ||
+                (pBot.pBotPickupItem->v.classname != 0 &&
+                 GetWeaponItemFlag(STRING(
+                    pBot.pBotPickupItem->v.classname)) != 0 &&
+                 ammo_info.reason != BOT_AMMO_REASON_IRRELEVANT)))
+      {
+         // The pool can fill from another pickup while this target is active.
+         pBot.f_last_item_found = -1;
+         pBot.pBotPickupItem = NULL;
+      }
    }
 
    if (pBot.f_find_item > gpGlobals->time)
@@ -1179,7 +1250,9 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
    // Weak/newly spawned bots keep rescanning so a newly available close
    // upgrade can preempt a farther physical target.
    if (pBot.pBotPickupItem && !pBot.b_only_has_weak_weapons &&
-       !BotIsInSpawnWeaponSearchWindow(pBot))
+       !BotIsInSpawnWeaponSearchWindow(pBot) &&
+       BotFindItemGetAmmoSourceNeed(pBot, pBot.pBotPickupItem, NULL) ==
+          BOT_AMMO_NEED_NONE)
       return TRUE;
 
    return FALSE;
@@ -1320,9 +1393,10 @@ static qboolean BotFindItemCheckFuncButton(bot_t &pBot, edict_t *pent, const cha
 }
 
 
-static qboolean BotFindItemCheckWeapon(bot_t &pBot, edict_t *pent, int itemflag)
+static qboolean BotFindItemCheckWeapon(bot_t &pBot, edict_t *pent,
+   int itemflag, bot_ammo_need_info_t *pAmmoInfo)
 {
-   if (pent->v.effects & EF_NODRAW)
+   if ((pent->v.effects & EF_NODRAW) || pent->v.frame > 0)
    {
       // someone owns this weapon or it hasn't respawned yet
       return FALSE;
@@ -1345,14 +1419,12 @@ static qboolean BotFindItemCheckWeapon(bot_t &pBot, edict_t *pent, int itemflag)
 
    if(found)
    {
-      //does player have this weapon
+      // If already carried, this entity is useful only as an ammo source
+      // explicitly described by the weapon metadata.
       if(pEdict->v.weapons & (1u<<pSelect[select_index].iId))
       {
-         // is ammo low?
-         if(BotPrimaryAmmoLow(pBot, pSelect[select_index]) == AMMO_LOW)
-         {
-            return TRUE;
-         }
+         return BotGetWeaponRepickupAmmoNeed(pBot, itemflag, pAmmoInfo) !=
+            BOT_AMMO_NEED_NONE;
       }
       else
       {
@@ -1369,43 +1441,17 @@ static qboolean BotFindItemCheckWeapon(bot_t &pBot, edict_t *pent, int itemflag)
 }
 
 
-static qboolean BotFindItemCheckAmmo(bot_t &pBot, edict_t *pent, int itemflag)
+static qboolean BotFindItemCheckAmmo(bot_t &pBot, edict_t *pent, int itemflag,
+   bot_ammo_need_info_t *pAmmoInfo)
 {
-   if (pent->v.effects & EF_NODRAW)
+   if ((pent->v.effects & EF_NODRAW) || pent->v.frame > 0)
    {
       // someone owns this weapon or it hasn't respawned yet
       return FALSE;
    }
 
-   bot_weapon_select_t *pSelect = &weapon_select[0];
-   qboolean can_pickup = FALSE;
-
-   // check if player is running out of this ammo on any weapon
-   int select_index = -1;
-   while(pSelect[++select_index].iId)
-   {
-      if(itemflag & pSelect[select_index].ammo1_waypoint_flag)
-      {
-         if(BotPrimaryAmmoLow(pBot, pSelect[select_index]) == AMMO_LOW)
-            can_pickup = TRUE;
-         else if(BotSecondaryAmmoLow(pBot, pSelect[select_index]) == AMMO_LOW)
-            can_pickup = TRUE;
-      }
-      else if(itemflag & pSelect[select_index].ammo2_waypoint_flag)
-      {
-         if(BotPrimaryAmmoLow(pBot, pSelect[select_index]) == AMMO_LOW)
-            can_pickup = TRUE;
-         else if(BotSecondaryAmmoLow(pBot, pSelect[select_index]) == AMMO_LOW)
-            can_pickup = TRUE;
-      }
-
-      if(can_pickup)
-      {
-         break;
-      }
-   }
-
-   return can_pickup;
+   return BotGetAmmoPickupNeed(pBot, itemflag, pAmmoInfo) !=
+      BOT_AMMO_NEED_NONE;
 }
 
 
@@ -1610,6 +1656,12 @@ static qboolean BotIsInSpawnWeaponSearchWindow(const bot_t &pBot)
 
 
 static const float BOT_PRIORITY_WEAPON_PROXIMITY_RADIUS = 192.0f;
+static const float BOT_AMMO_OPPORTUNISTIC_RADIUS = 96.0f;
+static const float BOT_AMMO_LOW_RADIUS = 192.0f;
+static const float BOT_AMMO_CRITICAL_RADIUS = 256.0f;
+static const float BOT_AMMO_OPPORTUNISTIC_MAX_DETOUR = 64.0f;
+static const float BOT_PICKUP_SWITCH_DISTANCE_ADVANTAGE = 24.0f;
+static const float BOT_AMMO_PASS_BY_RADIUS = 40.0f;
 
 #define BOT_CLOSE_WEAPON_NOT_STRONG       0
 #define BOT_CLOSE_WEAPON_AVAILABLE        1
@@ -1648,12 +1700,6 @@ static int BotFindItemCloseWeaponStatus(bot_t &pBot, edict_t *pItem,
       found_usable = TRUE;
       if (!BotIsCarryingWeapon(pBot, select.iId))
          return BOT_CLOSE_WEAPON_AVAILABLE;
-
-      ammo_low_t ammo_state = BotPrimaryAmmoLow(pBot, select);
-      if (ammo_state == AMMO_LOW)
-         return BOT_CLOSE_WEAPON_AVAILABLE;
-      if (ammo_state == AMMO_OK)
-         return BOT_CLOSE_WEAPON_AMMO_NOT_NEEDED;
       return BOT_CLOSE_WEAPON_ALREADY_OWNED;
    }
 
@@ -1701,13 +1747,110 @@ static void BotTraceCloseWeaponDecision(bot_t &pBot, const char *item_name,
 }
 
 
-static qboolean BotFindItemCloseWeaponReachable(bot_t &pBot,
+static qboolean BotFindItemClosePickupReachable(bot_t &pBot,
    edict_t *pItem, const Vector &item_origin)
 {
    TraceResult tr;
    UTIL_TraceHull(pBot.pEdict->v.origin, item_origin, ignore_monsters,
       human_hull, pBot.pEdict->v.pContainingEntity, &tr);
    return tr.flFraction > 0.999999f || tr.pHit == pItem;
+}
+
+
+static float BotAmmoNeedRadius(bot_ammo_need_t need)
+{
+   switch (need)
+   {
+      case BOT_AMMO_NEED_CRITICAL: return BOT_AMMO_CRITICAL_RADIUS;
+      case BOT_AMMO_NEED_LOW: return BOT_AMMO_LOW_RADIUS;
+      case BOT_AMMO_NEED_OPPORTUNISTIC:
+         return BOT_AMMO_OPPORTUNISTIC_RADIUS;
+      default: return 0.0f;
+   }
+}
+
+
+static qboolean BotFindItemAmmoDetourAcceptable(const bot_t &pBot,
+   const Vector &item_origin, bot_ammo_need_t need)
+{
+   if (need != BOT_AMMO_NEED_OPPORTUNISTIC ||
+       pBot.curr_waypoint_index < 0 ||
+       pBot.curr_waypoint_index >= num_waypoints)
+      return TRUE;
+
+   const Vector bot_origin = pBot.pEdict->v.origin;
+   const Vector movement_target = waypoints[pBot.curr_waypoint_index].origin;
+   const float direct_route = (movement_target - bot_origin).Length();
+   const float item_route = (item_origin - bot_origin).Length() +
+      (movement_target - item_origin).Length();
+   return item_route - direct_route <= BOT_AMMO_OPPORTUNISTIC_MAX_DETOUR;
+}
+
+
+#define BOT_AMMO_TRACE_CANDIDATE    1
+#define BOT_AMMO_TRACE_INTERCEPTED  2
+#define BOT_AMMO_TRACE_SKIPPED      3
+#define BOT_AMMO_TRACE_PASS_BY      4
+
+static const char *BotMovementModeName(int movement_mode);
+
+static void BotTraceAmmoDecision(bot_t &pBot, edict_t *pItem,
+   const bot_ammo_need_info_t &info, float distance, int angle, int event,
+   const char *reason)
+{
+   if (bot_trace_level <= 0 || !pItem || pItem->v.classname == 0)
+      return;
+
+   int reason_code = 0;
+   if (reason)
+   {
+      for (const char *p = reason; *p; p++)
+         reason_code = reason_code * 33 + *p;
+   }
+
+   if (pBot.pAmmoTraceItem == pItem &&
+       pBot.trace_last_ammo_event == event &&
+       pBot.trace_last_ammo_reason == reason_code &&
+       pBot.trace_last_ammo_need == info.need &&
+       pBot.f_ammo_trace_time > gpGlobals->time)
+      return;
+
+   const char *item_name = STRING(pItem->v.classname);
+   if (event == BOT_AMMO_TRACE_CANDIDATE)
+   {
+      BotTrace(pBot,
+         "ammo candidate: %s need=%s idx=%d current=%d max=%d d=%.0f angle=%d goal=%s movement=%s",
+         item_name, BotAmmoNeedName(info.need), info.ammo_index,
+         info.current, info.maximum, distance, angle,
+         BotTraceGoalTypeName(pBot.wpt_goal_type),
+         BotMovementModeName(pBot.movement_mode));
+   }
+   else if (event == BOT_AMMO_TRACE_INTERCEPTED)
+   {
+      BotTrace(pBot, "ammo intercepted: %s need=%s d=%.0f angle=%d old=%s/%d",
+         item_name, BotAmmoNeedName(info.need), distance, angle,
+         BotTraceGoalTypeName(pBot.wpt_goal_type), pBot.waypoint_goal);
+   }
+   else if (event == BOT_AMMO_TRACE_PASS_BY)
+   {
+      BotTrace(pBot,
+         "ammo_pass_by: %s need=%s idx=%d current=%d max=%d d=%.0f angle=%d",
+         item_name, BotAmmoNeedName(info.need), info.ammo_index,
+         info.current, info.maximum, distance, angle);
+   }
+   else
+   {
+      BotTrace(pBot,
+         "ammo skipped: %s reason=%s current=%d max=%d d=%.0f",
+         item_name, reason ? reason : "unknown", info.current,
+         info.maximum, distance);
+   }
+
+   pBot.pAmmoTraceItem = pItem;
+   pBot.trace_last_ammo_event = event;
+   pBot.trace_last_ammo_reason = reason_code;
+   pBot.trace_last_ammo_need = info.need;
+   pBot.f_ammo_trace_time = gpGlobals->time + 2.0f;
 }
 
 
@@ -1726,19 +1869,63 @@ static qboolean BotHasPriorityWeaponPickup(bot_t &pBot)
 }
 
 
-static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name)
+static qboolean BotHasPriorityAmmoPickup(bot_t &pBot)
 {
+   edict_t *pItem = pBot.pBotPickupItem;
+   if (!pItem || pItem->free || (pItem->v.effects & EF_NODRAW) ||
+       pItem->v.frame > 0)
+      return FALSE;
+
+   bot_ammo_need_info_t info;
+   bot_ammo_need_t need = BotFindItemGetAmmoSourceNeed(pBot, pItem, &info);
+   if (need == BOT_AMMO_NEED_NONE)
+      return FALSE;
+
+   // Radius gates initial opportunistic interception. Once low/critical ammo
+   // has been selected, combat aim must not cancel locomotion to it.
+   return need != BOT_AMMO_NEED_OPPORTUNISTIC ||
+      (pItem->v.origin - pBot.pEdict->v.origin).Length() <=
+         BotAmmoNeedRadius(need);
+}
+
+
+static qboolean BotHasPriorityCombatPickup(bot_t &pBot)
+{
+   return BotHasPriorityWeaponPickup(pBot) ||
+      BotHasPriorityAmmoPickup(pBot);
+}
+
+
+static int BotFindItem_GetPriority(const bot_t &pBot, const char *item_name,
+   bot_ammo_need_t ammo_need, qboolean close_weapon)
+{
+   if (strcmp("item_healthkit", item_name) == 0 &&
+       pBot.pEdict->v.health <= 25.0f)
+      return 80;
+
+   if (close_weapon)
+      return 70;
+
+   // A weak loadout keeps weapon upgrades ahead of every ammo tier.
+   if ((BotIsInSpawnWeaponSearchWindow(pBot) ||
+        pBot.b_only_has_weak_weapons) &&
+       (GetWeaponItemFlag(item_name) != 0 ||
+        strcmp("weaponbox", item_name) == 0) &&
+       ammo_need == BOT_AMMO_NEED_NONE)
+      return 60;
+
+   if (ammo_need == BOT_AMMO_NEED_CRITICAL)
+      return 50;
+   if (ammo_need == BOT_AMMO_NEED_LOW)
+      return 40;
+   if (ammo_need == BOT_AMMO_NEED_OPPORTUNISTIC)
+      return 30;
+
    // Armor in sight should not lose to ordinary nearby pickups.
    if(strcmp("item_battery", item_name) == 0)
-      return 2;
+      return 20;
 
-   // A weak loadout keeps visible weapon upgrades ahead of incidental pickups.
-   if((BotIsInSpawnWeaponSearchWindow(pBot) ||
-       pBot.b_only_has_weak_weapons) &&
-      (GetWeaponItemFlag(item_name) != 0 || strcmp("weaponbox", item_name) == 0))
-      return 3;
-
-   return 1;
+   return 10;
 }
 
 
@@ -1746,86 +1933,110 @@ static void BotFindItem( bot_t &pBot )
 {
    edict_t *pent = NULL;
    edict_t *pPickupEntity = NULL;
+   edict_t *pOriginalPickup = pBot.pBotPickupItem;
+   edict_t *pBestAmmoEntity = NULL;
    Vector pickup_origin;
    Vector entity_origin;
-   float radius = 500;
-   qboolean can_pickup;
+   float radius = 500.0f;
    float min_distance;
+   float best_ammo_distance = 99999.0f;
+   float original_distance = 99999.0f;
    int best_priority = 0;
+   int best_ammo_priority = 0;
+   int original_priority = 0;
    int pickup_angle = 0;
+   int best_ammo_angle = 0;
    qboolean pickup_is_close_weapon = FALSE;
+   bot_ammo_need_info_t pickup_ammo_info;
+   bot_ammo_need_info_t best_ammo_info;
    char item_name[40];
-   Vector vecStart;
-   Vector vecEnd;
-   int itemflag;
    edict_t *pEdict = pBot.pEdict;
+
+   memset(&pickup_ammo_info, 0, sizeof(pickup_ammo_info));
+   memset(&best_ammo_info, 0, sizeof(best_ammo_info));
 
    if (BotFindItemCheckExpiry(pBot))
       return;
 
-   // try find again after 0.1sec
-   pBot.f_find_item = gpGlobals->time + 0.1;
+   pOriginalPickup = pBot.pBotPickupItem;
+   pBot.f_find_item = gpGlobals->time + 0.1f;
 
-   // Weak and newly spawned bots use the full visible pickup radius so a
-   // dropped weaponbox competes with map-spawned weapon goals.
    if ((num_waypoints > 0) && (pBot.curr_waypoint_index != -1) &&
        !pBot.b_only_has_weak_weapons && !BotIsInSpawnWeaponSearchWindow(pBot))
-      radius = 320.0;
+      radius = 320.0f;
    else
-      radius = 520.0;
+      radius = 520.0f;
 
-   min_distance = radius + 1.0;
+   min_distance = radius + 1.0f;
 
-   while ((pent = UTIL_FindEntityInSphere( pent, pEdict->v.origin, radius )) != NULL)
+   while ((pent = UTIL_FindEntityInSphere(pent, pEdict->v.origin,
+      radius)) != NULL)
    {
-      can_pickup = FALSE;  // assume can't use it until known otherwise
+      qboolean can_pickup = FALSE;
+      qboolean close_weapon = FALSE;
+      qboolean ammo_source = FALSE;
+      bot_ammo_need_info_t ammo_info;
+      memset(&ammo_info, 0, sizeof(ammo_info));
+      ammo_info.ammo_index = -1;
+      ammo_info.weapon_id = -1;
+      ammo_info.reason = BOT_AMMO_REASON_IRRELEVANT;
 
       safe_strcopy(item_name, sizeof(item_name), STRING(pent->v.classname));
 
-      // see if this is a "func_" type of entity (func_button, etc.)...
       if (strncmp("func_", item_name, 5) == 0)
       {
-         // BModels have 0,0,0 for origin so must use VecBModelOrigin...
          entity_origin = VecBModelOrigin(pent);
-
-         vecStart = pEdict->v.origin + pEdict->v.view_ofs;
-
-         can_pickup = BotFindItem_ProcessFuncEntity(pBot, pent, item_name, entity_origin, vecStart);
+         Vector vec_start = pEdict->v.origin + pEdict->v.view_ofs;
+         can_pickup = BotFindItem_ProcessFuncEntity(pBot, pent, item_name,
+            entity_origin, vec_start);
       }
-      else  // everything else...
+      else
       {
          entity_origin = pent->v.origin;
-
-         vecStart = pEdict->v.origin + pEdict->v.view_ofs;
-         vecEnd = entity_origin;
-
-         // find angles from bot origin to entity...
-         int angle_to_entity = BotInFieldOfView( pBot, vecEnd - vecStart );
+         Vector vec_start = pEdict->v.origin + pEdict->v.view_ofs;
+         int angle_to_entity = BotInFieldOfView(pBot,
+            entity_origin - vec_start);
          float distance = (entity_origin - pEdict->v.origin).Length();
-         itemflag = GetWeaponItemFlag(item_name);
+         int weapon_item_flags = GetWeaponItemFlag(item_name);
+         int ammo_item_flags = GetAmmoItemFlag(item_name);
+         bot_ammo_need_t ammo_need = BOT_AMMO_NEED_NONE;
+
+         if (ammo_item_flags)
+         {
+            ammo_source = TRUE;
+            BotFindItemCheckAmmo(pBot, pent, ammo_item_flags, &ammo_info);
+            ammo_need = ammo_info.need;
+         }
+         else if (weapon_item_flags)
+         {
+            ammo_need = BotGetWeaponRepickupAmmoNeed(pBot,
+               weapon_item_flags, &ammo_info);
+            ammo_source = ammo_info.ammo_item_flags != 0;
+         }
+
          const qboolean priority_search = pBot.b_only_has_weak_weapons ||
             BotIsInSpawnWeaponSearchWindow(pBot);
-         qboolean close_weapon = FALSE;
 
-         if (priority_search && distance <=
-             BOT_PRIORITY_WEAPON_PROXIMITY_RADIUS &&
-             (itemflag != 0 || strcmp("weaponbox", item_name) == 0))
+         if (priority_search &&
+             distance <= BOT_PRIORITY_WEAPON_PROXIMITY_RADIUS &&
+             (weapon_item_flags != 0 || strcmp("weaponbox", item_name) == 0))
          {
             int close_status = BotFindItemCloseWeaponStatus(pBot, pent,
-               item_name, itemflag);
+               item_name, weapon_item_flags);
             if (close_status == BOT_CLOSE_WEAPON_AVAILABLE)
             {
                close_weapon = TRUE;
-
-               if (!BotEntityIsVisible(pBot, vecEnd) ||
-                   !BotFindItemCloseWeaponReachable(pBot, pent, entity_origin))
+               if (!BotEntityIsVisible(pBot, entity_origin) ||
+                   !BotFindItemClosePickupReachable(pBot, pent,
+                      entity_origin))
                {
                   BotTraceCloseWeaponDecision(pBot, item_name, distance,
                      angle_to_entity, "blocked_los", FALSE);
                   continue;
                }
             }
-            else if (close_status != BOT_CLOSE_WEAPON_NOT_STRONG)
+            else if (!ammo_source &&
+                     close_status != BOT_CLOSE_WEAPON_NOT_STRONG)
             {
                BotTraceCloseWeaponDecision(pBot, item_name, distance,
                   angle_to_entity,
@@ -1834,87 +2045,211 @@ static void BotFindItem( bot_t &pBot )
             }
          }
 
-         // check if entity is outside field of view (+/- 45 degrees)
-         if (!close_weapon && angle_to_entity > 45)
-            continue;  // skip this item if bot can't "see" it
-
-         // check if line of sight to object is not blocked (i.e. visible)
-         if (close_weapon || BotEntityIsVisible( pBot, vecEnd ))
+         if (ammo_source)
          {
-            // check if entity is a weapon...
-            if (itemflag != 0)
+            if ((pent->v.effects & EF_NODRAW) || pent->v.frame > 0)
             {
-               can_pickup = BotFindItemCheckWeapon(pBot, pent, itemflag);
+               BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                  angle_to_entity, BOT_AMMO_TRACE_SKIPPED, "inactive");
+               continue;
             }
 
-            // pick up ammo
-            else if ((itemflag = GetAmmoItemFlag(item_name)) != 0)
+            if (ammo_need == BOT_AMMO_NEED_NONE)
             {
-               can_pickup = BotFindItemCheckAmmo(pBot, pent, itemflag);
+               if (distance <= BOT_AMMO_CRITICAL_RADIUS)
+                  BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                     angle_to_entity, BOT_AMMO_TRACE_SKIPPED,
+                     BotAmmoNeedReasonName(ammo_info.reason));
+               continue;
             }
 
+            if (MapProfileShouldYieldToStrategicMovement(pBot))
+            {
+               BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                  angle_to_entity, BOT_AMMO_TRACE_SKIPPED,
+                  "strategic_movement");
+               continue;
+            }
+
+            const float proximity_radius = BotAmmoNeedRadius(ammo_need);
+            const qboolean proximity_override = distance <= proximity_radius;
+
+            // Opportunistic ammo is strictly local. Low/critical ammo may
+            // still use the ordinary FOV scan beyond their intercept radius.
+            if (!proximity_override &&
+                ammo_need == BOT_AMMO_NEED_OPPORTUNISTIC)
+            {
+               if (distance <= BOT_AMMO_CRITICAL_RADIUS)
+                  BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                     angle_to_entity, BOT_AMMO_TRACE_SKIPPED,
+                     "detour_too_large");
+               continue;
+            }
+
+            // Remember an already-vetted low/critical target while looking at
+            // an enemy; LOS and hull reachability are still rechecked below.
+            if (!proximity_override && angle_to_entity > 45 &&
+                pent != pOriginalPickup)
+               continue;
+
+            if (!BotEntityIsVisible(pBot, entity_origin))
+            {
+               BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                  angle_to_entity, BOT_AMMO_TRACE_SKIPPED, "blocked_los");
+               continue;
+            }
+
+            if (!BotFindItemClosePickupReachable(pBot, pent, entity_origin))
+            {
+               BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                  angle_to_entity, BOT_AMMO_TRACE_SKIPPED, "unreachable");
+               continue;
+            }
+
+            if (!BotFindItemAmmoDetourAcceptable(pBot, entity_origin,
+                ammo_need))
+            {
+               BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+                  angle_to_entity, BOT_AMMO_TRACE_SKIPPED,
+                  "detour_too_large");
+               continue;
+            }
+
+            can_pickup = TRUE;
+            BotTraceAmmoDecision(pBot, pent, ammo_info, distance,
+               angle_to_entity, BOT_AMMO_TRACE_CANDIDATE, "useful");
+         }
+         else
+         {
+            if (!close_weapon && angle_to_entity > 45)
+               continue;
+            if (!close_weapon && !BotEntityIsVisible(pBot, entity_origin))
+               continue;
+
+            if (weapon_item_flags != 0)
+               can_pickup = BotFindItemCheckWeapon(pBot, pent,
+                  weapon_item_flags, &ammo_info);
             else
             {
-               can_pickup = BotFindItem_CheckHealthArmorItems(pBot, pent, pEdict, item_name);
-
+               can_pickup = BotFindItem_CheckHealthArmorItems(pBot, pent,
+                  pEdict, item_name);
                if (!can_pickup)
                   BotFindItem_CheckSpecialEntity(pBot, pent, item_name);
             }
-
-         }  // end if object is visible
-      }  // end else not "func_" entity
-
-      if (can_pickup) // if the bot found something it can pickup...
-      {
-         if (BotFindItemClaimedByVisibleBot(pBot, pent))
-         {
-            float claimed_distance = (entity_origin - pEdict->v.origin).Length();
-            if (claimed_distance <= BOT_PRIORITY_WEAPON_PROXIMITY_RADIUS &&
-                (GetWeaponItemFlag(item_name) != 0 ||
-                 strcmp("weaponbox", item_name) == 0))
-            {
-               BotTraceCloseWeaponDecision(pBot, item_name,
-                  claimed_distance,
-                  BotInFieldOfView(pBot, entity_origin -
-                     (pEdict->v.origin + pEdict->v.view_ofs)),
-                  "claimed", FALSE);
-            }
-            continue;
-         }
-
-         float distance = (entity_origin - pEdict->v.origin).Length( );
-         int priority = BotFindItem_GetPriority(pBot, item_name);
-         int angle = BotInFieldOfView(pBot, entity_origin -
-            (pEdict->v.origin + pEdict->v.view_ofs));
-         qboolean is_close_weapon = priority >= 3 &&
-            distance <= BOT_PRIORITY_WEAPON_PROXIMITY_RADIUS &&
-            BotFindItemCloseWeaponStatus(pBot, pent, item_name,
-               GetWeaponItemFlag(item_name)) == BOT_CLOSE_WEAPON_AVAILABLE;
-         if (is_close_weapon)
-            priority = 4;
-
-         // Prefer tactical pickups, then the closest item at that priority.
-         if (priority > best_priority ||
-             (priority == best_priority && distance < min_distance))
-         {
-            best_priority = priority;
-            min_distance = distance;        // update the minimum distance
-            pPickupEntity = pent;        // remember this entity
-            pickup_origin = entity_origin;  // remember location of entity
-            pickup_angle = angle;
-            pickup_is_close_weapon = is_close_weapon;
          }
       }
-   }  // end while loop
+
+      if (!can_pickup)
+         continue;
+
+      float distance = (entity_origin - pEdict->v.origin).Length();
+      int angle = BotInFieldOfView(pBot, entity_origin -
+         (pEdict->v.origin + pEdict->v.view_ofs));
+
+      if (BotFindItemClaimedByVisibleBot(pBot, pent))
+      {
+         if (ammo_source)
+            BotTraceAmmoDecision(pBot, pent, ammo_info, distance, angle,
+               BOT_AMMO_TRACE_SKIPPED, "claimed");
+         else if (distance <= BOT_PRIORITY_WEAPON_PROXIMITY_RADIUS &&
+                  (GetWeaponItemFlag(item_name) != 0 ||
+                   strcmp("weaponbox", item_name) == 0))
+            BotTraceCloseWeaponDecision(pBot, item_name, distance, angle,
+               "claimed", FALSE);
+         continue;
+      }
+
+      int priority = BotFindItem_GetPriority(pBot, item_name,
+         ammo_info.need, close_weapon);
+
+      if (ammo_source &&
+          (priority > best_ammo_priority ||
+           (priority == best_ammo_priority &&
+            distance < best_ammo_distance)))
+      {
+         pBestAmmoEntity = pent;
+         best_ammo_info = ammo_info;
+         best_ammo_distance = distance;
+         best_ammo_angle = angle;
+         best_ammo_priority = priority;
+      }
+
+      if (pent == pOriginalPickup)
+      {
+         original_priority = priority;
+         original_distance = distance;
+      }
+
+      if (priority > best_priority ||
+          (priority == best_priority && distance < min_distance))
+      {
+         best_priority = priority;
+         min_distance = distance;
+         pPickupEntity = pent;
+         pickup_origin = entity_origin;
+         pickup_angle = angle;
+         pickup_is_close_weapon = close_weapon;
+         pickup_ammo_info = ammo_info;
+      }
+   }
+
+   // A same-tier replacement needs a meaningful distance advantage. This
+   // keeps two nearby pickups from causing 10 Hz target oscillation.
+   if (pOriginalPickup && pPickupEntity &&
+       pOriginalPickup != pPickupEntity && original_priority > 0 &&
+       (original_priority > best_priority ||
+        (original_priority == best_priority &&
+         min_distance + BOT_PICKUP_SWITCH_DISTANCE_ADVANTAGE >=
+            original_distance)))
+   {
+      pPickupEntity = pOriginalPickup;
+      pickup_origin = pOriginalPickup->v.origin;
+      min_distance = original_distance;
+      best_priority = original_priority;
+      pickup_angle = BotInFieldOfView(pBot, pickup_origin -
+         (pEdict->v.origin + pEdict->v.view_ofs));
+      pickup_is_close_weapon = BotHasPriorityWeaponPickup(pBot);
+      BotFindItemGetAmmoSourceNeed(pBot, pOriginalPickup,
+         &pickup_ammo_info);
+   }
+
+   if (pBestAmmoEntity && pPickupEntity != pBestAmmoEntity &&
+       best_priority >= best_ammo_priority)
+   {
+      BotTraceAmmoDecision(pBot, pBestAmmoEntity, best_ammo_info,
+         best_ammo_distance, best_ammo_angle, BOT_AMMO_TRACE_SKIPPED,
+         "higher_priority_pickup");
+   }
+
+   if (pBestAmmoEntity && pPickupEntity == NULL &&
+       best_ammo_distance <= BOT_AMMO_PASS_BY_RADIUS)
+   {
+      BotTraceAmmoDecision(pBot, pBestAmmoEntity, best_ammo_info,
+         best_ammo_distance, best_ammo_angle, BOT_AMMO_TRACE_PASS_BY,
+         "pass_by");
+   }
+
+   if (!pPickupEntity && pOriginalPickup &&
+       BotFindItemGetAmmoSourceNeed(pBot, pOriginalPickup, NULL) !=
+          BOT_AMMO_NEED_NONE)
+   {
+      pBot.pBotPickupItem = NULL;
+      pBot.f_last_item_found = -1.0f;
+   }
 
    if (pPickupEntity != NULL)
    {
       if (pickup_is_close_weapon && pBot.pBotPickupItem != pPickupEntity)
-      {
          BotTraceCloseWeaponDecision(pBot,
             STRING(pPickupEntity->v.classname), min_distance,
             pickup_angle, "selected", TRUE);
-      }
+
+      if (pickup_ammo_info.need != BOT_AMMO_NEED_NONE &&
+          pBot.pBotPickupItem != pPickupEntity)
+         BotTraceAmmoDecision(pBot, pPickupEntity, pickup_ammo_info,
+            min_distance, pickup_angle, BOT_AMMO_TRACE_INTERCEPTED,
+            "selected");
+
       BotFindItem_SetPickupTarget(pBot, pPickupEntity, pickup_origin);
    }
 }
@@ -2722,6 +3057,8 @@ static const char *BotMovementModeName(int movement_mode)
       case BOT_MOVE_WEAK_ROAM: return "weak_roam";
       case BOT_MOVE_NORMAL_COMBAT: return "normal_combat";
       case BOT_MOVE_CROSSFIRE_STRATEGIC: return "crossfire_strategic";
+      case BOT_MOVE_PRIORITY_AMMO_PICKUP: return "priority_ammo_pickup";
+      case BOT_MOVE_AMMO_ROUTE: return "ammo_route";
       default: return "unset";
    }
 }
@@ -2732,10 +3069,17 @@ static int BotSelectMovementMode(bot_t &pBot)
    if (MapProfileShouldYieldToStrategicMovement(pBot))
       return BOT_MOVE_CROSSFIRE_STRATEGIC;
 
+   if (pBot.b_only_has_weak_weapons && BotHasPriorityWeaponPickup(pBot))
+      return BOT_MOVE_WEAK_PHYSICAL_PICKUP;
+
+   if (BotHasPriorityAmmoPickup(pBot))
+      return BOT_MOVE_PRIORITY_AMMO_PICKUP;
+
+   if (pBot.wpt_goal_type == WPT_GOAL_AMMO)
+      return BOT_MOVE_AMMO_ROUTE;
+
    if (pBot.b_only_has_weak_weapons)
    {
-      if (BotHasPriorityWeaponPickup(pBot))
-         return BOT_MOVE_WEAK_PHYSICAL_PICKUP;
       if (pBot.wpt_goal_type == WPT_GOAL_WEAPON)
          return BOT_MOVE_WEAK_WEAPON_ROUTE;
       if (pBot.b_weak_retreat_goal)
@@ -2747,9 +3091,13 @@ static int BotSelectMovementMode(bot_t &pBot)
 }
 
 
-static void BotTraceWeakMovementMode(bot_t &pBot)
+static void BotTraceMovementMode(bot_t &pBot)
 {
-   if (!pBot.b_only_has_weak_weapons || bot_trace_level <= 0)
+   const qboolean ammo_movement =
+      pBot.movement_mode == BOT_MOVE_PRIORITY_AMMO_PICKUP ||
+      pBot.movement_mode == BOT_MOVE_AMMO_ROUTE;
+   if ((!pBot.b_only_has_weak_weapons && !ammo_movement) ||
+       bot_trace_level <= 0)
       return;
 
    if (pBot.trace_last_movement_mode == pBot.movement_mode &&
@@ -2771,12 +3119,14 @@ static void BotTraceWeakMovementMode(bot_t &pBot)
       enemy_distance = (UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy) -
          pBot.pEdict->v.origin).Length();
 
+   const int zone_load = ammo_movement ? pBot.ammo_goal_zone_load :
+      pBot.weapon_goal_zone_load;
    BotTrace(pBot,
       "movement mode=%s goal=%s wpt=%d pickup=%s pd=%.0f enemy=%.0f load=%d",
       BotMovementModeName(pBot.movement_mode),
       BotTraceGoalTypeName(pBot.wpt_goal_type), pBot.waypoint_goal,
       pickup_classname, pickup_distance, enemy_distance,
-      pBot.weapon_goal_zone_load);
+      zone_load);
 
    pBot.trace_last_movement_mode = pBot.movement_mode;
    pBot.f_movement_trace_time = gpGlobals->time + 2.0f;
@@ -2806,11 +3156,15 @@ static qboolean BotDoStrafeGoalDirectedCombat(bot_t &pBot)
       MapProfileShouldYieldToStrategicMovement(pBot);
    const qboolean weak_combat_movement = pBot.pBotEnemy != NULL &&
       pBot.b_only_has_weak_weapons;
+   const qboolean ammo_combat_movement = pBot.pBotEnemy != NULL &&
+      (BotHasPriorityAmmoPickup(pBot) ||
+       pBot.wpt_goal_type == WPT_GOAL_AMMO);
 
    pBot.movement_mode = BotSelectMovementMode(pBot);
-   BotTraceWeakMovementMode(pBot);
+   BotTraceMovementMode(pBot);
 
-   if (!strategic_movement && !weak_combat_movement)
+   if (!strategic_movement && !weak_combat_movement &&
+       !ammo_combat_movement)
       return FALSE;
 
    // Precise ladder/shaft movement has already supplied its own controls.
@@ -2820,8 +3174,9 @@ static qboolean BotDoStrafeGoalDirectedCombat(bot_t &pBot)
    Vector movement_target;
    qboolean has_movement_target = FALSE;
 
-   if (pBot.movement_mode == BOT_MOVE_WEAK_PHYSICAL_PICKUP &&
-       BotHasPriorityWeaponPickup(pBot))
+   if ((pBot.movement_mode == BOT_MOVE_WEAK_PHYSICAL_PICKUP ||
+        pBot.movement_mode == BOT_MOVE_PRIORITY_AMMO_PICKUP) &&
+       BotHasPriorityCombatPickup(pBot))
    {
       movement_target = pBot.pBotPickupItem->v.origin;
       has_movement_target = TRUE;
@@ -2917,7 +3272,7 @@ static void BotDoStrafe(bot_t &pBot)
       return;
 
    pBot.movement_mode = BotSelectMovementMode(pBot);
-   BotTraceWeakMovementMode(pBot);
+   BotTraceMovementMode(pBot);
 
    // combat strafe
    if(pBot.pBotEnemy != NULL && FInViewCone(UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy), pEdict) && FVisibleEnemy( UTIL_GetOriginWithExtent(pBot, pBot.pBotEnemy), pEdict, pBot.pBotEnemy ))
@@ -3022,8 +3377,11 @@ static qboolean BotRandomMovementCanStart(bot_t &pBot)
       return FALSE;
    }
 
-   // don't jump if trying to pick up item.
-   if(pBot.pBotEnemy == NULL && !FNullEnt(pBot.pBotPickupItem) && !(pBot.pBotPickupItem->v.effects & EF_NODRAW) && !(pBot.pBotPickupItem->v.frame > 0))
+   // Don't random-jump away from a committed tactical pickup.
+   if(!FNullEnt(pBot.pBotPickupItem) &&
+      !(pBot.pBotPickupItem->v.effects & EF_NODRAW) &&
+      !(pBot.pBotPickupItem->v.frame > 0) &&
+      (pBot.pBotEnemy == NULL || BotHasPriorityCombatPickup(pBot)))
       return FALSE;
 
    return TRUE;
@@ -3449,7 +3807,8 @@ static void BotThinkHandleNavigation(bot_t &pBot, qboolean did_shoot, float move
 {
    edict_t *pEdict = pBot.pEdict;
    const qboolean weapon_acquisition_movement = did_shoot &&
-      (pBot.b_only_has_weak_weapons || BotHasPriorityWeaponPickup(pBot));
+      (pBot.b_only_has_weak_weapons || BotHasPriorityCombatPickup(pBot) ||
+       pBot.wpt_goal_type == WPT_GOAL_AMMO);
    const qboolean preserve_combat_aim = did_shoot &&
       (MapProfileShouldYieldToStrategicMovement(pBot) ||
        weapon_acquisition_movement);

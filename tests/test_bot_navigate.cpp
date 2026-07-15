@@ -45,6 +45,8 @@ float mock_RANDOM_FLOAT2(float low, float high)
 #include "engine_mock.h"
 #include "test_common.h"
 
+extern int submod_weaponflag;
+
 // ============================================================
 // Waypoint/Sound mock infrastructure
 // ============================================================
@@ -2981,6 +2983,204 @@ static int test_weapon_goal_replans_when_claim_becomes_visible(void)
    ASSERT_INT(bots[0].curr_waypoint_index, 4);
 
    restore_weak_weapon_goal_select(saved_select);
+   PASS();
+   return 0;
+}
+
+
+static void setup_ammo_navigation_state(void)
+{
+   memset(bots, 0, sizeof(bots));
+   submod_id = SUBMOD_HLDM;
+   submod_weaponflag = WEAPON_SUBMOD_HLDM;
+   InitWeaponSelect(SUBMOD_HLDM);
+
+   weapon_defs[VALVE_WEAPON_MP5].iId = VALVE_WEAPON_MP5;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1Max = 250;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2 = 8;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2Max = 10;
+
+   memset(&mock_active_weapon_item, 0, sizeof(mock_active_weapon_item));
+   mock_set_classname(&mock_active_weapon_item, "ammo_9mmAR");
+}
+
+
+static void setup_active_ammo_waypoint(int index, Vector origin,
+   float route_distance)
+{
+   setup_waypoint(index, origin, W_FL_AMMO, W_IFL_AMMO_9MM);
+   mock_WaypointFindItem_active[index] = TRUE;
+   mock_WaypointDistanceFromTo_by_dest[index] = route_distance;
+}
+
+
+static int test_critical_ammo_goal_beats_enemy_locomotion(void)
+{
+   TEST("BotFindWaypointGoal: critical ammo route beats visible enemy locomotion");
+   mock_reset();
+   reset_navigate_mocks();
+   setup_ammo_navigation_state();
+   gpGlobals->mapname = (string_t)(long)"boot_camp";
+   MapProfileReset();
+
+   edict_t *pEdict = mock_alloc_edict();
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   pEdict->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_ammo_waypoint(1, Vector(500, 0, 0), 500.0f);
+   setup_waypoint(2, Vector(200, 0, 0));
+   mock_WaypointFindNearest_result = 2;
+
+   BotFindWaypointGoal(bot);
+
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_AMMO);
+   ASSERT_INT(bot.waypoint_goal, 1);
+   ASSERT_PTR_EQ(bot.pBotEnemy, pEnemy);
+   ASSERT_INT(bot.ammo_goal_zone_load, 0);
+   PASS();
+   return 0;
+}
+
+
+static int test_low_ammo_does_not_override_active_enemy_route(void)
+{
+   TEST("BotFindWaypointGoal: merely low ammo does not override active enemy route");
+   mock_reset();
+   reset_navigate_mocks();
+   setup_ammo_navigation_state();
+   gpGlobals->mapname = (string_t)(long)"boot_camp";
+   MapProfileReset();
+
+   edict_t *pEdict = mock_alloc_edict();
+   edict_t *pEnemy = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   pEdict->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[1] = 20;
+   bot.m_rgAmmo[8] = 10;
+   bot.pBotEnemy = pEnemy;
+   bot.curr_waypoint_index = 0;
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_ammo_waypoint(1, Vector(500, 0, 0), 500.0f);
+   setup_waypoint(2, Vector(200, 0, 0));
+   mock_WaypointFindNearest_result = 2;
+
+   BotFindWaypointGoal(bot);
+
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_ENEMY);
+   ASSERT_INT(bot.waypoint_goal, 2);
+   PASS();
+   return 0;
+}
+
+
+static int test_ammo_goal_soft_balances_twelve_bots(void)
+{
+   TEST("BotFindWaypointGoal: 12 critical-ammo bots soft-balance over 4 zones");
+   mock_reset();
+   reset_navigate_mocks();
+   setup_ammo_navigation_state();
+
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_ammo_waypoint(1, Vector(1000, 0, 0), 100.0f);
+   setup_active_ammo_waypoint(2, Vector(2000, 0, 0), 200.0f);
+   setup_active_ammo_waypoint(3, Vector(3000, 0, 0), 300.0f);
+   setup_active_ammo_waypoint(4, Vector(4000, 0, 0), 400.0f);
+
+   int occupancy[5] = {0, 0, 0, 0, 0};
+   for (int i = 0; i < 12; i++)
+   {
+      edict_t *pEdict = mock_alloc_edict();
+      setup_bot_for_test(bots[i], pEdict);
+      pEdict->v.weapons = (1u << VALVE_WEAPON_MP5);
+      bots[i].weapon_skill = SKILL5;
+      bots[i].m_rgAmmo[1] = 0;
+      bots[i].m_rgAmmo[8] = 10;
+      bots[i].curr_waypoint_index = 0;
+
+      ASSERT_TRUE(BotFindWaypointGoalPrioritizedAmmo(bots[i],
+         BOT_AMMO_NEED_CRITICAL));
+      ASSERT_TRUE(bots[i].waypoint_goal >= 1 &&
+         bots[i].waypoint_goal <= 4);
+      occupancy[bots[i].waypoint_goal]++;
+   }
+
+   ASSERT_INT(occupancy[1], 3);
+   ASSERT_INT(occupancy[2], 3);
+   ASSERT_INT(occupancy[3], 3);
+   ASSERT_INT(occupancy[4], 3);
+   PASS();
+   return 0;
+}
+
+
+static int test_ammo_goal_clears_when_pool_fills(void)
+{
+   TEST("BotEvaluateGoal: ammo route clears as soon as relevant pool is full");
+   mock_reset();
+   reset_navigate_mocks();
+   setup_ammo_navigation_state();
+
+   edict_t *pEdict = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   pEdict->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[1] = 250;
+   bot.m_rgAmmo[8] = 10;
+   bot.curr_waypoint_index = 0;
+   bot.wpt_goal_type = WPT_GOAL_AMMO;
+   bot.waypoint_goal = 1;
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_ammo_waypoint(1, Vector(500, 0, 0), 500.0f);
+
+   BotEvaluateGoal(bot);
+
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_NONE);
+   ASSERT_INT(bot.waypoint_goal, -1);
+   ASSERT_INT(bot.ammo_goal_zone_load, -1);
+   PASS();
+   return 0;
+}
+
+
+static int test_ammo_goal_clears_when_pickup_becomes_inactive(void)
+{
+   TEST("BotEvaluateGoal: ammo route clears when pickup becomes inactive");
+   mock_reset();
+   reset_navigate_mocks();
+   setup_ammo_navigation_state();
+
+   edict_t *pEdict = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, pEdict);
+   pEdict->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.weapon_skill = SKILL5;
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   bot.curr_waypoint_index = 0;
+   bot.wpt_goal_type = WPT_GOAL_AMMO;
+   bot.waypoint_goal = 1;
+   setup_waypoint(0, Vector(0, 0, 0));
+   setup_active_ammo_waypoint(1, Vector(500, 0, 0), 500.0f);
+   mock_active_weapon_item.v.effects = EF_NODRAW;
+
+   BotEvaluateGoal(bot);
+
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_NONE);
+   ASSERT_INT(bot.waypoint_goal, -1);
+   ASSERT_INT(bot.ammo_goal_zone_load, -1);
    PASS();
    return 0;
 }
@@ -6082,6 +6282,11 @@ int main(void)
    failures += test_find_waypoint_goal_invalid_bots_do_not_add_load();
    failures += test_find_waypoint_goal_weaponbox_claim_adds_soft_load();
    failures += test_weapon_goal_replans_when_claim_becomes_visible();
+   failures += test_critical_ammo_goal_beats_enemy_locomotion();
+   failures += test_low_ammo_does_not_override_active_enemy_route();
+   failures += test_ammo_goal_soft_balances_twelve_bots();
+   failures += test_ammo_goal_clears_when_pool_fills();
+   failures += test_ammo_goal_clears_when_pickup_becomes_inactive();
    failures += test_find_waypoint_goal_fallback_random();
    failures += test_find_waypoint_goal_needs_health();
    failures += test_find_waypoint_goal_crossfire_strike_prioritizes_bunker();

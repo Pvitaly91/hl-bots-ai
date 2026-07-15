@@ -31,6 +31,8 @@ extern bot_weapon_t weapon_defs[MAX_WEAPONS];
 // SET THIS UP BASED ON MOD!!!
 const int max_drop_height = 800;
 
+static qboolean BotAmmoWaypointGoalStillNeeded(bot_t &pBot);
+
 
 // returns the number of degrees left to turn toward ideal pitch...
 float BotChangePitch( bot_t &pBot, float speed )
@@ -329,6 +331,16 @@ static void BotEvaluateGoal( bot_t &pBot )
       pBot.f_waypoint_goal_time = 0;
       pBot.waypoint_goal = -1;
    }
+
+   if (pBot.wpt_goal_type == WPT_GOAL_AMMO &&
+       !BotAmmoWaypointGoalStillNeeded(pBot))
+   {
+      pBot.f_waypoint_goal_time = 0.0f;
+      pBot.waypoint_goal = -1;
+      pBot.wpt_goal_type = WPT_GOAL_NONE;
+      pBot.ammo_goal_zone_load = -1;
+      BotTrace(pBot, "ammo goal cleared: pool no longer low");
+   }
 }
 
 
@@ -458,9 +470,12 @@ static qboolean BotFindWaypointGoalCriticalHealth(bot_t &pBot)
    {
       pBot.wpt_goal_type = WPT_GOAL_HEALTH;
       pBot.waypoint_goal = index;
+      return TRUE;
    }
 
-   return TRUE;
+   // Do not suppress weapon, ammo, or retreat goals when the map has no
+   // reachable health source.
+   return FALSE;
 }
 
 
@@ -803,6 +818,201 @@ static qboolean BotFindWaypointGoalPrioritizedWeapon(bot_t &pBot)
 }
 
 
+static qboolean BotNavigateIsAmmoPickup(const edict_t *pItem)
+{
+   return pItem && !pItem->free && pItem->v.classname != 0 &&
+      !(pItem->v.effects & EF_NODRAW) && pItem->v.frame <= 0 &&
+      GetAmmoItemFlag(STRING(pItem->v.classname)) != 0;
+}
+
+
+static qboolean BotGetAmmoClaimOrigin(const bot_t &otherBot,
+   Vector &claim_origin)
+{
+   if (!otherBot.is_used || !otherBot.pEdict || otherBot.pEdict->free ||
+       !IsAlive(otherBot.pEdict))
+      return FALSE;
+
+   if (BotNavigateIsAmmoPickup(otherBot.pBotPickupItem))
+   {
+      claim_origin = otherBot.pBotPickupItem->v.origin;
+      return TRUE;
+   }
+
+   if (otherBot.wpt_goal_type == WPT_GOAL_AMMO &&
+       otherBot.waypoint_goal >= 0 &&
+       otherBot.waypoint_goal < num_waypoints &&
+       (waypoints[otherBot.waypoint_goal].flags &
+        (W_FL_AMMO | W_FL_WEAPON)))
+   {
+      claim_origin = waypoints[otherBot.waypoint_goal].origin;
+      return TRUE;
+   }
+
+   return FALSE;
+}
+
+
+static const float BOT_AMMO_GOAL_ZONE_RADIUS = 256.0f;
+
+
+static int BotCountAmmoGoalZoneClaims(const bot_t &pBot,
+   int waypoint_index)
+{
+   int claim_count = 0;
+   for (int i = 0; i < 32; i++)
+   {
+      const bot_t &otherBot = bots[i];
+      if (&otherBot == &pBot || otherBot.pEdict == pBot.pEdict)
+         continue;
+
+      Vector claim_origin;
+      if (!BotGetAmmoClaimOrigin(otherBot, claim_origin))
+         continue;
+
+      if ((waypoints[waypoint_index].origin - claim_origin).Make2D().Length()
+          <= BOT_AMMO_GOAL_ZONE_RADIUS)
+         claim_count++;
+   }
+
+   return claim_count;
+}
+
+
+static qboolean BotAmmoGoalCandidate(bot_t &pBot, int waypoint_index,
+   int ammo_flags, int weapon_flags, float &route_distance,
+   qboolean allow_current_waypoint = FALSE)
+{
+   if (waypoint_index < 0 || waypoint_index >= num_waypoints ||
+       (!allow_current_waypoint &&
+        waypoint_index == pBot.curr_waypoint_index))
+      return FALSE;
+
+   if (waypoints[waypoint_index].flags & (W_FL_DELETED | W_FL_AIMING) ||
+       BotWeaponGoalIsPersonallyExcluded(pBot, waypoint_index))
+      return FALSE;
+
+   const qboolean matches_ammo = ammo_flags &&
+      (waypoints[waypoint_index].flags & W_FL_AMMO) &&
+      (waypoints[waypoint_index].itemflags & ammo_flags);
+   const qboolean matches_weapon = weapon_flags &&
+      (waypoints[waypoint_index].flags & W_FL_WEAPON) &&
+      (waypoints[waypoint_index].itemflags & weapon_flags);
+   if (!matches_ammo && !matches_weapon)
+      return FALSE;
+
+   edict_t *pItem = WaypointFindItem(waypoint_index);
+   if (!pItem || (pItem->v.effects & EF_NODRAW) || pItem->v.frame > 0)
+      return FALSE;
+
+   if (pBot.curr_waypoint_index >= 0 &&
+       pBot.curr_waypoint_index < num_waypoints)
+   {
+      route_distance = WaypointDistanceFromTo(pBot.curr_waypoint_index,
+         waypoint_index);
+      if (route_distance >= (float)WAYPOINT_MAX_DISTANCE)
+         return FALSE;
+   }
+   else
+   {
+      route_distance = (waypoints[waypoint_index].origin -
+         pBot.pEdict->v.origin).Length();
+   }
+
+   return TRUE;
+}
+
+
+static int BotFindAvailableAmmoGoal(bot_t &pBot, int ammo_flags,
+   int weapon_flags, bot_ammo_need_t need)
+{
+   int best_index = -1;
+   int best_claim_count = 33;
+   float best_route_distance = (float)WAYPOINT_UNREACHABLE;
+
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      float route_distance;
+      if (!BotAmmoGoalCandidate(pBot, index, ammo_flags, weapon_flags,
+          route_distance))
+         continue;
+
+      int claim_count = BotCountAmmoGoalZoneClaims(pBot, index);
+      if (claim_count < best_claim_count ||
+          (claim_count == best_claim_count &&
+           (route_distance < best_route_distance ||
+            (route_distance == best_route_distance && index < best_index))))
+      {
+         best_index = index;
+         best_claim_count = claim_count;
+         best_route_distance = route_distance;
+      }
+   }
+
+   pBot.ammo_goal_zone_load = best_index == -1 ? -1 : best_claim_count;
+   if (best_index != -1)
+      BotTrace(pBot,
+         "ammo zone selected: need=%s wpt=%d load=%d route=%.0f",
+         BotAmmoNeedName(need), best_index, best_claim_count,
+         best_route_distance);
+
+   return best_index;
+}
+
+
+static qboolean BotFindWaypointGoalPrioritizedAmmo(bot_t &pBot,
+   bot_ammo_need_t minimum_need)
+{
+   int weapon_flags = 0;
+   int ammo_flags = BotGetAmmoNeedFlags(pBot, minimum_need,
+      &weapon_flags);
+   if (!ammo_flags && !weapon_flags)
+      return FALSE;
+
+   float existing_distance;
+   if (pBot.wpt_goal_type == WPT_GOAL_AMMO &&
+       BotAmmoGoalCandidate(pBot, pBot.waypoint_goal, ammo_flags,
+          weapon_flags, existing_distance, TRUE))
+   {
+      pBot.ammo_goal_zone_load = BotCountAmmoGoalZoneClaims(pBot,
+         pBot.waypoint_goal);
+      pBot.b_weak_retreat_goal = FALSE;
+      return TRUE;
+   }
+
+   int index = BotFindAvailableAmmoGoal(pBot, ammo_flags, weapon_flags,
+      minimum_need);
+   if (index == -1)
+      return FALSE;
+
+   pBot.wpt_goal_type = WPT_GOAL_AMMO;
+   pBot.waypoint_goal = index;
+   pBot.b_weak_retreat_goal = FALSE;
+   return TRUE;
+}
+
+
+static qboolean BotAmmoWaypointGoalStillNeeded(bot_t &pBot)
+{
+   if (pBot.wpt_goal_type != WPT_GOAL_AMMO ||
+       pBot.waypoint_goal < 0 || pBot.waypoint_goal >= num_waypoints)
+      return FALSE;
+
+   edict_t *pItem = WaypointFindItem(pBot.waypoint_goal);
+   if (!pItem || (pItem->v.effects & EF_NODRAW) || pItem->v.frame > 0)
+      return FALSE;
+
+   int weapon_flags = 0;
+   int ammo_flags = BotGetAmmoNeedFlags(pBot, BOT_AMMO_NEED_LOW,
+      &weapon_flags);
+   const WAYPOINT &goal = waypoints[pBot.waypoint_goal];
+   return ((goal.flags & W_FL_AMMO) &&
+           (goal.itemflags & ammo_flags)) ||
+          ((goal.flags & W_FL_WEAPON) &&
+           (goal.itemflags & weapon_flags));
+}
+
+
 static void BotFindWaypointGoalSearchWeaponAmmo(bot_t &pBot, int &index, float &mindistance, int &goal_type)
 {
    edict_t *pEdict = pBot.pEdict;
@@ -853,36 +1063,6 @@ static void BotFindWaypointGoalSearchWeaponAmmo(bot_t &pBot, int &index, float &
       }
    }
 
-   // get flags for ammo that are low, primarily ammo that can we can use with current weapons
-   else
-   {
-      int ammoflags;
-      int weaponflags = 0;
-
-      if (((ammoflags = BotGetLowAmmoFlags(pBot, &(weaponflags=0), TRUE)) != 0 && weaponflags != 0) ||
-          ((ammoflags = BotGetLowAmmoFlags(pBot, &(weaponflags=0), FALSE)) != 0 && weaponflags != 0))
-      {
-         int flags = (ammoflags ? W_FL_AMMO : 0) | (weaponflags ? W_FL_WEAPON : 0);
-
-         // find ammo for that we don't have enough yet
-         int temp_index = WaypointFindNearestGoal(pEdict, pBot.curr_waypoint_index, flags, ammoflags|weaponflags, pBot.exclude_points);
-
-         if(temp_index == -1)
-            temp_index = WaypointFindRandomGoal(pEdict, flags, ammoflags|weaponflags, pBot.exclude_points);
-
-         if (temp_index != -1)
-         {
-            float distance = WaypointDistanceFromTo(pBot.curr_waypoint_index, temp_index);
-
-            if (distance < mindistance)
-            {
-               index = temp_index;
-               mindistance = distance;
-               goal_type = WPT_GOAL_AMMO;
-            }
-         }
-      }
-   }
 }
 
 
@@ -980,6 +1160,10 @@ static void BotFindWaypointGoal( bot_t &pBot )
    if (BotFindWaypointGoalMapProfile(pBot))
       return;
 
+   // Critical health remains the first non-map emergency objective.
+   if (BotFindWaypointGoalCriticalHealth(pBot))
+      return;
+
    // Preserve an active upgrade route before combat or low-health logic can
    // turn an enemy into the movement target.
    if (BotFindWaypointGoalPrioritizedWeapon(pBot))
@@ -989,17 +1173,30 @@ static void BotFindWaypointGoal( bot_t &pBot )
       return;
    }
 
-   // Weak movement is restricted to weapon acquisition, retreat, or roaming.
-   // Health/ammo goals must not become an accidental approach vector.
-   if (BotFindWaypointGoalWeakRetreatOrRoam(pBot))
+   // A carried weapon that cannot make its next useful attack keeps ammo
+   // locomotion authoritative even while the bot returns fire at an enemy.
+   if (BotFindWaypointGoalPrioritizedAmmo(pBot,
+       BOT_AMMO_NEED_CRITICAL))
+   {
+      BotTrace(pBot, "goal set: critical-ammo wpt=%d load=%d",
+         pBot.waypoint_goal, pBot.ammo_goal_zone_load);
       return;
+   }
 
-   // look for health if we're pretty dead
-   if (BotFindWaypointGoalCriticalHealth(pBot))
+   // Weak movement is restricted to weapon acquisition, retreat, or roaming.
+   // Enemy pursuit must not become an accidental approach vector.
+   if (BotFindWaypointGoalWeakRetreatOrRoam(pBot))
       return;
 
    if (pBot.pBotEnemy == NULL)
    {
+      if (BotFindWaypointGoalPrioritizedAmmo(pBot, BOT_AMMO_NEED_LOW))
+      {
+         BotTrace(pBot, "goal set: low-ammo wpt=%d load=%d",
+            pBot.waypoint_goal, pBot.ammo_goal_zone_load);
+         return;
+      }
+
       int goal_type = 0;
       float mindistance = WAYPOINT_UNREACHABLE;
       edict_t* pTrackSoundEdict = NULL;
@@ -1346,6 +1543,17 @@ static qboolean BotHeadTowardWaypointCheckUnderwaterExit(bot_t &pBot)
 static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoint_found)
 {
    int i;
+
+   if (pBot.wpt_goal_type == WPT_GOAL_AMMO &&
+       !BotAmmoWaypointGoalStillNeeded(pBot))
+   {
+      BotTrace(pBot, "ammo goal cleared before route: wpt=%d",
+         pBot.waypoint_goal);
+      pBot.waypoint_goal = -1;
+      pBot.wpt_goal_type = WPT_GOAL_NONE;
+      pBot.f_waypoint_goal_time = 0.0f;
+      pBot.ammo_goal_zone_load = -1;
+   }
 
    if (MapProfileIsStrategicEventActive() &&
        !MapProfileIsStrategicGoal(pBot))

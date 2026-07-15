@@ -4858,6 +4858,15 @@ static int test_BotDoStrafe_ladder_angle_behind_slow(void)
 // Phase 4: BotFindItem weapon/ammo
 // ============================================================
 
+static void setup_shotgun_ammo_weapon_def(void)
+{
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iId = VALVE_WEAPON_SHOTGUN;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1 = 3;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo1Max = 125;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo2 = -1;
+   weapon_defs[VALVE_WEAPON_SHOTGUN].iAmmo2Max = -1;
+}
+
 static int test_BotFindItem_weapon_dont_have(void)
 {
    TEST("BotFindItem: weapon_shotgun, bot doesn't own -> picks it up");
@@ -4887,6 +4896,7 @@ static int test_BotFindItem_weapon_low_ammo(void)
 {
    TEST("BotFindItem: weapon owned, ammo low -> pickup");
    setup_engine_funcs();
+   setup_shotgun_ammo_weapon_def();
 
    edict_t *e = mock_alloc_edict();
    bot_t bot;
@@ -4915,6 +4925,7 @@ static int test_BotFindItem_weapon_full_ammo(void)
 {
    TEST("BotFindItem: weapon owned, ammo full -> skip");
    setup_engine_funcs();
+   setup_shotgun_ammo_weapon_def();
 
    edict_t *e = mock_alloc_edict();
    bot_t bot;
@@ -4942,6 +4953,7 @@ static int test_BotFindItem_ammo_pickup(void)
 {
    TEST("BotFindItem: ammo_buckshot, weapon low on ammo -> pickup");
    setup_engine_funcs();
+   setup_shotgun_ammo_weapon_def();
 
    edict_t *e = mock_alloc_edict();
    bot_t bot;
@@ -5015,6 +5027,360 @@ static int test_BotFindItem_func_outside_fov(void)
    ASSERT_FALSE(bot.b_use_HEV_station);
 
    PASS();
+   return 0;
+}
+
+
+static void setup_ammo_pickup_weapon_defs(void)
+{
+   memset(bots, 0, sizeof(bots));
+
+   weapon_defs[VALVE_WEAPON_GLOCK].iId = VALVE_WEAPON_GLOCK;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1Max = 250;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo2 = -1;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo2Max = -1;
+
+   weapon_defs[VALVE_WEAPON_MP5].iId = VALVE_WEAPON_MP5;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1Max = 250;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2 = 8;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2Max = 10;
+}
+
+
+static int test_BotFindItem_ammo_proximity_policy(void)
+{
+   TEST("BotFindItem: useful opportunistic ammo behind bot intercepts at 80 units");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 10;
+   bot.f_find_item = 0.0f;
+
+   edict_t *ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+   ASSERT_INT(BotFindItemGetAmmoSourceNeed(bot, ammo, NULL),
+      BOT_AMMO_NEED_OPPORTUNISTIC);
+   PASS();
+
+   TEST("BotFindItem: opportunistic ammo behind bot at 350 units makes no detour");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 10;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(-350.0f, 0.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+
+   TEST("BotFindItem: full and irrelevant ammo are skipped");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 250;
+   bot.m_rgAmmo[8] = 10;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+
+   e->v.weapons = 0;
+   bot.m_rgAmmo[1] = 0;
+   bot.f_find_item = 0.0f;
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+
+   TEST("BotFindItem: close ammo behind blocked LOS is not selected");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 10;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   mock_trace_line_fn = [](const float *v1, const float *v2,
+      int fNoMonsters, int hullNumber, edict_t *pentToSkip,
+      TraceResult *ptr)
+   {
+      (void)v1; (void)fNoMonsters; (void)hullNumber; (void)pentToSkip;
+      ptr->flFraction = 0.25f;
+      ptr->pHit = &mock_edicts[0];
+      ptr->vecEndPos[0] = v2[0];
+      ptr->vecEndPos[1] = v2[1];
+      ptr->vecEndPos[2] = v2[2];
+   };
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+
+   TEST("BotFindItem: close ammo on unreachable level is not selected");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 10;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   mock_trace_hull_fn = [](const float *, const float *, int, int,
+      edict_t *, TraceResult *ptr)
+   {
+      ptr->flFraction = 0.25f;
+      ptr->pHit = &mock_edicts[0];
+   };
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+
+   return 0;
+}
+
+
+static int test_BotFindItem_ammo_low_critical_and_secondary(void)
+{
+   TEST("BotFindItem: low 9mm behind bot intercepts at 180 units");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 20;
+   bot.m_rgAmmo[8] = 10;
+   edict_t *ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 180.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+   PASS();
+
+   TEST("BotFindItem: critical 9mm behind bot intercepts at 240 units");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 240.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+   PASS();
+
+   TEST("BotFindItem: MP5 AR grenades use secondary pool when primary is full");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 250;
+   bot.m_rgAmmo[8] = 0;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_ARgrenades");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+
+   bot.pBotPickupItem = NULL;
+   bot.f_find_item = 0.0f;
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+
+   return 0;
+}
+
+
+static int test_BotFindItem_ammo_claim_priority_and_cleanup(void)
+{
+   TEST("BotFindItem: closer visible bot keeps its ammo claim");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   edict_t *e = mock_alloc_edict();
+   edict_t *other = mock_alloc_edict();
+   setup_bot_for_test(bots[0], e);
+   setup_bot_for_test(bots[1], other);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bots[0].m_rgAmmo[1] = 100;
+   bots[0].m_rgAmmo[8] = 10;
+   other->v.origin = Vector(70.0f, 0.0f, 0.0f);
+   edict_t *ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(100.0f, 0.0f, 0.0f);
+   bots[1].pBotPickupItem = ammo;
+   BotFindItem(bots[0]);
+   ASSERT_PTR_NULL(bots[0].pBotPickupItem);
+   PASS();
+
+   TEST("BotFindItem: weak Glock bot chooses close MP5 over 9mm ammo");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_GLOCK);
+   bot.m_rgAmmo[1] = 100;
+   bot.b_only_has_weak_weapons = TRUE;
+   bot.f_bot_spawn_time = gpGlobals->time - 30.0f;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 64.0f, 0.0f);
+   edict_t *mp5 = mock_alloc_edict();
+   mock_set_classname(mp5, "weapon_9mmAR");
+   mp5->v.origin = Vector(120.0f, 0.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, mp5);
+   PASS();
+
+   TEST("BotFindItem: critical ammo outranks an incidental battery");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   e->v.armorvalue = 0.0f;
+   edict_t *battery = mock_alloc_edict();
+   mock_set_classname(battery, "item_battery");
+   battery->v.origin = Vector(40.0f, 0.0f, 0.0f);
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(80.0f, 0.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+   PASS();
+
+   TEST("BotFindItem: full pool clears an existing ammo target immediately");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   setup_bot_for_test(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 250;
+   bot.m_rgAmmo[8] = 10;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(80.0f, 0.0f, 0.0f);
+   bot.pBotPickupItem = ammo;
+   bot.f_last_item_found = gpGlobals->time;
+   bot.f_find_item = 0.0f;
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   PASS();
+
+   return 0;
+}
+
+
+static int test_ammo_movement_return_fire_and_crossfire_priority(void)
+{
+   TEST("ammo pickup movement survives return fire and preserves combat aim");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   edict_t *e = mock_alloc_edict();
+   edict_t *enemy = mock_alloc_edict();
+   bot_t bot;
+   setup_alive_bot(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 100;
+   bot.m_rgAmmo[8] = 10;
+   enemy->v.origin = Vector(200.0f, 0.0f, 0.0f);
+   bot.pBotEnemy = enemy;
+   edict_t *ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   bot.pBotPickupItem = ammo;
+   bot.f_move_speed = 320.0f;
+   e->v.ideal_yaw = 17.0f;
+   ASSERT_TRUE(BotDoStrafeGoalDirectedCombat(bot));
+   ASSERT_INT(bot.movement_mode, BOT_MOVE_PRIORITY_AMMO_PICKUP);
+   ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
+   ASSERT_FLOAT(e->v.ideal_yaw, 17.0f);
+   PASS();
+
+   TEST("low ammo target keeps locomotion while return fire looks away");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   e = mock_alloc_edict();
+   enemy = mock_alloc_edict();
+   setup_alive_bot(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 20;
+   bot.m_rgAmmo[8] = 10;
+   bot.f_find_item = 0.0f;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(240.0f, 0.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+
+   e->v.v_angle = Vector(0.0f, 180.0f, 0.0f);
+   gpGlobals->time += 0.2f;
+   BotFindItem(bot);
+   ASSERT_PTR_EQ(bot.pBotPickupItem, ammo);
+
+   enemy->v.origin = Vector(-200.0f, 0.0f, 0.0f);
+   bot.pBotEnemy = enemy;
+   bot.f_move_speed = 320.0f;
+   e->v.ideal_yaw = 180.0f;
+   ASSERT_TRUE(BotDoStrafeGoalDirectedCombat(bot));
+   ASSERT_INT(bot.movement_mode, BOT_MOVE_PRIORITY_AMMO_PICKUP);
+   ASSERT_FLOAT(e->v.ideal_yaw, 180.0f);
+   PASS();
+
+   TEST("Crossfire strategic route rejects a nearby ammo detour");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   gpGlobals->time = 100.0f;
+   e = mock_alloc_edict();
+   setup_alive_bot(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 0;
+   bot.m_rgAmmo[8] = 10;
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 80.0f, 0.0f);
+   BotFindItem(bot);
+   ASSERT_PTR_NULL(bot.pBotPickupItem);
+   ASSERT_TRUE(MapProfileIsStrategicGoal(bot));
+   gpGlobals->mapname = (string_t)(long)"boot_camp";
+   MapProfileReset();
+   PASS();
+
    return 0;
 }
 
@@ -6233,6 +6599,10 @@ int main(void)
    fail |= test_BotFindItem_ammo_pickup();
    fail |= test_BotFindItem_pickup_cleared_nodraw();
    fail |= test_BotFindItem_func_outside_fov();
+   fail |= test_BotFindItem_ammo_proximity_policy();
+   fail |= test_BotFindItem_ammo_low_critical_and_secondary();
+   fail |= test_BotFindItem_ammo_claim_priority_and_cleanup();
+   fail |= test_ammo_movement_return_fire_and_crossfire_priority();
 
    // Phase 5: BotDoRandom longjump
    fail |= test_BotDoRandom_longjump_execute();
