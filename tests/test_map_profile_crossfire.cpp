@@ -79,6 +79,7 @@ static void setup_crossbow_bot(bot_t &bot, edict_t *edict,
    bot.wpt_goal_type = WPT_GOAL_NONE;
    bot.f_max_speed = 320.0f;
    bot.trace_last_stuck_wpt = -2;
+   bot.f_last_stuck_time = 0.0f;
    bot.m_rgAmmo[1] = 50;
    bot.m_rgAmmo[4] = 5;
 
@@ -88,6 +89,62 @@ static void setup_crossbow_bot(bot_t &bot, edict_t *edict,
    edict->v.flags = FL_CLIENT | FL_FAKECLIENT;
    edict->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
       (1u << VALVE_WEAPON_CROSSBOW);
+}
+
+
+static void setup_gauss_bot(bot_t &bot, edict_t *edict,
+   const Vector &origin)
+{
+   setup_crossbow_bot(bot, edict, origin);
+   weapon_defs[VALVE_WEAPON_GAUSS].iId = VALVE_WEAPON_GAUSS;
+   weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1 = 6;
+   bot.m_rgAmmo[4] = 0;
+   bot.m_rgAmmo[6] = 30;
+   edict->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_GAUSS);
+}
+
+
+static void trace_gauss_overwatch_geometry(const float *v1, const float *v2,
+   int fNoMonsters, int hullNumber, edict_t *pentToSkip, TraceResult *trace)
+{
+   (void)fNoMonsters;
+   (void)hullNumber;
+   (void)pentToSkip;
+   const Vector start(v1[0], v1[1], v1[2]);
+   const Vector end(v2[0], v2[1], v2[2]);
+   const float length = (end - start).Length();
+   const float horizontal = (end - start).Make2D().Length();
+   const qboolean unsafe_platform = fabs(start.x) < 200.0f &&
+      start.y > 650.0f;
+
+   memset(trace, 0, sizeof(*trace));
+   trace->flFraction = 1.0f;
+   trace->vecEndPos[0] = end.x;
+   trace->vecEndPos[1] = end.y;
+   trace->vecEndPos[2] = end.z;
+
+   if (end.z < start.z - 20.0f && horizontal < 1.0f &&
+       !unsafe_platform)
+   {
+      trace->flFraction = 0.5f;
+      const Vector hit = (start + end) * 0.5f;
+      trace->vecEndPos[0] = hit.x;
+      trace->vecEndPos[1] = hit.y;
+      trace->vecEndPos[2] = hit.z;
+      trace->vecPlaneNormal[2] = 1.0f;
+   }
+   else if (!unsafe_platform && fabs(start.x) > 350.0f &&
+            start.y > 350.0f && length <= 140.0f)
+   {
+      // The two balcony candidates have a rear/side backstop. Long traces to
+      // tactical lanes remain clear.
+      trace->flFraction = 0.5f;
+      const Vector hit = (start + end) * 0.5f;
+      trace->vecEndPos[0] = hit.x;
+      trace->vecEndPos[1] = hit.y;
+      trace->vecEndPos[2] = hit.z;
+   }
 }
 
 
@@ -662,6 +719,151 @@ static int test_crossbow_balcony_hold_and_cancellation(void)
 }
 
 
+static int test_gauss_elevated_overwatch_goal(void)
+{
+   TEST("Crossfire Gauss bot selects an elevated overwatch goal");
+   const float gauss_hold_min_time = 15.0f;
+   const float gauss_hold_max_time = 30.0f;
+   const float gauss_no_target_timeout = 10.0f;
+   const float gauss_hold_retry_delay = 10.0f;
+
+   setup_crossfire();
+   num_waypoints = 6;
+   waypoints[0].flags = 0;
+   waypoints[0].itemflags = 0;
+   waypoints[0].origin = Vector(-900.0f, 0.0f, -1720.0f);
+   waypoints[1].flags = 0;
+   waypoints[1].itemflags = 0;
+   waypoints[1].origin = Vector(0.0f, 0.0f, -1720.0f);
+   waypoints[2].flags = W_FL_AIMING;
+   waypoints[2].itemflags = 0;
+   waypoints[2].origin = Vector(-500.0f, 500.0f, -1480.0f);
+   waypoints[3].flags = W_FL_AIMING;
+   waypoints[3].itemflags = 0;
+   waypoints[3].origin = Vector(500.0f, 500.0f, -1480.0f);
+   waypoints[4].flags = W_FL_AIMING;
+   waypoints[4].itemflags = 0;
+   waypoints[4].origin = Vector(0.0f, 800.0f, -1400.0f);
+   waypoints[5].flags = 0;
+   waypoints[5].itemflags = 0;
+   waypoints[5].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   mock_route_distances[0] = 0.0f;
+   mock_route_distances[1] = 100.0f;
+   mock_route_distances[2] = 300.0f;
+   mock_route_distances[3] = 320.0f;
+   mock_route_distances[4] = 50.0f;
+   mock_route_distances[5] = 1400.0f;
+   mock_trace_line_fn = trace_gauss_overwatch_geometry;
+
+   setup_gauss_bot(bots[0], mock_alloc_edict(), waypoints[0].origin);
+   strcpy(bots[0].name, "GaussHoldBot");
+   bots[0].pBotEnemy = mock_alloc_edict();
+   bots[0].pBotEnemy->v.flags = FL_CLIENT;
+   bots[0].pBotEnemy->v.origin = Vector(0.0f, -600.0f, -1720.0f);
+
+   bot_weapon_select_t *gauss = GetWeaponSelect(VALVE_WEAPON_GAUSS);
+   ASSERT_PTR_NOT_NULL(gauss);
+   ASSERT_TRUE(BotIsCarryingWeapon(bots[0], VALVE_WEAPON_GAUSS));
+   ASSERT_TRUE(BotCanUseWeapon(bots[0], *gauss));
+   ASSERT_TRUE(IsValidSecondaryAttack(
+      bots[0], *gauss, 1000.0f, 0.0f, FALSE));
+
+   const qboolean assigned = MapProfileEnsureStrategicGoal(bots[0]);
+   ASSERT_TRUE(assigned);
+   ASSERT_TRUE(MapProfileIsStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+   ASSERT_TRUE(bots[0].waypoint_goal == 2 || bots[0].waypoint_goal == 3);
+   ASSERT_INT(bots[0].waypoint_goal == 4, FALSE);
+   ASSERT_TRUE(waypoints[bots[0].waypoint_goal].origin.z >
+      waypoints[1].origin.z);
+   ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[0]));
+
+   // A carried crossbow does not oscillate a valid Gauss hold back to the
+   // lower-priority precision weapon.
+   bots[0].pEdict->v.weapons |= (1u << VALVE_WEAPON_CROSSBOW);
+   bots[0].m_rgAmmo[4] = 5;
+   const int first_goal = bots[0].waypoint_goal;
+   const qboolean maintained = MapProfileEnsureStrategicGoal(bots[0]);
+   ASSERT_TRUE(maintained);
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+   ASSERT_INT(bots[0].waypoint_goal, first_goal);
+
+   setup_gauss_bot(bots[1], mock_alloc_edict(), waypoints[0].origin);
+   strcpy(bots[1].name, "GaussHoldBot2");
+   const int alternate_goal = first_goal == 2 ? 3 : 2;
+   mock_route_distances[first_goal] = 0.0f;
+   mock_route_distances[alternate_goal] = 3000.0f;
+   const qboolean second_assigned = MapProfileEnsureStrategicGoal(bots[1]);
+   ASSERT_TRUE(second_assigned);
+   ASSERT_INT(bots[1].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+   ASSERT_TRUE(bots[1].waypoint_goal == 2 || bots[1].waypoint_goal == 3);
+   ASSERT_TRUE(bots[1].waypoint_goal != first_goal);
+
+   // A trace dedup marker can outlive the event that produced it. Only a
+   // recent real stuck signal is allowed to cancel an active approach.
+   bots[1].trace_last_stuck_wpt = bots[1].curr_waypoint_index;
+   bots[1].f_last_stuck_time = gpGlobals->time - 2.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[1]));
+   bots[1].f_last_stuck_time = gpGlobals->time;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[1]));
+   gpGlobals->time += 1.0f;
+   bots[1].f_last_stuck_time = gpGlobals->time;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[1]));
+   gpGlobals->time += 1.1f;
+   bots[1].f_last_stuck_time = gpGlobals->time;
+   ASSERT_FALSE(MapProfileEnsureStrategicGoal(bots[1]));
+   ASSERT_FALSE(MapProfileIsStrategicGoal(bots[1]));
+
+   // Approach time is not charged against the hold window or no-target
+   // timeout. A route to a distant balcony must survive long enough to arrive.
+   edict_t *first_enemy = bots[0].pBotEnemy;
+   bots[0].pBotEnemy = NULL;
+   gpGlobals->time += gauss_hold_max_time + 0.1f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].waypoint_goal, first_goal);
+
+   bots[0].pEdict->v.origin = waypoints[first_goal].origin;
+   bots[0].curr_waypoint_index = first_goal;
+   bots[0].f_move_speed = 320.0f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[0]));
+   ASSERT_FLOAT(bots[0].f_move_speed, 0.0f);
+   ASSERT_TRUE(bots[0].f_waypoint_goal_time - gpGlobals->time >=
+      gauss_hold_min_time);
+   ASSERT_TRUE(bots[0].f_waypoint_goal_time - gpGlobals->time <=
+      gauss_hold_max_time);
+
+   gpGlobals->time += gauss_no_target_timeout + 0.1f;
+   ASSERT_FALSE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_FALSE(MapProfileIsStrategicGoal(bots[0]));
+
+   gpGlobals->time += gauss_hold_retry_delay + 0.1f;
+   bots[0].pBotEnemy = first_enemy;
+   bots[0].pEdict->v.origin = waypoints[0].origin;
+   bots[0].curr_waypoint_index = 0;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   bots[0].m_rgAmmo[6] = 2;
+   ASSERT_FALSE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_FALSE(MapProfileIsStrategicGoal(bots[0]));
+
+   gpGlobals->time += 10.1f;
+   bots[0].m_rgAmmo[6] = 30;
+   bots[0].pEdict->v.origin = waypoints[0].origin;
+   bots[0].curr_waypoint_index = 0;
+   const qboolean reassigned = MapProfileEnsureStrategicGoal(bots[0]);
+   ASSERT_TRUE(reassigned);
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].wpt_goal_type, WPT_GOAL_BUNKER);
+   ASSERT_INT(bots[0].waypoint_goal, 5);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -677,6 +879,7 @@ int main(void)
    fail |= test_bots_use_both_tower_shafts_for_bunker_ingress();
    fail |= test_closing_main_door_reroutes_central_bot_to_shaft();
    fail |= test_crossbow_balcony_hold_and_cancellation();
+   fail |= test_gauss_elevated_overwatch_goal();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

@@ -319,7 +319,7 @@ static int test_skill_checks(void)
    }
    PASS();
 
-   TEST("Gauss secondary uses physical range and a useful uranium minimum");
+   TEST("Gauss secondary uses physical range down to contact distance");
    edict_t *enemy = mock_alloc_edict();
    bot.pBotEnemy = enemy;
    pe->v.weapons = (1u << VALVE_WEAPON_GAUSS);
@@ -327,15 +327,18 @@ static int test_skill_checks(void)
 
    enemy->v.origin = Vector(250.0f, 0.0f, 0.0f);
    ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
-      1000.0f, 0.0f, FALSE), FALSE);
+      1000.0f, 0.0f, FALSE), TRUE);
 
    enemy->v.origin = Vector(900.0f, 0.0f, 0.0f);
    ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
       50.0f, 0.0f, FALSE), TRUE);
 
-   bot.m_rgAmmo[6] = 5;
+   bot.m_rgAmmo[6] = 3;
    ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
-      900.0f, 0.0f, FALSE), FALSE);
+      64.0f, 0.0f, FALSE), TRUE);
+   bot.m_rgAmmo[6] = 2;
+   ASSERT_INT(IsValidSecondaryAttack(bot, *gauss,
+      64.0f, 0.0f, FALSE), FALSE);
    PASS();
 
    TEST("Glock secondary fire is available to skill 5 bots");
@@ -1136,17 +1139,45 @@ static int test_BotGetBetterWeaponChoice(void)
    ASSERT_INT(idx, -1);
    PASS();
 
-   TEST("skill 5 switches from Glock to a carried Gauss");
+   TEST("skill 5 switches from Glock to Gauss secondary at all ranges");
    pe->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
       (1u << VALVE_WEAPON_GAUSS);
-   bot.weapon_skill = SKILL5;
    bot.m_rgAmmo[1] = 50;
    bot.m_rgAmmo[6] = 50;
-   idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
-      1000.0f, 0.0f, &use_primary, &use_secondary);
+   const float gauss_distances[] = {64.0f, 128.0f, 300.0f, 700.0f,
+      1400.0f};
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+   {
+      bot.weapon_skill = skill;
+      for (int distance_index = 0; distance_index < 5; distance_index++)
+      {
+         idx = BotGetBetterWeaponChoice(bot, *glock, weapon_select,
+            gauss_distances[distance_index], 0.0f,
+            &use_primary, &use_secondary);
+         ASSERT_TRUE(idx >= 0);
+         ASSERT_INT(weapon_select[idx].iId, VALVE_WEAPON_GAUSS);
+         ASSERT_INT(use_primary, FALSE);
+         ASSERT_INT(use_secondary, TRUE);
+      }
+   }
+   PASS();
+
+   TEST("Gauss overwatch switches from a valid shotgun to Gauss secondary");
+   bot_weapon_select_t *shotgun = GetWeaponSelect(VALVE_WEAPON_SHOTGUN);
+   ASSERT_PTR_NOT_NULL(shotgun);
+   pe->v.weapons = (1u << VALVE_WEAPON_SHOTGUN) |
+      (1u << VALVE_WEAPON_GAUSS);
+   bot.weapon_skill = SKILL5;
+   bot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   bot.m_rgAmmo[3] = 20;
+   bot.m_rgAmmo[6] = 50;
+   idx = BotGetBetterWeaponChoice(bot, *shotgun, weapon_select,
+      900.0f, 0.0f, &use_primary, &use_secondary);
    ASSERT_TRUE(idx >= 0);
    ASSERT_INT(weapon_select[idx].iId, VALVE_WEAPON_GAUSS);
-   ASSERT_TRUE(use_primary || use_secondary);
+   ASSERT_INT(use_primary, FALSE);
+   ASSERT_INT(use_secondary, TRUE);
+   bot.wpt_goal_type = WPT_GOAL_NONE;
    PASS();
 
    return 0;

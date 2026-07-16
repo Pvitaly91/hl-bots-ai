@@ -137,6 +137,7 @@ static void BotSpawnInit_TimersAndPhysics( bot_t &pBot )
    pBot.ammo_goal_zone_load = -1;
    pBot.b_weak_retreat_goal = FALSE;
    pBot.trace_last_stuck_wpt = -2;
+   pBot.f_last_stuck_time = 0.0f;
    pBot.b_narrow_path = FALSE;
    pBot.v_prev_waypoint_origin = Vector(0, 0, 0);
    pBot.f_waypoint_goal_time = 0.0;
@@ -189,7 +190,11 @@ static void BotSpawnInit_CombatState( bot_t &pBot )
    pBot.f_gauss_secondary_cooldown_time = 0.0f;
    pBot.f_gauss_secondary_lost_time = 0.0f;
    pBot.f_gauss_secondary_trace_time = 0.0f;
+   pBot.f_gauss_secondary_planned_charge = 0.0f;
+   pBot.f_gauss_secondary_distance_at_start = 0.0f;
+   pBot.f_gauss_secondary_last_plan_distance = 0.0f;
    pBot.gauss_secondary_ammo_before = 0;
+   pBot.gauss_secondary_required_ammo = 0;
    pBot.gauss_secondary_self_health_before = 0.0f;
    pBot.gauss_secondary_target_health_before = 0.0f;
    pBot.pGaussSecondaryTarget = NULL;
@@ -2628,6 +2633,7 @@ static void BotWanderHandleStuck(bot_t &pBot, float moved_distance)
    if ((moved_distance <= 1.0f) && (pBot.f_prev_speed >= 1.0f) && pBot.b_in_water)
    {
       // the bot must be stuck!
+      pBot.f_last_stuck_time = gpGlobals->time;
 
       pBot.f_dont_avoid_wall_time = gpGlobals->time + 1.0;
       pBot.f_look_for_waypoint_time = gpGlobals->time + 1.0;
@@ -2642,6 +2648,7 @@ static void BotWanderHandleStuck(bot_t &pBot, float moved_distance)
       qboolean bCrouchJump = FALSE;
 
       // the bot must be stuck!
+      pBot.f_last_stuck_time = gpGlobals->time;
       if (pBot.trace_last_stuck_wpt != pBot.curr_waypoint_index)
       {
          BotTrace(pBot, "stuck: wpt=%d goal=%d", pBot.curr_waypoint_index, pBot.waypoint_goal);

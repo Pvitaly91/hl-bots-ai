@@ -585,10 +585,6 @@ qboolean IsValidSecondaryAttack(bot_t &pBot, const bot_weapon_select_t &select, 
    if (weapon_index == VALVE_WEAPON_GLOCK && range_distance >
        BOT_GLOCK_SECONDARY_OPPORTUNISTIC_DISTANCE)
       secondary_in_range = FALSE;
-   if (weapon_index == VALVE_WEAPON_GAUSS && range_distance <
-       BOT_GAUSS_SECONDARY_MIN_DISTANCE)
-      secondary_in_range = FALSE;
-
    // see if there is enough secondary ammo AND
    // the bot is far enough away to use secondary fire AND
    // the bot is close enough to the enemy to use secondary fire
@@ -1253,6 +1249,32 @@ int BotGetBetterWeaponChoice(bot_t &pBot, const bot_weapon_select_t &current, co
    *use_primary = FALSE;
    *use_secondary = FALSE;
 
+   // A Gauss overwatch goal is a weapon commitment, not merely a movement
+   // hint. Without this branch a valid shotgun/RPG reuse path can keep the bot
+   // from ever firing the Gauss after reaching its hold position.
+   if (pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD &&
+       current.iId != VALVE_WEAPON_GAUSS)
+   {
+      select_index = -1;
+      while (pSelect[++select_index].iId)
+      {
+         if (pSelect[select_index].iId != VALVE_WEAPON_GAUSS)
+            continue;
+
+         *use_secondary =
+            IsValidWeaponChoose(pBot, pSelect[select_index]) &&
+            IsValidToFireAtTheMoment(pBot, pSelect[select_index]) &&
+            BotSkilledEnoughForSecondaryAttack(pBot, pSelect[select_index]) &&
+            IsValidSecondaryAttack(pBot, pSelect[select_index],
+               distance, height, FALSE);
+         if (*use_secondary)
+            return select_index;
+         break;
+      }
+
+      *use_secondary = FALSE;
+   }
+
    // The normal reuse policy deliberately keeps a valid current weapon. The
    // Crossfire live loadout exposed one narrow exception: Glock otherwise
    // prevents a carried crossbow from ever being reconsidered at range.
@@ -1302,6 +1324,11 @@ int BotGetBetterWeaponChoice(bot_t &pBot, const bot_weapon_select_t &current, co
             BotSkilledEnoughForSecondaryAttack(pBot, pSelect[select_index]) &&
             IsValidSecondaryAttack(pBot, pSelect[select_index],
                distance, height, FALSE);
+
+         // Charged fire is the normal Gauss attack. Combat code may restore
+         // primary only after a concrete safety or ammo block.
+         if (*use_secondary)
+            *use_primary = FALSE;
 
          if (*use_primary || *use_secondary)
             return select_index;

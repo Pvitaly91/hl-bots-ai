@@ -17,6 +17,7 @@
 #include "map_profile_crossfire.h"
 
 extern bot_t bots[32];
+extern bot_weapon_t weapon_defs[MAX_WEAPONS];
 extern WAYPOINT waypoints[MAX_WAYPOINTS];
 extern int num_waypoints;
 
@@ -62,6 +63,25 @@ static const float CROSSFIRE_CROSSBOW_NO_TARGET_TIMEOUT = 4.0f;
 static const float CROSSFIRE_CROSSBOW_CRITICAL_HEALTH = 25.0f;
 static const float CROSSFIRE_CROSSBOW_COVER_TRACE_DISTANCE = 96.0f;
 static const float CROSSFIRE_CROSSBOW_MAX_TARGET_DISTANCE = 2600.0f;
+static const float CROSSFIRE_GAUSS_HOLD_ARRIVAL_DISTANCE =
+   BOT_GAUSS_OVERWATCH_ARRIVAL_DISTANCE;
+static const float CROSSFIRE_GAUSS_HOLD_MIN_TIME = 15.0f;
+static const float CROSSFIRE_GAUSS_HOLD_MAX_TIME = 30.0f;
+static const float CROSSFIRE_GAUSS_HOLD_RETRY_DELAY = 10.0f;
+static const float CROSSFIRE_GAUSS_NO_TARGET_TIMEOUT = 10.0f;
+static const float CROSSFIRE_RECENT_STUCK_WINDOW = 1.25f;
+static const float CROSSFIRE_STUCK_CONFIRM_TIME = 2.0f;
+static const float CROSSFIRE_GAUSS_CRITICAL_HEALTH = 25.0f;
+static const float CROSSFIRE_GAUSS_MIN_ELEVATION = 120.0f;
+static const float CROSSFIRE_GAUSS_CENTRAL_YARD_HEIGHT = -1720.0f;
+static const float CROSSFIRE_GAUSS_RESERVATION_RADIUS = 360.0f;
+static const float CROSSFIRE_GAUSS_RECOIL_DISTANCE = 128.0f;
+static const float CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH = 96.0f;
+static const float CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET = 32.0f;
+static const float CROSSFIRE_GAUSS_MAX_TARGET_DISTANCE = 3000.0f;
+static const int CROSSFIRE_GAUSS_MIN_VISIBLE_LANES = 2;
+static const int CROSSFIRE_GAUSS_HOLD_START_MIN_AMMO =
+   BOT_GAUSS_SECONDARY_MIN_AMMO * 3;
 static const int CROSSFIRE_MAX_MAIN_DOORS = 4;
 static const int AMBIENT_SOUND_STOP_FLAG = (1 << 5);
 
@@ -87,6 +107,24 @@ enum CrossfireShaftStage
    CROSSFIRE_SHAFT_STAGE_JUMP
 };
 
+enum CrossfirePrecisionHoldMode
+{
+   CROSSFIRE_PRECISION_HOLD_NONE = 0,
+   CROSSFIRE_PRECISION_HOLD_CROSSBOW,
+   CROSSFIRE_PRECISION_HOLD_GAUSS
+};
+
+typedef struct
+{
+   float route_distance;
+   float elevation;
+   int visible_lanes;
+   int cover;
+   int recoil_safe_lanes;
+   int reservations;
+   float score;
+} crossfire_gauss_hold_score_t;
+
 static float g_crossfire_strike_end_time = 0.0f;
 static float g_crossfire_strike_start_time = 0.0f;
 static float g_crossfire_next_bot_strike_time = 0.0f;
@@ -109,11 +147,13 @@ static float g_crossfire_shaft_roof_cover_fire_end[32];
 static qboolean g_crossfire_bunker_defender_logged[32];
 static qboolean g_crossfire_force_shaft_route[32];
 static qboolean g_crossfire_shaft_routes_active = FALSE;
-static int g_crossfire_crossbow_hold_goal[32];
-static float g_crossfire_crossbow_hold_until[32];
-static float g_crossfire_crossbow_last_target_time[32];
-static float g_crossfire_crossbow_hold_retry_time[32];
-static qboolean g_crossfire_crossbow_hold_logged[32];
+static int g_crossfire_precision_hold_mode[32];
+static int g_crossfire_precision_hold_goal[32];
+static float g_crossfire_precision_hold_until[32];
+static float g_crossfire_precision_last_target_time[32];
+static float g_crossfire_precision_hold_retry_time[32];
+static float g_crossfire_precision_stuck_since[32];
+static qboolean g_crossfire_precision_hold_arrived[32];
 
 static void CrossfireTacticsReset(void);
 static void CrossfireTacticsOnEntitySpawn(edict_t *entity);
@@ -136,11 +176,11 @@ static qboolean CrossfireTacticsIsBunkerDefender(const bot_t &pBot);
 static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot);
 static qboolean CrossfireTacticsCanNoticeCombatTarget(
    const bot_t &pBot, const edict_t *target);
-static void CrossfireTacticsClearCrossbowHold(
+static void CrossfireTacticsClearPrecisionHold(
    int bot_index, const char *reason);
-static qboolean CrossfireTacticsEnsureCrossbowHoldGoal(bot_t &pBot);
-static qboolean CrossfireTacticsHandleCrossbowHoldMovement(bot_t &pBot);
-static qboolean CrossfireTacticsIsCrossbowHoldActive(const bot_t &pBot);
+static qboolean CrossfireTacticsEnsurePrecisionHoldGoal(bot_t &pBot);
+static qboolean CrossfireTacticsHandlePrecisionHoldMovement(bot_t &pBot);
+static qboolean CrossfireTacticsIsPrecisionHoldActive(const bot_t &pBot);
 
 
 static qboolean CrossfireTacticsIsCrossfire(void)
@@ -219,6 +259,33 @@ static qboolean CrossfireTacticsHasUsableCrossbow(const bot_t &pBot)
 }
 
 
+static qboolean CrossfireTacticsHasUsableGauss(const bot_t &pBot)
+{
+   if (pBot.pEdict == NULL || pBot.pEdict->free)
+      return FALSE;
+
+   bot_weapon_select_t *select = GetWeaponSelect(VALVE_WEAPON_GAUSS);
+   if (select == NULL ||
+       !BotIsCarryingWeapon(const_cast<bot_t &>(pBot), VALVE_WEAPON_GAUSS) ||
+       !BotCanUseWeapon(const_cast<bot_t &>(pBot), *select))
+      return FALSE;
+
+   return IsValidSecondaryAttack(const_cast<bot_t &>(pBot), *select,
+      0.0f, 0.0f, TRUE);
+}
+
+
+static qboolean CrossfireTacticsCanStartGaussHold(const bot_t &pBot)
+{
+   if (!CrossfireTacticsHasUsableGauss(pBot))
+      return FALSE;
+
+   const int ammo_index = weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1;
+   return ammo_index >= 0 && ammo_index < MAX_AMMO_SLOTS &&
+      pBot.m_rgAmmo[ammo_index] >= CROSSFIRE_GAUSS_HOLD_START_MIN_AMMO;
+}
+
+
 static qboolean CrossfireTacticsHasCloseThreat(const bot_t &pBot)
 {
    if (FNullEnt(pBot.pBotEnemy))
@@ -289,7 +356,7 @@ static int CrossfireTacticsCountWaypointCover(
 }
 
 
-static int CrossfireTacticsCrossbowHoldReservations(
+static int CrossfireTacticsPrecisionHoldReservations(
    int waypoint_index, const bot_t &pBot)
 {
    int reservations = 0;
@@ -299,7 +366,7 @@ static int CrossfireTacticsCrossbowHoldReservations(
       if (!bots[index].is_used || &bots[index] == &pBot)
          continue;
 
-      if (g_crossfire_crossbow_hold_goal[index] == waypoint_index)
+      if (g_crossfire_precision_hold_goal[index] == waypoint_index)
          reservations++;
    }
 
@@ -347,7 +414,7 @@ static int CrossfireTacticsFindCrossbowHoldWaypoint(
          pBot, waypoint.origin);
       float score = route_distance - anchor_distance * 0.25f -
          cover * 160.0f +
-         CrossfireTacticsCrossbowHoldReservations(index, pBot) * 256.0f;
+         CrossfireTacticsPrecisionHoldReservations(index, pBot) * 256.0f;
 
       if (waypoint.flags & W_FL_AIMING)
          score -= 200.0f;
@@ -365,108 +432,377 @@ static int CrossfireTacticsFindCrossbowHoldWaypoint(
 }
 
 
-static void CrossfireTacticsClearCrossbowHold(
+static Vector CrossfireTacticsGaussLaneTarget(int lane)
+{
+   // Named Crossfire sectors, deliberately not candidate waypoints.
+   switch (lane)
+   {
+      case 0: return Vector(0.0f, -600.0f, -1720.0f);   // central yard
+      case 1: return Vector(0.0f, 300.0f, -1720.0f);    // lower central
+      case 2: return Vector(0.0f, -1250.0f, -1500.0f);  // opposite balcony
+      case 3: return Vector(-850.0f, -350.0f, -1680.0f);// west ramp
+      case 4: return Vector(750.0f, -1550.0f, -1760.0f);// bunker approach
+      default: return Vector(650.0f, 650.0f, -1640.0f); // tower approach
+   }
+}
+
+
+static qboolean CrossfireTacticsHasFloorBelow(
+   const bot_t &pBot, const Vector &origin, float depth)
+{
+   TraceResult trace;
+   const Vector start = origin + Vector(0.0f, 0.0f, 24.0f);
+   UTIL_TraceLine(start, origin - Vector(0.0f, 0.0f, depth),
+      ignore_monsters, pBot.pEdict->v.pContainingEntity, &trace);
+   return !trace.fStartSolid && trace.flFraction < 0.95f;
+}
+
+
+static qboolean CrossfireTacticsGaussLaneVisible(
+   const bot_t &pBot, const Vector &origin, const Vector &target)
+{
+   TraceResult trace;
+   UTIL_TraceLine(origin + Vector(0.0f, 0.0f, 36.0f),
+      target + Vector(0.0f, 0.0f, 36.0f), ignore_monsters,
+      pBot.pEdict->v.pContainingEntity, &trace);
+   return !trace.fStartSolid && trace.flFraction > 0.95f;
+}
+
+
+static qboolean CrossfireTacticsGaussLaneHasSafeRecoil(
+   const bot_t &pBot, const Vector &origin, const Vector &target)
+{
+   Vector forward = target - origin;
+   forward.z = 0.0f;
+   if (forward.Length() < 1.0f)
+      return FALSE;
+   forward = forward.Normalize();
+
+   const Vector start = origin + Vector(0.0f, 0.0f, 18.0f);
+   const Vector recoil = origin - forward * CROSSFIRE_GAUSS_RECOIL_DISTANCE;
+   TraceResult back_trace;
+   UTIL_TraceLine(start, recoil + Vector(0.0f, 0.0f, 18.0f),
+      ignore_monsters, pBot.pEdict->v.pContainingEntity, &back_trace);
+
+   // A close backstop arrests recoil before the bot can reach an edge.
+   if (!back_trace.fStartSolid && back_trace.flFraction < 0.95f)
+      return TRUE;
+
+   const Vector side(-forward.y, forward.x, 0.0f);
+   return CrossfireTacticsHasFloorBelow(pBot, recoil,
+             CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH) &&
+      CrossfireTacticsHasFloorBelow(pBot,
+         recoil + side * CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET,
+         CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH) &&
+      CrossfireTacticsHasFloorBelow(pBot,
+         recoil - side * CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET,
+         CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH);
+}
+
+
+static int CrossfireTacticsGaussHoldReservations(
+   int waypoint_index, const bot_t &pBot)
+{
+   int reservations = 0;
+   for (int index = 0; index < 32; index++)
+   {
+      if (!bots[index].is_used || &bots[index] == &pBot ||
+          g_crossfire_precision_hold_mode[index] !=
+             CROSSFIRE_PRECISION_HOLD_GAUSS)
+         continue;
+
+      const int goal = g_crossfire_precision_hold_goal[index];
+      if (goal < 0 || goal >= num_waypoints)
+         continue;
+
+      if ((waypoints[goal].origin - waypoints[waypoint_index].origin).
+             Make2D().Length() <= CROSSFIRE_GAUSS_RESERVATION_RADIUS)
+         reservations++;
+   }
+   return reservations;
+}
+
+
+static int CrossfireTacticsFindGaussHoldWaypoint(
+   const bot_t &pBot, crossfire_gauss_hold_score_t *selected_score)
+{
+   int best_index = -1;
+   float best_score = 999999.0f;
+   crossfire_gauss_hold_score_t best_breakdown;
+   memset(&best_breakdown, 0, sizeof(best_breakdown));
+
+   // Prefer an unoccupied zone even when its route score is much worse.
+   // If every safe reachable candidate is reserved, fall back to the normal
+   // load-penalized score rather than leaving the bot without a goal.
+   for (int reservation_pass = 0;
+        reservation_pass < 2 && best_index == -1; reservation_pass++)
+   {
+      best_score = 999999.0f;
+      for (int index = 0; index < num_waypoints; index++)
+      {
+         const WAYPOINT &waypoint = waypoints[index];
+         if (waypoint.flags & (W_FL_DELETED | W_FL_WEAPON | W_FL_AMMO |
+             W_FL_HEALTH | W_FL_ARMOR | W_FL_LONGJUMP |
+             W_FL_LADDER | W_FL_JUMP | W_FL_DOOR |
+             W_FL_LIFT_START | W_FL_LIFT_END))
+            continue;
+
+         const float elevation = waypoint.origin.z -
+            CROSSFIRE_GAUSS_CENTRAL_YARD_HEIGHT;
+         if (elevation < CROSSFIRE_GAUSS_MIN_ELEVATION ||
+             !CrossfireTacticsHasFloorBelow(pBot, waypoint.origin, 64.0f))
+            continue;
+
+         float route_distance;
+         if (pBot.curr_waypoint_index >= 0 &&
+             pBot.curr_waypoint_index < num_waypoints)
+         {
+            route_distance = WaypointDistanceFromTo(
+               pBot.curr_waypoint_index, index);
+            if (route_distance >= WAYPOINT_UNREACHABLE)
+               continue;
+         }
+         else
+            route_distance =
+               (waypoint.origin - pBot.pEdict->v.origin).Length();
+
+         int visible_lanes = 0;
+         int recoil_safe_lanes = 0;
+         for (int lane = 0; lane < 6; lane++)
+         {
+            const Vector target = CrossfireTacticsGaussLaneTarget(lane);
+            if (!CrossfireTacticsGaussLaneVisible(
+                   pBot, waypoint.origin, target))
+               continue;
+            visible_lanes++;
+            if (CrossfireTacticsGaussLaneHasSafeRecoil(
+                   pBot, waypoint.origin, target))
+               recoil_safe_lanes++;
+         }
+
+         if (visible_lanes < CROSSFIRE_GAUSS_MIN_VISIBLE_LANES ||
+             recoil_safe_lanes * 2 < visible_lanes)
+            continue;
+
+         const int cover = CrossfireTacticsCountWaypointCover(
+            pBot, waypoint.origin);
+         const int reservations = CrossfireTacticsGaussHoldReservations(
+            index, pBot);
+         if (reservation_pass == 0 && reservations > 0)
+            continue;
+
+         const int unsafe_lanes = visible_lanes - recoil_safe_lanes;
+         float score = route_distance - elevation * 1.25f -
+            visible_lanes * 150.0f - cover * 120.0f -
+            recoil_safe_lanes * 140.0f + unsafe_lanes * 280.0f +
+            reservations * 1200.0f;
+         if (waypoint.flags & W_FL_AIMING)
+            score -= 200.0f;
+         if (waypoint.flags & W_FL_CROUCH)
+            score -= 80.0f;
+
+         if (score < best_score)
+         {
+            best_score = score;
+            best_index = index;
+            best_breakdown.route_distance = route_distance;
+            best_breakdown.elevation = elevation;
+            best_breakdown.visible_lanes = visible_lanes;
+            best_breakdown.cover = cover;
+            best_breakdown.recoil_safe_lanes = recoil_safe_lanes;
+            best_breakdown.reservations = reservations;
+            best_breakdown.score = score;
+         }
+      }
+   }
+
+   if (selected_score != NULL)
+      *selected_score = best_breakdown;
+   return best_index;
+}
+
+
+static int CrossfireTacticsPrecisionHoldGoalType(int mode)
+{
+   return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+      WPT_GOAL_GAUSS_HOLD : WPT_GOAL_CROSSBOW_HOLD;
+}
+
+
+static void CrossfireTacticsClearPrecisionHold(
    int bot_index, const char *reason)
 {
    if (bot_index < 0 || bot_index >= 32)
       return;
 
    bot_t &bot = bots[bot_index];
-   const qboolean had_hold = g_crossfire_crossbow_hold_goal[bot_index] >= 0;
+   const int mode = g_crossfire_precision_hold_mode[bot_index];
+   const int goal = g_crossfire_precision_hold_goal[bot_index];
+   const qboolean had_hold = mode != CROSSFIRE_PRECISION_HOLD_NONE &&
+      goal >= 0;
 
-   if (bot.wpt_goal_type == WPT_GOAL_CROSSBOW_HOLD)
+   if (bot.wpt_goal_type == WPT_GOAL_CROSSBOW_HOLD ||
+       bot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD)
    {
       bot.wpt_goal_type = WPT_GOAL_NONE;
       bot.waypoint_goal = -1;
       bot.f_waypoint_goal_time = 0.0f;
    }
 
-   g_crossfire_crossbow_hold_goal[bot_index] = -1;
-   g_crossfire_crossbow_hold_until[bot_index] = 0.0f;
-   g_crossfire_crossbow_last_target_time[bot_index] = 0.0f;
-   g_crossfire_crossbow_hold_logged[bot_index] = FALSE;
+   g_crossfire_precision_hold_mode[bot_index] =
+      CROSSFIRE_PRECISION_HOLD_NONE;
+   g_crossfire_precision_hold_goal[bot_index] = -1;
+   g_crossfire_precision_hold_until[bot_index] = 0.0f;
+   g_crossfire_precision_last_target_time[bot_index] = 0.0f;
+   g_crossfire_precision_stuck_since[bot_index] = 0.0f;
+   g_crossfire_precision_hold_arrived[bot_index] = FALSE;
 
    if (reason == NULL)
-      g_crossfire_crossbow_hold_retry_time[bot_index] = 0.0f;
+      g_crossfire_precision_hold_retry_time[bot_index] = 0.0f;
    else if (had_hold)
-      g_crossfire_crossbow_hold_retry_time[bot_index] = gpGlobals->time +
-         CROSSFIRE_CROSSBOW_HOLD_RETRY_DELAY;
+      g_crossfire_precision_hold_retry_time[bot_index] = gpGlobals->time +
+         (mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+            CROSSFIRE_GAUSS_HOLD_RETRY_DELAY :
+            CROSSFIRE_CROSSBOW_HOLD_RETRY_DELAY);
 
    if (had_hold && reason != NULL && bot.name[0] != '\0')
-      UTIL_ConsolePrintf("[jk_botti] %s left Crossfire crossbow hold: %s",
-         bot.name, reason);
+   {
+      if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS)
+         UTIL_ConsolePrintf(
+            "[jk_botti] gauss_hold_left: bot=%s waypoint=%d reason=%s",
+            bot.name, goal, reason);
+      else
+         UTIL_ConsolePrintf("[jk_botti] %s left Crossfire crossbow hold: %s",
+            bot.name, reason);
+   }
 }
 
 
-static const char *CrossfireTacticsCrossbowHoldCancellationReason(
+static const char *CrossfireTacticsPrecisionHoldCancellationReason(
    const bot_t &pBot, int bot_index)
 {
+   const int mode = g_crossfire_precision_hold_mode[bot_index];
    if (CrossfireTacticsIsStrikeActive())
       return "strike";
    if (CrossfireTacticsIsBotStrikeActivator(pBot))
-      return "strike activator";
-   if (!CrossfireTacticsHasUsableCrossbow(pBot))
+      return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         "strike" : "strike activator";
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+       !BotIsCarryingWeapon(const_cast<bot_t &>(pBot), VALVE_WEAPON_GAUSS))
+      return "weapon_lost";
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+       !CrossfireTacticsHasUsableGauss(pBot))
+      return "no_ammo";
+   if (mode == CROSSFIRE_PRECISION_HOLD_CROSSBOW &&
+       !CrossfireTacticsHasUsableCrossbow(pBot))
       return "no usable crossbow bolts";
+   if (mode == CROSSFIRE_PRECISION_HOLD_CROSSBOW &&
+       CrossfireTacticsHasUsableGauss(pBot))
+      return "gauss priority";
    if (pBot.pEdict == NULL || pBot.pEdict->v.health <=
-       CROSSFIRE_CROSSBOW_CRITICAL_HEALTH)
-      return "low health";
-   if (CrossfireTacticsHasCloseThreat(pBot))
+        (mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+           CROSSFIRE_GAUSS_CRITICAL_HEALTH :
+           CROSSFIRE_CROSSBOW_CRITICAL_HEALTH))
+      return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         "low_health" : "low health";
+   if (mode == CROSSFIRE_PRECISION_HOLD_CROSSBOW &&
+       CrossfireTacticsHasCloseThreat(pBot))
       return "close threat";
    if (CrossfireTacticsHasImmediateDanger(pBot))
-      return "immediate danger";
-   if (g_crossfire_crossbow_hold_until[bot_index] <= gpGlobals->time)
-      return "hold window complete";
+      return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         "danger" : "immediate danger";
+   if (g_crossfire_precision_hold_until[bot_index] <= gpGlobals->time)
+   {
+      if (g_crossfire_precision_hold_arrived[bot_index])
+         return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+            "window_complete" : "hold window complete";
+   }
 
-   const int goal = g_crossfire_crossbow_hold_goal[bot_index];
+   const int goal = g_crossfire_precision_hold_goal[bot_index];
    if (goal < 0 || goal >= num_waypoints ||
        (waypoints[goal].flags & W_FL_DELETED))
-      return "position unavailable";
+      return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         "unreachable" : "position unavailable";
 
    const float physical_distance =
       (waypoints[goal].origin - pBot.pEdict->v.origin).Length();
+   const float arrival_distance =
+      mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         CROSSFIRE_GAUSS_HOLD_ARRIVAL_DISTANCE :
+         CROSSFIRE_CROSSBOW_HOLD_ARRIVAL_DISTANCE;
    if (pBot.curr_waypoint_index >= 0 &&
        pBot.curr_waypoint_index < num_waypoints &&
-       physical_distance > CROSSFIRE_CROSSBOW_HOLD_ARRIVAL_DISTANCE &&
+       physical_distance > arrival_distance &&
        WaypointDistanceFromTo(pBot.curr_waypoint_index, goal) >=
           WAYPOINT_UNREACHABLE)
-      return "position unreachable";
+      return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         "unreachable" : "position unreachable";
 
-   if (physical_distance > CROSSFIRE_CROSSBOW_HOLD_ARRIVAL_DISTANCE &&
-       pBot.trace_last_stuck_wpt == pBot.curr_waypoint_index)
-      return "stuck";
+   const qboolean recent_stuck = physical_distance > arrival_distance &&
+       pBot.trace_last_stuck_wpt == pBot.curr_waypoint_index &&
+       pBot.f_last_stuck_time > 0.0f &&
+       pBot.f_last_stuck_time + CROSSFIRE_RECENT_STUCK_WINDOW >
+          gpGlobals->time;
+   if (recent_stuck)
+   {
+      if (g_crossfire_precision_stuck_since[bot_index] <= 0.0f)
+         g_crossfire_precision_stuck_since[bot_index] = gpGlobals->time;
+      else if (g_crossfire_precision_stuck_since[bot_index] +
+               CROSSFIRE_STUCK_CONFIRM_TIME <= gpGlobals->time)
+         return "stuck";
+   }
+   else
+      g_crossfire_precision_stuck_since[bot_index] = 0.0f;
+
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+       physical_distance <= arrival_distance &&
+       !FNullEnt(pBot.pBotEnemy) &&
+       !CrossfireTacticsGaussLaneHasSafeRecoil(pBot,
+          pBot.pEdict->v.origin, pBot.pBotEnemy->v.origin))
+      return "unsafe_recoil";
 
    return NULL;
 }
 
 
-static qboolean CrossfireTacticsEnsureCrossbowHoldGoal(bot_t &pBot)
+static qboolean CrossfireTacticsEnsurePrecisionHoldGoal(bot_t &pBot)
 {
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
    if (bot_index < 0 || pBot.pEdict == NULL)
       return FALSE;
 
-   if (g_crossfire_crossbow_hold_goal[bot_index] >= 0)
+   if (g_crossfire_precision_hold_goal[bot_index] >= 0)
    {
-      const char *reason = CrossfireTacticsCrossbowHoldCancellationReason(
+      const int mode = g_crossfire_precision_hold_mode[bot_index];
+      const char *reason = CrossfireTacticsPrecisionHoldCancellationReason(
          pBot, bot_index);
       if (reason != NULL)
       {
-         CrossfireTacticsClearCrossbowHold(bot_index, reason);
+         CrossfireTacticsClearPrecisionHold(bot_index, reason);
          return FALSE;
       }
 
-      if (!FNullEnt(pBot.pBotEnemy))
-         g_crossfire_crossbow_last_target_time[bot_index] = gpGlobals->time;
-      else if (g_crossfire_crossbow_last_target_time[bot_index] +
-               CROSSFIRE_CROSSBOW_NO_TARGET_TIMEOUT <= gpGlobals->time)
+      if (g_crossfire_precision_hold_arrived[bot_index] &&
+          !FNullEnt(pBot.pBotEnemy))
+         g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+      else if (g_crossfire_precision_hold_arrived[bot_index] &&
+               g_crossfire_precision_last_target_time[bot_index] +
+                  (mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+                     CROSSFIRE_GAUSS_NO_TARGET_TIMEOUT :
+                     CROSSFIRE_CROSSBOW_NO_TARGET_TIMEOUT) <= gpGlobals->time)
       {
-         CrossfireTacticsClearCrossbowHold(bot_index, "no target");
+         CrossfireTacticsClearPrecisionHold(bot_index,
+            mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+               "no_target" : "no target");
          return FALSE;
       }
 
-      pBot.wpt_goal_type = WPT_GOAL_CROSSBOW_HOLD;
-      pBot.waypoint_goal = g_crossfire_crossbow_hold_goal[bot_index];
-      pBot.f_waypoint_goal_time = g_crossfire_crossbow_hold_until[bot_index];
+      pBot.wpt_goal_type = CrossfireTacticsPrecisionHoldGoalType(mode);
+      pBot.waypoint_goal = g_crossfire_precision_hold_goal[bot_index];
+      pBot.f_waypoint_goal_time =
+         g_crossfire_precision_hold_arrived[bot_index] ?
+            g_crossfire_precision_hold_until[bot_index] :
+            gpGlobals->time + 2.0f;
       pBot.pBotPickupItem = NULL;
       pBot.pTrackSoundEdict = NULL;
       pBot.f_track_sound_time = -1.0f;
@@ -476,48 +812,80 @@ static qboolean CrossfireTacticsEnsureCrossbowHoldGoal(bot_t &pBot)
 
    if (CrossfireTacticsIsStrikeActive() ||
        CrossfireTacticsIsBotStrikeActivator(pBot) ||
-       g_crossfire_crossbow_hold_retry_time[bot_index] > gpGlobals->time ||
-       !CrossfireTacticsHasUsableCrossbow(pBot) ||
-       pBot.pEdict->v.health <= CROSSFIRE_CROSSBOW_CRITICAL_HEALTH ||
-       CrossfireTacticsHasCloseThreat(pBot) ||
+       g_crossfire_precision_hold_retry_time[bot_index] > gpGlobals->time ||
+       pBot.pEdict->v.health <= CROSSFIRE_GAUSS_CRITICAL_HEALTH ||
        CrossfireTacticsHasImmediateDanger(pBot))
       return FALSE;
 
-   const int anchor = CrossfireTacticsFindCrossbowZoneAnchor(pBot);
-   const int goal = CrossfireTacticsFindCrossbowHoldWaypoint(pBot, anchor);
+   int mode = CROSSFIRE_PRECISION_HOLD_NONE;
+   int goal = -1;
+   crossfire_gauss_hold_score_t gauss_score;
+   memset(&gauss_score, 0, sizeof(gauss_score));
+
+   if (CrossfireTacticsCanStartGaussHold(pBot))
+   {
+      mode = CROSSFIRE_PRECISION_HOLD_GAUSS;
+      goal = CrossfireTacticsFindGaussHoldWaypoint(pBot, &gauss_score);
+   }
+   else if (CrossfireTacticsHasUsableCrossbow(pBot) &&
+            !CrossfireTacticsHasCloseThreat(pBot))
+   {
+      mode = CROSSFIRE_PRECISION_HOLD_CROSSBOW;
+      const int anchor = CrossfireTacticsFindCrossbowZoneAnchor(pBot);
+      goal = CrossfireTacticsFindCrossbowHoldWaypoint(pBot, anchor);
+   }
+
    if (goal < 0)
       return FALSE;
 
-   g_crossfire_crossbow_hold_goal[bot_index] = goal;
-   g_crossfire_crossbow_hold_until[bot_index] = gpGlobals->time +
-      RANDOM_FLOAT2(CROSSFIRE_CROSSBOW_HOLD_MIN_TIME,
-         CROSSFIRE_CROSSBOW_HOLD_MAX_TIME);
-   g_crossfire_crossbow_last_target_time[bot_index] = gpGlobals->time;
-   g_crossfire_crossbow_hold_logged[bot_index] = TRUE;
+   g_crossfire_precision_hold_mode[bot_index] = mode;
+   g_crossfire_precision_hold_goal[bot_index] = goal;
+   g_crossfire_precision_hold_until[bot_index] = gpGlobals->time +
+      (mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         RANDOM_FLOAT2(CROSSFIRE_GAUSS_HOLD_MIN_TIME,
+            CROSSFIRE_GAUSS_HOLD_MAX_TIME) :
+         RANDOM_FLOAT2(CROSSFIRE_CROSSBOW_HOLD_MIN_TIME,
+            CROSSFIRE_CROSSBOW_HOLD_MAX_TIME));
+   g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+   g_crossfire_precision_stuck_since[bot_index] = 0.0f;
+   g_crossfire_precision_hold_arrived[bot_index] = FALSE;
 
-   pBot.wpt_goal_type = WPT_GOAL_CROSSBOW_HOLD;
+   pBot.wpt_goal_type = CrossfireTacticsPrecisionHoldGoalType(mode);
    pBot.waypoint_goal = goal;
-   pBot.f_waypoint_goal_time = g_crossfire_crossbow_hold_until[bot_index];
+   pBot.f_waypoint_goal_time = g_crossfire_precision_hold_until[bot_index];
    pBot.pBotPickupItem = NULL;
    pBot.pTrackSoundEdict = NULL;
    pBot.f_track_sound_time = -1.0f;
    pBot.f_pause_time = 0.0f;
 
-   UTIL_ConsolePrintf(
-      "[jk_botti] %s entered Crossfire crossbow hold at waypoint %d for %.1f seconds",
-      pBot.name, goal,
-      g_crossfire_crossbow_hold_until[bot_index] - gpGlobals->time);
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS)
+   {
+      UTIL_ConsolePrintf(
+         "[jk_botti] gauss_hold_selected: bot=%s waypoint=%d origin=(%.0f %.0f %.0f) route_distance=%.0f elevation=%.0f visible_lanes=%d cover=%d recoil_safety=%d reservations=%d score=%.0f",
+         pBot.name, goal, waypoints[goal].origin.x, waypoints[goal].origin.y,
+         waypoints[goal].origin.z, gauss_score.route_distance,
+         gauss_score.elevation, gauss_score.visible_lanes, gauss_score.cover,
+         gauss_score.recoil_safe_lanes, gauss_score.reservations,
+         gauss_score.score);
+   }
+   else
+   {
+      UTIL_ConsolePrintf(
+         "[jk_botti] %s entered Crossfire crossbow hold at waypoint %d for %.1f seconds",
+         pBot.name, goal,
+         g_crossfire_precision_hold_until[bot_index] - gpGlobals->time);
+   }
    return TRUE;
 }
 
 
-static qboolean CrossfireTacticsIsCrossbowHoldActive(const bot_t &pBot)
+static qboolean CrossfireTacticsIsPrecisionHoldActive(const bot_t &pBot)
 {
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
-   if (bot_index < 0 || g_crossfire_crossbow_hold_goal[bot_index] < 0)
+   if (bot_index < 0 || g_crossfire_precision_hold_goal[bot_index] < 0)
       return FALSE;
 
-   return CrossfireTacticsCrossbowHoldCancellationReason(
+   return CrossfireTacticsPrecisionHoldCancellationReason(
       pBot, bot_index) == NULL;
 }
 
@@ -974,7 +1342,7 @@ static void CrossfireTacticsReset(void)
 {
    CrossfireTacticsResetBunkerShaftRoutes();
    for (int index = 0; index < 32; index++)
-      CrossfireTacticsClearCrossbowHold(index, NULL);
+      CrossfireTacticsClearPrecisionHold(index, NULL);
 
    g_crossfire_strike_end_time = 0.0f;
    g_crossfire_strike_start_time = 0.0f;
@@ -1044,7 +1412,7 @@ static void CrossfireTacticsStartFrame(void)
 
       for (int index = 0; index < 32; index++)
       {
-         CrossfireTacticsClearCrossbowHold(index, "strike");
+         CrossfireTacticsClearPrecisionHold(index, "strike");
          if (g_crossfire_bunker_route[index] != CROSSFIRE_ROUTE_UNASSIGNED &&
              !CrossfireTacticsBotAvailable(index))
             CrossfireTacticsClearBunkerShaftRoute(index);
@@ -1105,7 +1473,7 @@ static void CrossfireTacticsStartFrame(void)
    }
 
    g_crossfire_strike_activator = best_index;
-   CrossfireTacticsClearCrossbowHold(best_index, "strike activator");
+   CrossfireTacticsClearPrecisionHold(best_index, "strike activator");
    g_crossfire_strike_activator_deadline = gpGlobals->time + CROSSFIRE_ACTIVATOR_TIMEOUT;
    g_crossfire_trigger_touch_logged = FALSE;
 
@@ -1129,7 +1497,7 @@ static void CrossfireTacticsOnAmbientSound(const char *sample, int flags)
       g_crossfire_strike_start_time = gpGlobals->time;
       CrossfireTacticsClearStrikeActivator();
       for (int index = 0; index < 32; index++)
-         CrossfireTacticsClearCrossbowHold(index, "strike");
+         CrossfireTacticsClearPrecisionHold(index, "strike");
       CrossfireTacticsResetBunkerShaftRoutes();
       g_crossfire_shaft_routes_active = TRUE;
       g_crossfire_next_bot_strike_time = g_crossfire_strike_end_time +
@@ -1164,7 +1532,8 @@ static qboolean CrossfireTacticsIsStrategicGoal(const bot_t &pBot)
    return pBot.wpt_goal_type == WPT_GOAL_BUNKER ||
       pBot.wpt_goal_type == WPT_GOAL_STRIKE_BUTTON ||
       pBot.wpt_goal_type == WPT_GOAL_BUNKER_SHAFT ||
-      pBot.wpt_goal_type == WPT_GOAL_CROSSBOW_HOLD;
+      pBot.wpt_goal_type == WPT_GOAL_CROSSBOW_HOLD ||
+      pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD;
 }
 
 
@@ -1603,7 +1972,7 @@ static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot)
 {
    if (CrossfireTacticsIsStrikeActive())
    {
-      CrossfireTacticsClearCrossbowHold(
+      CrossfireTacticsClearPrecisionHold(
          CrossfireTacticsBotArrayIndex(pBot), "strike");
       return CrossfireTacticsEnsureBunkerGoal(pBot);
    }
@@ -1611,7 +1980,7 @@ static qboolean CrossfireTacticsEnsureStrategicGoal(bot_t &pBot)
    if (CrossfireTacticsEnsureStrikeButtonGoal(pBot))
       return TRUE;
 
-   return CrossfireTacticsEnsureCrossbowHoldGoal(pBot);
+   return CrossfireTacticsEnsurePrecisionHoldGoal(pBot);
 }
 
 
@@ -1714,7 +2083,7 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    if (pBot.pEdict == NULL || pBot.pBotEnemy == NULL)
       return FALSE;
 
-   if (CrossfireTacticsIsCrossbowHoldActive(pBot))
+   if (CrossfireTacticsIsPrecisionHoldActive(pBot))
       return TRUE;
 
    const qboolean evacuating = CrossfireTacticsIsStrikeActive() &&
@@ -1753,23 +2122,28 @@ static qboolean CrossfireTacticsShouldPrioritizeCombat(const bot_t &pBot)
    // Every evacuating bot actively acquires visible enemies. Strategic combat
    // windows still force it back onto the bunker route after each short burst.
    return CrossfireTacticsIsStrikeActive() ||
-      CrossfireTacticsIsCrossbowHoldActive(pBot);
+      CrossfireTacticsIsPrecisionHoldActive(pBot);
 }
 
 
 static qboolean CrossfireTacticsCanNoticeCombatTarget(
    const bot_t &pBot, const edict_t *target)
 {
-   if (CrossfireTacticsIsCrossbowHoldActive(pBot) && target != NULL &&
+   if (CrossfireTacticsIsPrecisionHoldActive(pBot) && target != NULL &&
        !target->free && FBitSet(target->v.flags, FL_CLIENT))
    {
       const Vector offset = target->v.origin - pBot.pEdict->v.origin;
       const float distance = offset.Length();
+      const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+      const qboolean gauss_hold = bot_index >= 0 &&
+         g_crossfire_precision_hold_mode[bot_index] ==
+            CROSSFIRE_PRECISION_HOLD_GAUSS;
 
       // Hold bots scan the open combat lanes below the balcony, while normal
       // visibility tracing still prevents information through geometry.
-      return distance >= BOT_CROSSBOW_MIN_DISTANCE &&
-         distance <= CROSSFIRE_CROSSBOW_MAX_TARGET_DISTANCE &&
+      return distance >= (gauss_hold ? 0.0f : BOT_CROSSBOW_MIN_DISTANCE) &&
+         distance <= (gauss_hold ? CROSSFIRE_GAUSS_MAX_TARGET_DISTANCE :
+            CROSSFIRE_CROSSBOW_MAX_TARGET_DISTANCE) &&
          target->v.origin.y <= pBot.pEdict->v.origin.y + 128.0f;
    }
 
@@ -1852,14 +2226,18 @@ static qboolean CrossfireTacticsHandleBunkerDefenseMovement(bot_t &pBot)
 }
 
 
-static Vector CrossfireTacticsCrossbowWatchTarget(const bot_t &pBot)
+static Vector CrossfireTacticsPrecisionWatchTarget(
+   const bot_t &pBot, int mode)
 {
    int bot_index = CrossfireTacticsBotArrayIndex(pBot);
    if (bot_index < 0)
       bot_index = 0;
 
+   const int watch_count = mode == CROSSFIRE_PRECISION_HOLD_GAUSS ? 6 : 3;
    const int watch_index =
-      ((int)(gpGlobals->time / 2.0f) + bot_index) % 3;
+      ((int)(gpGlobals->time / 2.0f) + bot_index) % watch_count;
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS)
+      return CrossfireTacticsGaussLaneTarget(watch_index);
    if (watch_index == 1)
       return Vector(-800.0f, -300.0f, -1680.0f);
    if (watch_index == 2)
@@ -1869,25 +2247,50 @@ static Vector CrossfireTacticsCrossbowWatchTarget(const bot_t &pBot)
 }
 
 
-static qboolean CrossfireTacticsHandleCrossbowHoldMovement(bot_t &pBot)
+static qboolean CrossfireTacticsHandlePrecisionHoldMovement(bot_t &pBot)
 {
-   if (!CrossfireTacticsIsCrossbowHoldActive(pBot))
+   if (!CrossfireTacticsIsPrecisionHoldActive(pBot))
       return FALSE;
 
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
-   const int goal = g_crossfire_crossbow_hold_goal[bot_index];
+   const int mode = g_crossfire_precision_hold_mode[bot_index];
+   const int goal = g_crossfire_precision_hold_goal[bot_index];
+   const float arrival_distance =
+      mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+         CROSSFIRE_GAUSS_HOLD_ARRIVAL_DISTANCE :
+         CROSSFIRE_CROSSBOW_HOLD_ARRIVAL_DISTANCE;
    if (goal < 0 || goal >= num_waypoints ||
        (pBot.pEdict->v.origin - waypoints[goal].origin).Length() >
-          CROSSFIRE_CROSSBOW_HOLD_ARRIVAL_DISTANCE)
+          arrival_distance)
       return FALSE;
 
    pBot.f_pause_time = 0.0f;
    pBot.f_move_speed = 0.0f;
    pBot.f_strafe_direction = 0.0f;
 
+   if (!g_crossfire_precision_hold_arrived[bot_index])
+   {
+      g_crossfire_precision_hold_arrived[bot_index] = TRUE;
+      g_crossfire_precision_hold_until[bot_index] = gpGlobals->time +
+         (mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
+            RANDOM_FLOAT2(CROSSFIRE_GAUSS_HOLD_MIN_TIME,
+               CROSSFIRE_GAUSS_HOLD_MAX_TIME) :
+            RANDOM_FLOAT2(CROSSFIRE_CROSSBOW_HOLD_MIN_TIME,
+               CROSSFIRE_CROSSBOW_HOLD_MAX_TIME));
+      g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+      pBot.f_waypoint_goal_time =
+         g_crossfire_precision_hold_until[bot_index];
+
+      if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS)
+         UTIL_ConsolePrintf(
+            "[jk_botti] gauss_hold_entered: bot=%s waypoint=%d hold_seconds=%.1f",
+            pBot.name, goal,
+            g_crossfire_precision_hold_until[bot_index] - gpGlobals->time);
+   }
+
    if (pBot.pBotEnemy == NULL)
    {
-      const Vector target = CrossfireTacticsCrossbowWatchTarget(pBot);
+      const Vector target = CrossfireTacticsPrecisionWatchTarget(pBot, mode);
       const Vector direction = target - pBot.pEdict->v.origin;
       const Vector angles = UTIL_VecToAngles(direction);
       pBot.pEdict->v.idealpitch = UTIL_WrapAngle(-angles.x);
@@ -1909,7 +2312,7 @@ static qboolean CrossfireProfileHandleSpecialMovement(bot_t &pBot)
    if (CrossfireTacticsHandleStrikeActivatorMovement(pBot))
       return TRUE;
 
-   return CrossfireTacticsHandleCrossbowHoldMovement(pBot);
+   return CrossfireTacticsHandlePrecisionHoldMovement(pBot);
 }
 
 

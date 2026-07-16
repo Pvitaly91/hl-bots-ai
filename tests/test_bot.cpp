@@ -659,7 +659,12 @@ static int test_BotSpawnInit_resets_fields(void)
    bot.f_gauss_secondary_release_time = 11.0f;
    bot.f_gauss_secondary_hard_release_time = 12.0f;
    bot.f_gauss_secondary_cooldown_time = 13.0f;
+   bot.f_gauss_secondary_planned_charge = 1.0f;
+   bot.f_gauss_secondary_distance_at_start = 900.0f;
+   bot.f_gauss_secondary_last_plan_distance = 1200.0f;
+   bot.gauss_secondary_required_ammo = 11;
    bot.pGaussSecondaryTarget = e;
+   bot.f_last_stuck_time = 9.0f;
    e->v.button |= IN_ATTACK2;
 
    BotSpawnInit(bot);
@@ -689,7 +694,12 @@ static int test_BotSpawnInit_resets_fields(void)
    ASSERT_FLOAT(bot.f_gauss_secondary_release_time, 0.0f);
    ASSERT_FLOAT(bot.f_gauss_secondary_hard_release_time, 0.0f);
    ASSERT_FLOAT(bot.f_gauss_secondary_cooldown_time, 0.0f);
+   ASSERT_FLOAT(bot.f_gauss_secondary_planned_charge, 0.0f);
+   ASSERT_FLOAT(bot.f_gauss_secondary_distance_at_start, 0.0f);
+   ASSERT_FLOAT(bot.f_gauss_secondary_last_plan_distance, 0.0f);
+   ASSERT_INT(bot.gauss_secondary_required_ammo, 0);
    ASSERT_PTR_NULL(bot.pGaussSecondaryTarget);
+   ASSERT_FLOAT(bot.f_last_stuck_time, 0.0f);
 
    PASS();
    return 0;

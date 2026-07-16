@@ -77,6 +77,7 @@ typedef int BOOL;
 #define WPT_GOAL_STRIKE_BUTTON 12
 #define WPT_GOAL_BUNKER_SHAFT 13
 #define WPT_GOAL_CROSSBOW_HOLD 14
+#define WPT_GOAL_GAUSS_HOLD 15
 
 // The movement target is deliberately separate from the current aim target.
 #define BOT_MOVE_UNSET                  0
@@ -251,6 +252,7 @@ typedef struct
    int ammo_goal_zone_load;
    qboolean b_weak_retreat_goal;
    int trace_last_stuck_wpt;         // dedup: last wpt logged for stuck trace
+   float f_last_stuck_time;          // latest real stuck detection, not trace state
    qboolean b_narrow_path;           // currently on narrow geometry (ramp, bridge, cliff)
    Vector v_prev_waypoint_origin;    // previous waypoint origin for path-following steering
    edict_t *pTrackSoundEdict;        // used when wpt_goal_type == WPT_GOAL_TRACK_SOUND
@@ -301,7 +303,11 @@ typedef struct
    float f_gauss_secondary_cooldown_time;
    float f_gauss_secondary_lost_time;
    float f_gauss_secondary_trace_time;
+   float f_gauss_secondary_planned_charge;
+   float f_gauss_secondary_distance_at_start;
+   float f_gauss_secondary_last_plan_distance;
    int gauss_secondary_ammo_before;
+   int gauss_secondary_required_ammo;
    float gauss_secondary_self_health_before;
    float gauss_secondary_target_health_before;
    edict_t *pGaussSecondaryTarget;

@@ -7,6 +7,7 @@
 #define BOTCOMBAT
 
 #include <string.h>
+#include <math.h>
 
 #include <malloc.h>
 
@@ -33,6 +34,8 @@ extern int num_logos;
 extern int submod_id;
 extern qboolean b_botdontshoot;
 extern int bot_shoot_breakables;
+extern WAYPOINT waypoints[MAX_WAYPOINTS];
+extern int num_waypoints;
 
 char g_team_list[TEAMPLAY_TEAMLISTLENGTH];
 char g_team_names[MAX_TEAMS][MAX_TEAMNAME_LENGTH];
@@ -1537,16 +1540,61 @@ static qboolean BotGaussHasCriticalStrategicRoute(const bot_t &pBot)
 }
 
 
+static qboolean BotGaussIsOverwatchApproach(const bot_t &pBot)
+{
+   return pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD &&
+      pBot.pEdict != NULL && pBot.waypoint_goal >= 0 &&
+      pBot.waypoint_goal < num_waypoints &&
+      (pBot.pEdict->v.origin - waypoints[pBot.waypoint_goal].origin).
+         Length() > BOT_GAUSS_OVERWATCH_ARRIVAL_DISTANCE;
+}
+
+
+static const char *BotGaussHoldModeName(const bot_t &pBot)
+{
+   if (pBot.wpt_goal_type != WPT_GOAL_GAUSS_HOLD)
+      return "normal_combat";
+
+   return BotGaussIsOverwatchApproach(pBot) ? "approach" : "hold";
+}
+
+
+static float BotGaussMaxChargeForAmmo(int ammo)
+{
+   if (ammo < BOT_GAUSS_SECONDARY_MIN_AMMO)
+      return 0.0f;
+
+   float charge = (ammo - 1) * BOT_GAUSS_AMMO_BURN_INTERVAL;
+   if (charge > BOT_GAUSS_SECONDARY_MAX_CHARGE_TIME)
+      charge = BOT_GAUSS_SECONDARY_MAX_CHARGE_TIME;
+   return charge;
+}
+
+
+static int BotGaussRequiredAmmoForCharge(float charge)
+{
+   if (charge < BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
+      return 0;
+
+   // GoldSrc spends one uranium cell when charging starts and then burns one
+   // per multiplayer burn interval while ATTACK2 remains held.
+   return 1 + (int)ceil((charge - 0.001f) /
+      BOT_GAUSS_AMMO_BURN_INTERVAL);
+}
+
+
 static const char *BotGaussSecondaryStartBlockReason(
    bot_t &pBot, float distance)
 {
    if (BotGaussHasCriticalStrategicRoute(pBot))
       return "strategic_crossfire";
+   if (BotGaussIsOverwatchApproach(pBot) &&
+       distance > BOT_GAUSS_CHARGE_DISTANCE_MEDIUM)
+      return "strategic_overwatch_approach";
    if (!BotGaussTargetAlive(pBot.pBotEnemy))
       return "target_dead";
-   if (distance < BOT_GAUSS_SECONDARY_MIN_DISTANCE)
-      return "close_threat";
-   if (BotGaussCurrentAmmo(pBot) < BOT_GAUSS_SECONDARY_MIN_AMMO)
+   if (BotGaussMaxChargeForAmmo(BotGaussCurrentAmmo(pBot)) <
+       BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
       return "no_ammo";
    if (pBot.pEdict->v.health <= BOT_GAUSS_CRITICAL_HEALTH)
       return "critical_health";
@@ -1568,26 +1616,63 @@ static const char *BotGaussSecondaryStartBlockReason(
 }
 
 
+static float BotGaussInterpolateCharge(float distance,
+   float low_distance, float low_charge,
+   float high_distance, float high_charge)
+{
+   if (high_distance <= low_distance)
+      return low_charge;
+
+   const float fraction = (distance - low_distance) /
+      (high_distance - low_distance);
+   return low_charge + (high_charge - low_charge) * fraction;
+}
+
+
+static float BotGaussDistanceChargeTime(float distance)
+{
+   if (distance <= 0.0f)
+      return BOT_GAUSS_CHARGE_TIME_MINIMUM;
+   if (distance <= BOT_GAUSS_CHARGE_DISTANCE_CLOSE)
+      return BotGaussInterpolateCharge(distance, 0.0f,
+         BOT_GAUSS_CHARGE_TIME_MINIMUM,
+         BOT_GAUSS_CHARGE_DISTANCE_CLOSE,
+         BOT_GAUSS_CHARGE_TIME_CLOSE);
+   if (distance <= BOT_GAUSS_CHARGE_DISTANCE_MEDIUM)
+      return BotGaussInterpolateCharge(distance,
+         BOT_GAUSS_CHARGE_DISTANCE_CLOSE, BOT_GAUSS_CHARGE_TIME_CLOSE,
+         BOT_GAUSS_CHARGE_DISTANCE_MEDIUM, BOT_GAUSS_CHARGE_TIME_MEDIUM);
+   if (distance <= BOT_GAUSS_CHARGE_DISTANCE_LONG)
+      return BotGaussInterpolateCharge(distance,
+         BOT_GAUSS_CHARGE_DISTANCE_MEDIUM, BOT_GAUSS_CHARGE_TIME_MEDIUM,
+         BOT_GAUSS_CHARGE_DISTANCE_LONG, BOT_GAUSS_CHARGE_TIME_LONG);
+   if (distance <= BOT_GAUSS_CHARGE_DISTANCE_FAR)
+      return BotGaussInterpolateCharge(distance,
+         BOT_GAUSS_CHARGE_DISTANCE_LONG, BOT_GAUSS_CHARGE_TIME_LONG,
+         BOT_GAUSS_CHARGE_DISTANCE_FAR, BOT_GAUSS_CHARGE_TIME_FAR);
+   if (distance <= BOT_GAUSS_CHARGE_DISTANCE_EXTREME)
+      return BotGaussInterpolateCharge(distance,
+         BOT_GAUSS_CHARGE_DISTANCE_FAR, BOT_GAUSS_CHARGE_TIME_FAR,
+         BOT_GAUSS_CHARGE_DISTANCE_EXTREME,
+         BOT_GAUSS_CHARGE_TIME_EXTREME);
+   if (distance < BOT_GAUSS_SECONDARY_MAX_DISTANCE)
+      return BotGaussInterpolateCharge(distance,
+         BOT_GAUSS_CHARGE_DISTANCE_EXTREME,
+         BOT_GAUSS_CHARGE_TIME_EXTREME,
+         BOT_GAUSS_SECONDARY_MAX_DISTANCE,
+         BOT_GAUSS_SECONDARY_MAX_CHARGE_TIME);
+
+   return BOT_GAUSS_SECONDARY_MAX_CHARGE_TIME;
+}
+
+
 static float BotGaussDesiredChargeTime(
    const bot_t &pBot, float distance)
 {
-   float charge;
-   switch (pBot.weapon_skill)
-   {
-      case SKILL1: charge = 1.25f; break;
-      case SKILL2: charge = 1.20f; break;
-      case SKILL3: charge = 1.10f; break;
-      case SKILL4: charge = 1.00f; break;
-      default: charge = 0.90f; break;
-   }
+   float charge = BotGaussDistanceChargeTime(distance);
 
-   if (distance < BOT_GAUSS_SECONDARY_PREFERRED_DISTANCE)
-      charge -= 0.35f;
-   else if (distance >= 1400.0f)
-      charge += 0.20f;
-
-   const float timing_error = pBot.weapon_skill <= SKILL2 ? 0.03f :
-      0.02f * (pBot.weapon_skill - SKILL1);
+   const float timing_error = pBot.weapon_skill <= SKILL2 ? 0.004f :
+      0.006f * (pBot.weapon_skill - SKILL2);
    charge += RANDOM_FLOAT2(-timing_error, timing_error);
 
    if (charge < BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
@@ -1599,16 +1684,19 @@ static float BotGaussDesiredChargeTime(
 }
 
 
-static int BotGaussMediumSecondaryChance(const bot_t &pBot)
+static float BotGaussPlannedChargeTime(
+   const bot_t &pBot, float distance, int ammo, int *required_ammo)
 {
-   switch (pBot.weapon_skill)
-   {
-      case SKILL1: return 45;
-      case SKILL2: return 35;
-      case SKILL3: return 30;
-      case SKILL4: return 20;
-      default: return 12;
-   }
+   float charge = BotGaussDesiredChargeTime(pBot, distance);
+   const float ammo_cap = BotGaussMaxChargeForAmmo(ammo);
+   if (ammo_cap < BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
+      charge = 0.0f;
+   else if (charge > ammo_cap)
+      charge = ammo_cap;
+
+   if (required_ammo != NULL)
+      *required_ammo = BotGaussRequiredAmmoForCharge(charge);
+   return charge;
 }
 
 
@@ -1653,6 +1741,10 @@ static void BotGaussResetSecondaryCharge(bot_t &pBot, int state)
       pBot.f_gauss_secondary_start_time = 0.0f;
       pBot.f_gauss_secondary_release_time = 0.0f;
       pBot.f_gauss_secondary_hard_release_time = 0.0f;
+      pBot.f_gauss_secondary_planned_charge = 0.0f;
+      pBot.f_gauss_secondary_distance_at_start = 0.0f;
+      pBot.f_gauss_secondary_last_plan_distance = 0.0f;
+      pBot.gauss_secondary_required_ammo = 0;
    }
 }
 
@@ -1660,9 +1752,12 @@ static void BotGaussResetSecondaryCharge(bot_t &pBot, int state)
 static void BotGaussTraceAbort(bot_t &pBot, const char *reason)
 {
    BotTrace(pBot,
-      "gauss_secondary_abort: reason=%s charge_duration=%.2f enemy_distance=%.0f ammo=%d",
-      reason, gpGlobals->time - pBot.f_gauss_secondary_start_time,
+      "gauss_secondary_abort: reason=%s planned_charge=%.2f actual_charge=%.2f distance_at_start=%.0f distance_at_release=%.0f ammo_before=%d ammo_after=%d",
+      reason, pBot.f_gauss_secondary_planned_charge,
+      gpGlobals->time - pBot.f_gauss_secondary_start_time,
+      pBot.f_gauss_secondary_distance_at_start,
       BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget),
+      pBot.gauss_secondary_ammo_before,
       BotGaussCurrentAmmo(pBot));
 }
 
@@ -1698,14 +1793,26 @@ static qboolean BotGaussStartSecondaryCharge(bot_t &pBot, float distance)
       return FALSE;
    }
 
-   const float desired_charge = BotGaussDesiredChargeTime(pBot, distance);
+   int required_ammo = 0;
+   const float desired_charge = BotGaussPlannedChargeTime(pBot, distance,
+      BotGaussCurrentAmmo(pBot), &required_ammo);
+   if (desired_charge < BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
+   {
+      BotGaussTraceStartBlock(pBot, "no_ammo", distance);
+      return FALSE;
+   }
+
    pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_HOLD;
    pBot.f_gauss_secondary_start_time = gpGlobals->time;
    pBot.f_gauss_secondary_release_time = gpGlobals->time + desired_charge;
    pBot.f_gauss_secondary_hard_release_time = gpGlobals->time +
       BOT_GAUSS_SECONDARY_HARD_RELEASE_TIME;
    pBot.f_gauss_secondary_lost_time = 0.0f;
+   pBot.f_gauss_secondary_planned_charge = desired_charge;
+   pBot.f_gauss_secondary_distance_at_start = distance;
+   pBot.f_gauss_secondary_last_plan_distance = distance;
    pBot.gauss_secondary_ammo_before = BotGaussCurrentAmmo(pBot);
+   pBot.gauss_secondary_required_ammo = required_ammo;
    pBot.gauss_secondary_self_health_before = pBot.pEdict->v.health;
    pBot.gauss_secondary_target_health_before = pBot.pBotEnemy->v.health;
    pBot.pGaussSecondaryTarget = pBot.pBotEnemy;
@@ -1718,11 +1825,15 @@ static qboolean BotGaussStartSecondaryCharge(bot_t &pBot, float distance)
    pBot.f_move_speed = 0.0f;
    pBot.f_strafe_direction = 0.0f;
 
+   const float distance_charge = BotGaussDistanceChargeTime(distance);
+   const float ammo_cap = BotGaussMaxChargeForAmmo(
+      pBot.gauss_secondary_ammo_before);
    BotTrace(pBot,
-      "gauss_secondary_start: skill=%d enemy_distance=%.0f desired_charge=%.2f ammo_before=%d movement_mode=%s",
-      pBot.weapon_skill, distance, desired_charge,
-      pBot.gauss_secondary_ammo_before,
-      BotGaussMovementModeName(pBot.movement_mode));
+      "gauss_charge_plan: bot=%s skill=%d distance=%.0f desired_charge=%.2f planned_charge=%.2f available_ammo=%d charge_cap_by_ammo=%.2f required_ammo=%d movement_mode=%s hold_mode=%s",
+      pBot.name, pBot.weapon_skill, distance, distance_charge,
+      desired_charge, pBot.gauss_secondary_ammo_before, ammo_cap,
+      required_ammo, BotGaussMovementModeName(pBot.movement_mode),
+      BotGaussHoldModeName(pBot));
    return TRUE;
 }
 
@@ -1731,37 +1842,93 @@ static void BotGaussSelectAttack(
    bot_t &pBot, qboolean &use_primary, qboolean &use_secondary)
 {
    const float distance = BotGaussTargetDistance(pBot, pBot.pBotEnemy);
-   if (!use_secondary || distance < BOT_GAUSS_SECONDARY_MIN_DISTANCE)
+   if (!use_secondary)
    {
       use_secondary = FALSE;
       return;
    }
 
-   qboolean choose_secondary =
-      distance >= BOT_GAUSS_SECONDARY_PREFERRED_DISTANCE;
-   if (!choose_secondary)
-      choose_secondary = RANDOM_LONG2(1, 100) <=
-         BotGaussMediumSecondaryChance(pBot);
-
    if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_COOLDOWN &&
        pBot.f_gauss_secondary_cooldown_time > gpGlobals->time)
-      choose_secondary = FALSE;
-
-   if (choose_secondary)
    {
-      const char *reason = BotGaussSecondaryStartBlockReason(
-         pBot, distance);
-      if (reason == NULL)
-      {
-         use_primary = FALSE;
-         use_secondary = TRUE;
-         return;
-      }
-
-      BotGaussTraceStartBlock(pBot, reason, distance);
+      use_secondary = FALSE;
+      return;
    }
 
+   const char *reason = BotGaussSecondaryStartBlockReason(pBot, distance);
+   if (reason == NULL)
+   {
+      use_primary = FALSE;
+      use_secondary = TRUE;
+      return;
+   }
+
+   BotGaussTraceStartBlock(pBot, reason, distance);
    use_secondary = FALSE;
+}
+
+
+static void BotGaussAdjustSecondaryChargePlan(bot_t &pBot, float distance)
+{
+   const float old_distance = pBot.f_gauss_secondary_last_plan_distance;
+   if (fabs(distance - old_distance) <
+       BOT_GAUSS_DISTANCE_PLAN_HYSTERESIS)
+      return;
+
+   float planning_distance = distance;
+   if (BotGaussIsOverwatchApproach(pBot) &&
+       planning_distance > BOT_GAUSS_CHARGE_DISTANCE_MEDIUM)
+      planning_distance = BOT_GAUSS_CHARGE_DISTANCE_MEDIUM;
+
+   float planned_charge = BotGaussDistanceChargeTime(planning_distance);
+   const float ammo_cap = BotGaussMaxChargeForAmmo(
+      pBot.gauss_secondary_ammo_before);
+   if (planned_charge > ammo_cap)
+      planned_charge = ammo_cap;
+   if (planned_charge < BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
+      return;
+
+   float deadline = pBot.f_gauss_secondary_start_time + planned_charge;
+   const float old_deadline = pBot.f_gauss_secondary_release_time;
+   pBot.f_gauss_secondary_last_plan_distance = distance;
+
+   if (fabs(deadline - old_deadline) < BOT_GAUSS_DEADLINE_HYSTERESIS)
+      return;
+
+   const char *reason = distance < old_distance ?
+      "target_closer" : "target_farther";
+   if (deadline > old_deadline)
+   {
+      const float bounded_extension = old_deadline +
+         BOT_GAUSS_MAX_DEADLINE_EXTENSION;
+      if (deadline > bounded_extension)
+         deadline = bounded_extension;
+   }
+
+   if (deadline > pBot.f_gauss_secondary_hard_release_time)
+      deadline = pBot.f_gauss_secondary_hard_release_time;
+
+   const float minimum_deadline = pBot.f_gauss_secondary_start_time +
+      BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME;
+   if (deadline < minimum_deadline)
+      deadline = minimum_deadline;
+
+   if (fabs(deadline - old_deadline) < 0.001f)
+      return;
+
+   pBot.f_gauss_secondary_release_time = deadline;
+   pBot.f_gauss_secondary_planned_charge = deadline -
+      pBot.f_gauss_secondary_start_time;
+   pBot.gauss_secondary_required_ammo = BotGaussRequiredAmmoForCharge(
+      pBot.f_gauss_secondary_planned_charge);
+
+   BotTrace(pBot,
+      "gauss_charge_adjust: old_distance=%.0f new_distance=%.0f old_release=%.2f new_release=%.2f reason=%s hard_release=%.2f",
+      old_distance, distance,
+      old_deadline - pBot.f_gauss_secondary_start_time,
+      deadline - pBot.f_gauss_secondary_start_time, reason,
+      pBot.f_gauss_secondary_hard_release_time -
+         pBot.f_gauss_secondary_start_time);
 }
 
 
@@ -1803,14 +1970,28 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
          pBot.pGaussSecondaryTarget,
          pBot.gauss_secondary_target_health_before);
       BotTrace(pBot,
-         "gauss_secondary_release: charge_duration=%.2f ammo_before=%d ammo_after=%d enemy_distance=%.0f target_health_before=%.0f target_health_after=%.0f self_health_before=%.0f self_health_after=%.0f confirmed_hit=%d",
+         "gauss_secondary_release: planned_charge=%.2f actual_charge=%.2f distance_at_start=%.0f distance_at_release=%.0f ammo_before=%d ammo_after=%d required_ammo=%d target_health_before=%.0f target_health_after=%.0f self_health_before=%.0f self_health_after=%.0f confirmed_hit=%d",
+         pBot.f_gauss_secondary_planned_charge,
          pBot.f_gauss_secondary_release_time -
             pBot.f_gauss_secondary_start_time,
-         pBot.gauss_secondary_ammo_before, ammo_after,
+         pBot.f_gauss_secondary_distance_at_start,
          BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget),
+         pBot.gauss_secondary_ammo_before, ammo_after,
+         pBot.gauss_secondary_required_ammo,
          pBot.gauss_secondary_target_health_before, target_health_after,
          pBot.gauss_secondary_self_health_before, pBot.pEdict->v.health,
          confirmed_hit ? 1 : 0);
+      if (pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD)
+      {
+         BotTrace(pBot,
+            "gauss_hold_shot: waypoint=%d planned_charge=%.2f actual_charge=%.2f distance=%.0f ammo_before=%d ammo_after=%d confirmed_hit=%d",
+            pBot.waypoint_goal, pBot.f_gauss_secondary_planned_charge,
+            pBot.f_gauss_secondary_release_time -
+               pBot.f_gauss_secondary_start_time,
+            BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget),
+            pBot.gauss_secondary_ammo_before, ammo_after,
+            confirmed_hit ? 1 : 0);
+      }
 
       pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_COOLDOWN;
       pBot.f_gauss_secondary_cooldown_time = gpGlobals->time +
@@ -1835,8 +2016,6 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
       abort_reason = "strategic_crossfire";
    else if (!BotGaussTargetAlive(pBot.pGaussSecondaryTarget))
       abort_reason = "target_dead";
-   else if (distance < BOT_GAUSS_SECONDARY_MIN_DISTANCE)
-      abort_reason = "close_threat";
    else if (BotGaussCurrentAmmo(pBot) <= 0)
       abort_reason = "no_ammo";
    else if (pBot.pEdict->v.health <= BOT_GAUSS_CRITICAL_HEALTH)
@@ -1850,6 +2029,9 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
       abort_reason = "water";
    else if (!pBot.b_on_ground)
       abort_reason = "airborne";
+   else if (!BotGaussHasSafeRecoilSpace(
+               pBot, pBot.pGaussSecondaryTarget))
+      abort_reason = "unsafe_recoil";
 
    if (abort_reason != NULL)
    {
@@ -1878,6 +2060,7 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
    {
       pBot.f_gauss_secondary_lost_time = 0.0f;
       BotGaussSetAim(pBot, pBot.pGaussSecondaryTarget);
+      BotGaussAdjustSecondaryChargePlan(pBot, distance);
    }
 
    if (pBot.f_gauss_secondary_hard_release_time <= gpGlobals->time)
