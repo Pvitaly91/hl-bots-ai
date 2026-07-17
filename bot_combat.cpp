@@ -1430,6 +1430,130 @@ static const float BOT_GAUSS_SECONDARY_COOLDOWN_TIME = 0.80f;
 static const float BOT_GAUSS_CRITICAL_HEALTH = 25.0f;
 static const float BOT_GAUSS_RECOIL_DISTANCE = 128.0f;
 static const float BOT_GAUSS_RECOIL_DROP_DEPTH = 96.0f;
+static const float BOT_GAUSS_OVERWATCH_STABILIZE_SPEED = 40.0f;
+
+enum bot_gauss_counter_event_t
+{
+   BOT_GAUSS_COUNTER_OPPORTUNITY = 0,
+   BOT_GAUSS_COUNTER_START,
+   BOT_GAUSS_COUNTER_RELEASE,
+   BOT_GAUSS_COUNTER_WAIT,
+   BOT_GAUSS_COUNTER_PRIMARY_FALLBACK,
+   BOT_GAUSS_COUNTER_PRIMARY_UNEXPLAINED
+};
+
+static bot_gauss_attack_stats_t g_gauss_attack_stats;
+
+
+const char *BotGaussAttackReasonName(int reason)
+{
+   switch (reason)
+   {
+      case BOT_GAUSS_REASON_COOLDOWN: return "cooldown";
+      case BOT_GAUSS_REASON_RELEASE_WAIT: return "release_wait";
+      case BOT_GAUSS_REASON_WEAPON_SELECT_WAIT: return "weapon_select_wait";
+      case BOT_GAUSS_REASON_STABILIZING: return "stabilizing";
+      case BOT_GAUSS_REASON_TARGET_LOST_GRACE:
+         return "short_target_lost_grace";
+      case BOT_GAUSS_REASON_CHARGE_REPLANNING: return "charge_replanning";
+      case BOT_GAUSS_REASON_OVERWATCH_APPROACH:
+         return "overwatch_approach";
+      case BOT_GAUSS_REASON_NO_SECONDARY_AMMO:
+         return "no_secondary_ammo";
+      case BOT_GAUSS_REASON_UNSAFE_RECOIL: return "unsafe_recoil";
+      case BOT_GAUSS_REASON_LADDER: return "ladder";
+      case BOT_GAUSS_REASON_WATER: return "water";
+      case BOT_GAUSS_REASON_AIRBORNE: return "airborne";
+      case BOT_GAUSS_REASON_CRITICAL_HEALTH: return "critical_health";
+      case BOT_GAUSS_REASON_GRENADE_DANGER: return "grenade_danger";
+      case BOT_GAUSS_REASON_STRATEGIC_CROSSFIRE:
+         return "strategic_crossfire";
+      case BOT_GAUSS_REASON_WEAPON_UNAVAILABLE:
+         return "weapon_mechanically_unavailable";
+      case BOT_GAUSS_REASON_BLOCKED_LOS: return "blocked_los";
+      case BOT_GAUSS_REASON_TARGET_INVALID: return "target_invalid";
+      default: return "none";
+   }
+}
+
+
+const char *BotGaussDistanceBucketName(int bucket)
+{
+   switch (bucket)
+   {
+      case 0: return "0-128";
+      case 1: return "128-350";
+      case 2: return "350-700";
+      case 3: return "700-1400";
+      case 4: return "1400+";
+      default: return "unknown";
+   }
+}
+
+
+void BotGaussResetAttackStats(void)
+{
+   memset(&g_gauss_attack_stats, 0, sizeof(g_gauss_attack_stats));
+}
+
+
+void BotGaussGetAttackStats(bot_gauss_attack_stats_t *stats)
+{
+   if (stats != NULL)
+      memcpy(stats, &g_gauss_attack_stats, sizeof(*stats));
+}
+
+
+static int BotGaussDistanceBucket(float distance)
+{
+   if (distance <= 128.0f) return 0;
+   if (distance <= 350.0f) return 1;
+   if (distance <= 700.0f) return 2;
+   if (distance <= 1400.0f) return 3;
+   return 4;
+}
+
+
+static void BotGaussIncrementCounter(bot_gauss_attack_counter_t &counter,
+   bot_gauss_counter_event_t event)
+{
+   switch (event)
+   {
+      case BOT_GAUSS_COUNTER_OPPORTUNITY:
+         counter.secondary_opportunities++;
+         break;
+      case BOT_GAUSS_COUNTER_START:
+         counter.secondary_starts++;
+         break;
+      case BOT_GAUSS_COUNTER_RELEASE:
+         counter.secondary_releases++;
+         break;
+      case BOT_GAUSS_COUNTER_WAIT:
+         counter.secondary_waits++;
+         break;
+      case BOT_GAUSS_COUNTER_PRIMARY_FALLBACK:
+         counter.primary_fallbacks++;
+         break;
+      case BOT_GAUSS_COUNTER_PRIMARY_UNEXPLAINED:
+         counter.primary_unexplained++;
+         break;
+   }
+}
+
+
+static void BotGaussCount(bot_t &pBot, float distance,
+   bot_gauss_counter_event_t event)
+{
+   BotGaussIncrementCounter(g_gauss_attack_stats.total, event);
+
+   int skill = pBot.weapon_skill - SKILL1;
+   if (skill < 0) skill = 0;
+   if (skill >= BOT_GAUSS_SKILL_BUCKET_COUNT)
+      skill = BOT_GAUSS_SKILL_BUCKET_COUNT - 1;
+   const int distance_bucket = BotGaussDistanceBucket(distance);
+   BotGaussIncrementCounter(
+      g_gauss_attack_stats.by_skill_distance[skill][distance_bucket], event);
+}
 
 
 static const char *BotGaussMovementModeName(int movement_mode)
@@ -1559,6 +1683,18 @@ static const char *BotGaussHoldModeName(const bot_t &pBot)
 }
 
 
+static const char *BotGaussSecondaryStateName(int state)
+{
+   switch (state)
+   {
+      case BOT_GAUSS_SECONDARY_HOLD: return "hold";
+      case BOT_GAUSS_SECONDARY_RELEASE_WAIT: return "release_wait";
+      case BOT_GAUSS_SECONDARY_COOLDOWN: return "cooldown";
+      default: return "idle";
+   }
+}
+
+
 static float BotGaussMaxChargeForAmmo(int ammo)
 {
    if (ammo < BOT_GAUSS_SECONDARY_MIN_AMMO)
@@ -1583,36 +1719,65 @@ static int BotGaussRequiredAmmoForCharge(float charge)
 }
 
 
-static const char *BotGaussSecondaryStartBlockReason(
-   bot_t &pBot, float distance)
+static qboolean BotGaussHasSecondaryOpportunity(bot_t &pBot,
+   const edict_t *target, bot_gauss_attack_reason_t *block_reason)
 {
-   if (BotGaussHasCriticalStrategicRoute(pBot))
-      return "strategic_crossfire";
-   if (BotGaussIsOverwatchApproach(pBot) &&
-       distance > BOT_GAUSS_CHARGE_DISTANCE_MEDIUM)
-      return "strategic_overwatch_approach";
-   if (!BotGaussTargetAlive(pBot.pBotEnemy))
-      return "target_dead";
-   if (BotGaussMaxChargeForAmmo(BotGaussCurrentAmmo(pBot)) <
-       BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
-      return "no_ammo";
-   if (pBot.pEdict->v.health <= BOT_GAUSS_CRITICAL_HEALTH)
-      return "critical_health";
-   if (pBot.f_grenade_found_time > 0.0f &&
-       pBot.f_grenade_found_time + 1.0f > gpGlobals->time)
-      return "grenade";
-   if (pBot.b_on_ladder)
-      return "ladder";
-   if (pBot.b_in_water)
-      return "water";
-   if (!pBot.b_on_ground)
-      return "airborne";
-   if (!BotGaussHasClearShot(pBot, pBot.pBotEnemy))
-      return "blocked_los";
-   if (!BotGaussHasSafeRecoilSpace(pBot, pBot.pBotEnemy))
-      return "unsafe_recoil";
+   bot_gauss_attack_reason_t reason = BOT_GAUSS_REASON_NONE;
+   bot_weapon_select_t *gauss = GetWeaponSelect(VALVE_WEAPON_GAUSS);
 
-   return NULL;
+   if (pBot.pEdict == NULL || gauss == NULL ||
+       !BotIsCarryingWeapon(pBot, VALVE_WEAPON_GAUSS) ||
+       !IsValidWeaponChoose(pBot, *gauss) ||
+       !BotSkilledEnoughForSecondaryAttack(pBot, *gauss))
+      reason = BOT_GAUSS_REASON_WEAPON_UNAVAILABLE;
+   else if (!BotGaussTargetAlive(target))
+      reason = BOT_GAUSS_REASON_TARGET_INVALID;
+   else if (BotGaussHasCriticalStrategicRoute(pBot))
+      reason = BOT_GAUSS_REASON_STRATEGIC_CROSSFIRE;
+   else if (BotGaussMaxChargeForAmmo(BotGaussCurrentAmmo(pBot)) <
+       BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
+      reason = BOT_GAUSS_REASON_NO_SECONDARY_AMMO;
+   else if (pBot.pEdict != NULL &&
+            pBot.pEdict->v.health <= BOT_GAUSS_CRITICAL_HEALTH)
+      reason = BOT_GAUSS_REASON_CRITICAL_HEALTH;
+   else if (pBot.f_grenade_found_time > 0.0f &&
+       pBot.f_grenade_found_time + 1.0f > gpGlobals->time)
+      reason = BOT_GAUSS_REASON_GRENADE_DANGER;
+   else if (pBot.b_on_ladder)
+      reason = BOT_GAUSS_REASON_LADDER;
+   else if (pBot.b_in_water)
+      reason = BOT_GAUSS_REASON_WATER;
+   else if (!pBot.b_on_ground)
+      reason = BOT_GAUSS_REASON_AIRBORNE;
+   else if (!BotGaussHasClearShot(pBot, target))
+      reason = BOT_GAUSS_REASON_BLOCKED_LOS;
+   else if (!BotGaussHasSafeRecoilSpace(pBot, target))
+      reason = BOT_GAUSS_REASON_UNSAFE_RECOIL;
+
+   if (block_reason != NULL)
+      *block_reason = reason;
+   return reason == BOT_GAUSS_REASON_NONE;
+}
+
+
+static qboolean BotGaussReasonAllowsPrimaryFallback(
+   bot_gauss_attack_reason_t reason)
+{
+   switch (reason)
+   {
+      case BOT_GAUSS_REASON_NO_SECONDARY_AMMO:
+      case BOT_GAUSS_REASON_UNSAFE_RECOIL:
+      case BOT_GAUSS_REASON_LADDER:
+      case BOT_GAUSS_REASON_WATER:
+      case BOT_GAUSS_REASON_AIRBORNE:
+      case BOT_GAUSS_REASON_CRITICAL_HEALTH:
+      case BOT_GAUSS_REASON_GRENADE_DANGER:
+      case BOT_GAUSS_REASON_STRATEGIC_CROSSFIRE:
+      case BOT_GAUSS_REASON_WEAPON_UNAVAILABLE:
+         return TRUE;
+      default:
+         return FALSE;
+   }
 }
 
 
@@ -1713,6 +1878,89 @@ static void BotGaussTraceStartBlock(
 }
 
 
+static void BotGaussTraceWait(bot_t &pBot,
+   bot_gauss_attack_reason_t reason, float distance, float remaining_time)
+{
+   if (pBot.gauss_secondary_wait_reason == reason)
+      return;
+
+   pBot.gauss_secondary_wait_reason = reason;
+   if (remaining_time < 0.0f)
+      remaining_time = 0.0f;
+   BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_WAIT);
+   BotTrace(pBot,
+      "gauss_secondary_wait: reason=%s distance=%.0f remaining_time=%.2f",
+      BotGaussAttackReasonName(reason), distance, remaining_time);
+}
+
+
+static void BotGaussClearWaitReason(bot_t &pBot)
+{
+   pBot.gauss_secondary_wait_reason = BOT_GAUSS_REASON_NONE;
+}
+
+
+static void BotGaussSetAttackDecision(bot_t &pBot,
+   bot_gauss_attack_decision_t decision, bot_gauss_attack_reason_t reason)
+{
+   pBot.gauss_attack_decision = decision;
+   pBot.gauss_attack_reason = reason;
+   pBot.f_gauss_attack_decision_time = gpGlobals->time;
+   pBot.gauss_primary_accounted = FALSE;
+}
+
+
+static void BotGaussRecordPrimaryFallback(bot_t &pBot,
+   bot_gauss_attack_reason_t reason, float distance)
+{
+   BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_PRIMARY_FALLBACK);
+   if (reason > BOT_GAUSS_REASON_NONE && reason < BOT_GAUSS_REASON_COUNT)
+      g_gauss_attack_stats.primary_fallback_reasons[reason]++;
+   pBot.gauss_primary_accounted = TRUE;
+
+   BotTrace(pBot,
+      "gauss_primary_fallback: bot=%s skill=%d distance=%.0f reason=%s secondary_state=%s ammo=%d movement_mode=%s hold_mode=%s",
+      pBot.name, pBot.weapon_skill, distance,
+      BotGaussAttackReasonName(reason),
+      BotGaussSecondaryStateName(pBot.gauss_secondary_state),
+      BotGaussCurrentAmmo(pBot),
+      BotGaussMovementModeName(pBot.movement_mode),
+      BotGaussHoldModeName(pBot));
+}
+
+
+void BotGaussAuditAttackButtons(bot_t &pBot)
+{
+   if (FNullEnt(pBot.pEdict) ||
+       pBot.current_weapon.iId != VALVE_WEAPON_GAUSS ||
+       !FBitSet(pBot.pEdict->v.button, IN_ATTACK))
+      return;
+
+   const qboolean explained =
+      pBot.gauss_attack_decision == BOT_GAUSS_ATTACK_PRIMARY_FALLBACK &&
+      pBot.gauss_attack_reason > BOT_GAUSS_REASON_NONE &&
+      pBot.gauss_attack_reason < BOT_GAUSS_REASON_COUNT &&
+      pBot.gauss_primary_accounted &&
+      fabs(pBot.f_gauss_attack_decision_time - gpGlobals->time) < 0.0001f;
+   if (explained)
+      return;
+
+   const float distance = BotGaussTargetDistance(pBot, pBot.pBotEnemy);
+   BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_PRIMARY_UNEXPLAINED);
+   BotTrace(pBot,
+      "gauss_primary_unexplained: bot=%s skill=%d distance=%.0f secondary_state=%s ammo=%d movement_mode=%s hold_mode=%s",
+      pBot.name, pBot.weapon_skill, distance,
+      BotGaussSecondaryStateName(pBot.gauss_secondary_state),
+      BotGaussCurrentAmmo(pBot),
+      BotGaussMovementModeName(pBot.movement_mode),
+      BotGaussHoldModeName(pBot));
+
+   // An unexplained Gauss primary is a runtime invariant violation, so fail
+   // closed for this frame instead of allowing generic weapon code to fire it.
+   pBot.pEdict->v.button &= ~IN_ATTACK;
+}
+
+
 static void BotGaussSetAim(bot_t &pBot, const edict_t *target)
 {
    if (!BotGaussTargetAlive(target))
@@ -1737,6 +1985,7 @@ static void BotGaussResetSecondaryCharge(bot_t &pBot, int state)
    pBot.f_gauss_secondary_lost_time = 0.0f;
    if (state == BOT_GAUSS_SECONDARY_IDLE)
    {
+      BotGaussClearWaitReason(pBot);
       pBot.pGaussSecondaryTarget = NULL;
       pBot.f_gauss_secondary_start_time = 0.0f;
       pBot.f_gauss_secondary_release_time = 0.0f;
@@ -1768,6 +2017,10 @@ static void BotGaussReleaseSecondaryCharge(
    if (abort_reason != NULL)
       BotGaussTraceAbort(pBot, abort_reason);
 
+   float distance = BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget);
+   if (distance < 0.0f)
+      distance = pBot.f_gauss_secondary_distance_at_start;
+   BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_RELEASE);
    pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_RELEASE_WAIT;
    pBot.f_gauss_secondary_release_time = gpGlobals->time;
    pBot.f_secondary_charging = -1.0f;
@@ -1775,6 +2028,8 @@ static void BotGaussReleaseSecondaryCharge(
    pBot.pEdict->v.button &= ~IN_ATTACK2;
    pBot.f_move_speed = 0.0f;
    pBot.f_strafe_direction = 0.0f;
+   BotGaussTraceWait(pBot, BOT_GAUSS_REASON_RELEASE_WAIT, distance,
+      BOT_GAUSS_RELEASE_CONFIRM_DELAY);
 }
 
 
@@ -1783,14 +2038,18 @@ static qboolean BotGaussStartSecondaryCharge(bot_t &pBot, float distance)
    if (pBot.current_weapon.iId != VALVE_WEAPON_GAUSS)
    {
       pBot.f_shoot_time = gpGlobals->time + 0.10f;
+      BotGaussTraceWait(pBot, BOT_GAUSS_REASON_WEAPON_SELECT_WAIT,
+         distance, 0.10f);
       return TRUE;
    }
 
-   const char *reason = BotGaussSecondaryStartBlockReason(pBot, distance);
-   if (reason != NULL)
+   bot_gauss_attack_reason_t block_reason = BOT_GAUSS_REASON_NONE;
+   if (!BotGaussHasSecondaryOpportunity(
+          pBot, pBot.pBotEnemy, &block_reason))
    {
-      BotGaussTraceStartBlock(pBot, reason, distance);
-      return FALSE;
+      BotGaussTraceStartBlock(pBot,
+         BotGaussAttackReasonName(block_reason), distance);
+      return TRUE;
    }
 
    int required_ammo = 0;
@@ -1798,10 +2057,12 @@ static qboolean BotGaussStartSecondaryCharge(bot_t &pBot, float distance)
       BotGaussCurrentAmmo(pBot), &required_ammo);
    if (desired_charge < BOT_GAUSS_SECONDARY_MIN_CHARGE_TIME)
    {
-      BotGaussTraceStartBlock(pBot, "no_ammo", distance);
-      return FALSE;
+      BotGaussTraceStartBlock(pBot, "no_secondary_ammo", distance);
+      return TRUE;
    }
 
+   BotGaussClearWaitReason(pBot);
+   BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_START);
    pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_HOLD;
    pBot.f_gauss_secondary_start_time = gpGlobals->time;
    pBot.f_gauss_secondary_release_time = gpGlobals->time + desired_charge;
@@ -1838,33 +2099,111 @@ static qboolean BotGaussStartSecondaryCharge(bot_t &pBot, float distance)
 }
 
 
-static void BotGaussSelectAttack(
-   bot_t &pBot, qboolean &use_primary, qboolean &use_secondary)
+static bot_gauss_attack_decision_t BotGaussSelectAttack(
+   bot_t &pBot, const bot_weapon_select_t &select,
+   qboolean &use_primary, qboolean &use_secondary,
+   bot_gauss_attack_reason_t &decision_reason)
 {
    const float distance = BotGaussTargetDistance(pBot, pBot.pBotEnemy);
-   if (!use_secondary)
+   use_primary = FALSE;
+   use_secondary = FALSE;
+   decision_reason = BOT_GAUSS_REASON_NONE;
+
+   if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_RELEASE_WAIT)
    {
-      use_secondary = FALSE;
-      return;
+      decision_reason = BOT_GAUSS_REASON_RELEASE_WAIT;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
    }
 
    if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_COOLDOWN &&
        pBot.f_gauss_secondary_cooldown_time > gpGlobals->time)
    {
-      use_secondary = FALSE;
-      return;
+      decision_reason = BOT_GAUSS_REASON_COOLDOWN;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
    }
 
-   const char *reason = BotGaussSecondaryStartBlockReason(pBot, distance);
-   if (reason == NULL)
+   if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_COOLDOWN)
+      BotGaussResetSecondaryCharge(pBot, BOT_GAUSS_SECONDARY_IDLE);
+
+   if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_HOLD)
    {
-      use_primary = FALSE;
-      use_secondary = TRUE;
-      return;
+      decision_reason = BOT_GAUSS_REASON_CHARGE_REPLANNING;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
    }
 
-   BotGaussTraceStartBlock(pBot, reason, distance);
-   use_secondary = FALSE;
+   // Weapon activation is asynchronous. It is always a transient wait,
+   // including when a hard secondary block will apply after Gauss becomes
+   // active; otherwise IN_ATTACK would fire the previously selected weapon.
+   if (pBot.current_weapon.iId != VALVE_WEAPON_GAUSS)
+   {
+      decision_reason = BOT_GAUSS_REASON_WEAPON_SELECT_WAIT;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
+   }
+
+   bot_gauss_attack_reason_t block_reason = BOT_GAUSS_REASON_NONE;
+   if (!BotGaussHasSecondaryOpportunity(
+          pBot, pBot.pBotEnemy, &block_reason))
+   {
+      decision_reason = block_reason;
+      if (block_reason == BOT_GAUSS_REASON_UNSAFE_RECOIL &&
+          pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD)
+      {
+         BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_NONE,
+            decision_reason);
+         return BOT_GAUSS_ATTACK_NONE;
+      }
+
+      const qboolean primary_available =
+         BotIsCarryingWeapon(pBot, VALVE_WEAPON_GAUSS) &&
+         BotSkilledEnoughForPrimaryAttack(pBot, select) &&
+         IsValidPrimaryAttack(pBot, select, distance, 0.0f, FALSE);
+      if (primary_available &&
+          BotGaussReasonAllowsPrimaryFallback(block_reason))
+      {
+         use_primary = TRUE;
+         BotGaussSetAttackDecision(pBot,
+            BOT_GAUSS_ATTACK_PRIMARY_FALLBACK, decision_reason);
+         return BOT_GAUSS_ATTACK_PRIMARY_FALLBACK;
+      }
+
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_NONE,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_NONE;
+   }
+
+   if (BotGaussIsOverwatchApproach(pBot) &&
+       distance > BOT_GAUSS_CHARGE_DISTANCE_MEDIUM)
+   {
+      decision_reason = BOT_GAUSS_REASON_OVERWATCH_APPROACH;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
+   }
+
+   if (pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD &&
+       pBot.pEdict->v.velocity.Make2D().Length() >
+          BOT_GAUSS_OVERWATCH_STABILIZE_SPEED)
+   {
+      decision_reason = BOT_GAUSS_REASON_STABILIZING;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
+   }
+
+   BotGaussClearWaitReason(pBot);
+   BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_OPPORTUNITY);
+   use_secondary = TRUE;
+   BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_SECONDARY,
+      BOT_GAUSS_REASON_NONE);
+   return BOT_GAUSS_ATTACK_SECONDARY;
 }
 
 
@@ -1948,16 +2287,25 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
 
    if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_COOLDOWN)
    {
+      pBot.pEdict->v.button &= ~IN_ATTACK;
       if (pBot.f_gauss_secondary_cooldown_time <= gpGlobals->time)
          BotGaussResetSecondaryCharge(pBot, BOT_GAUSS_SECONDARY_IDLE);
+      else
+         BotGaussTraceWait(pBot, BOT_GAUSS_REASON_COOLDOWN,
+            BotGaussTargetDistance(pBot, pBot.pBotEnemy),
+            pBot.f_gauss_secondary_cooldown_time - gpGlobals->time);
       return FALSE;
    }
 
    if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_RELEASE_WAIT)
    {
-      pBot.pEdict->v.button &= ~IN_ATTACK2;
+      pBot.pEdict->v.button &= ~(IN_ATTACK | IN_ATTACK2);
       pBot.f_move_speed = 0.0f;
       pBot.f_strafe_direction = 0.0f;
+      BotGaussTraceWait(pBot, BOT_GAUSS_REASON_RELEASE_WAIT,
+         BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget),
+         pBot.f_gauss_secondary_release_time +
+            BOT_GAUSS_RELEASE_CONFIRM_DELAY - gpGlobals->time);
       if (pBot.f_gauss_secondary_release_time +
           BOT_GAUSS_RELEASE_CONFIRM_DELAY > gpGlobals->time)
          return TRUE;
@@ -1997,6 +2345,9 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
       pBot.f_gauss_secondary_cooldown_time = gpGlobals->time +
          BOT_GAUSS_SECONDARY_COOLDOWN_TIME;
       pBot.f_shoot_time = pBot.f_gauss_secondary_cooldown_time;
+      BotGaussTraceWait(pBot, BOT_GAUSS_REASON_COOLDOWN,
+         BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget),
+         BOT_GAUSS_SECONDARY_COOLDOWN_TIME);
       return FALSE;
    }
 
@@ -2006,6 +2357,9 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
       pBot.f_gauss_secondary_cooldown_time = gpGlobals->time +
          BOT_GAUSS_SECONDARY_COOLDOWN_TIME;
       BotGaussResetSecondaryCharge(pBot, BOT_GAUSS_SECONDARY_COOLDOWN);
+      BotGaussTraceWait(pBot, BOT_GAUSS_REASON_COOLDOWN,
+         BotGaussTargetDistance(pBot, pBot.pGaussSecondaryTarget),
+         BOT_GAUSS_SECONDARY_COOLDOWN_TIME);
       return FALSE;
    }
 
@@ -2048,7 +2402,11 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
    if (transient_reason != NULL)
    {
       if (pBot.f_gauss_secondary_lost_time <= 0.0f)
+      {
          pBot.f_gauss_secondary_lost_time = gpGlobals->time;
+         BotGaussTraceWait(pBot, BOT_GAUSS_REASON_TARGET_LOST_GRACE,
+            distance, BOT_GAUSS_TARGET_LOST_GRACE);
+      }
       else if (pBot.f_gauss_secondary_lost_time +
                BOT_GAUSS_TARGET_LOST_GRACE <= gpGlobals->time)
       {
@@ -2059,6 +2417,9 @@ qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
    else
    {
       pBot.f_gauss_secondary_lost_time = 0.0f;
+      if (pBot.gauss_secondary_wait_reason ==
+          BOT_GAUSS_REASON_TARGET_LOST_GRACE)
+         BotGaussClearWaitReason(pBot);
       BotGaussSetAim(pBot, pBot.pGaussSecondaryTarget);
       BotGaussAdjustSecondaryChargePlan(pBot, distance);
    }
@@ -2264,6 +2625,23 @@ static void BotFireSelectedWeaponSetShootTime(bot_t &pBot, const bot_weapon_sele
 static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &select, const bot_fire_delay_t &delay, qboolean use_primary, qboolean use_secondary)
 {
    qboolean conditions_checked = FALSE;
+   bot_gauss_attack_decision_t gauss_decision = BOT_GAUSS_ATTACK_NONE;
+   bot_gauss_attack_reason_t gauss_reason = BOT_GAUSS_REASON_NONE;
+
+   // UTIL_SelectItem is asynchronous: for one or more frames the engine can
+   // still report Gauss while generic combat has already selected another
+   // weapon. Do not let that generic attack fire the still-active Gauss.
+   if (pBot.current_weapon.iId == VALVE_WEAPON_GAUSS &&
+       select.iId != VALVE_WEAPON_GAUSS)
+   {
+      const float distance = BotGaussTargetDistance(pBot, pBot.pBotEnemy);
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         BOT_GAUSS_REASON_WEAPON_SELECT_WAIT);
+      pBot.pEdict->v.button &= ~(IN_ATTACK | IN_ATTACK2);
+      BotGaussTraceWait(pBot, BOT_GAUSS_REASON_WEAPON_SELECT_WAIT,
+         distance, 0.0f);
+      return TRUE;
+   }
 
    // Validate the MP5 grenade before choosing it over primary fire. A failed
    // trajectory or clearance check leaves an already-valid primary available.
@@ -2279,9 +2657,36 @@ static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &s
    // MP5 clearance and launch-angle checks above can still fall back to primary.
    if(select.iId == VALVE_WEAPON_GAUSS)
    {
-      BotGaussSelectAttack(pBot, use_primary, use_secondary);
-      if (!use_primary && !use_secondary)
-         return FALSE;
+      // The Gauss decision is authoritative for the rest of this combat tick.
+      // Clear any earlier generic primary request before classifying it.
+      pBot.pEdict->v.button &= ~IN_ATTACK;
+      gauss_decision = BotGaussSelectAttack(
+         pBot, select, use_primary, use_secondary, gauss_reason);
+      if (gauss_decision == BOT_GAUSS_ATTACK_WAIT_SECONDARY)
+      {
+         const float distance = BotGaussTargetDistance(
+            pBot, pBot.pBotEnemy);
+         float remaining_time = 0.0f;
+         if (gauss_reason == BOT_GAUSS_REASON_COOLDOWN)
+            remaining_time = pBot.f_gauss_secondary_cooldown_time -
+               gpGlobals->time;
+         else if (gauss_reason == BOT_GAUSS_REASON_RELEASE_WAIT)
+            remaining_time = pBot.f_gauss_secondary_release_time +
+               BOT_GAUSS_RELEASE_CONFIRM_DELAY - gpGlobals->time;
+         BotGaussTraceWait(pBot, gauss_reason, distance, remaining_time);
+
+         if (gauss_reason == BOT_GAUSS_REASON_CHARGE_REPLANNING)
+            return BotGaussUpdateSecondaryCharge(pBot);
+
+         pBot.pEdict->v.button &= ~IN_ATTACK2;
+         return TRUE;
+      }
+      if (gauss_decision == BOT_GAUSS_ATTACK_NONE)
+      {
+         pBot.pEdict->v.button &= ~IN_ATTACK2;
+         BotGaussClearWaitReason(pBot);
+         return TRUE;
+      }
    }
    else if(use_primary && use_secondary &&
       (select.iId == VALVE_WEAPON_GLOCK || select.iId == VALVE_WEAPON_MP5))
@@ -2308,6 +2713,24 @@ static qboolean BotFireSelectedWeapon(bot_t & pBot, const bot_weapon_select_t &s
    if (select.iId == VALVE_WEAPON_GAUSS && use_secondary)
       return BotGaussStartSecondaryCharge(
          pBot, BotGaussTargetDistance(pBot, pBot.pBotEnemy));
+
+   if (select.iId == VALVE_WEAPON_GAUSS)
+   {
+      if (!use_primary ||
+          gauss_decision != BOT_GAUSS_ATTACK_PRIMARY_FALLBACK ||
+          gauss_reason <= BOT_GAUSS_REASON_NONE ||
+          gauss_reason >= BOT_GAUSS_REASON_COUNT)
+      {
+         BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_NONE,
+            BOT_GAUSS_REASON_NONE);
+         pBot.pEdict->v.button &= ~IN_ATTACK;
+         return TRUE;
+      }
+
+      BotGaussClearWaitReason(pBot);
+      BotGaussRecordPrimaryFallback(pBot, gauss_reason,
+         BotGaussTargetDistance(pBot, pBot.pBotEnemy));
+   }
 
    BotTraceOpportunisticAttack(pBot, select, use_primary, use_secondary);
    BotFireSelectedWeaponSetShootTime(pBot, select, delay, use_primary);

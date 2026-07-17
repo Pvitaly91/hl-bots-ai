@@ -190,6 +190,11 @@ static void BotSpawnInit_CombatState( bot_t &pBot )
    pBot.f_gauss_secondary_cooldown_time = 0.0f;
    pBot.f_gauss_secondary_lost_time = 0.0f;
    pBot.f_gauss_secondary_trace_time = 0.0f;
+   pBot.gauss_secondary_wait_reason = BOT_GAUSS_REASON_NONE;
+   pBot.gauss_attack_decision = BOT_GAUSS_ATTACK_NONE;
+   pBot.gauss_attack_reason = BOT_GAUSS_REASON_NONE;
+   pBot.f_gauss_attack_decision_time = 0.0f;
+   pBot.gauss_primary_accounted = FALSE;
    pBot.f_gauss_secondary_planned_charge = 0.0f;
    pBot.f_gauss_secondary_distance_at_start = 0.0f;
    pBot.f_gauss_secondary_last_plan_distance = 0.0f;
@@ -3723,6 +3728,10 @@ static void BotThinkUpdatePhysicsState(bot_t &pBot)
    edict_t *pEdict = pBot.pEdict;
 
    pEdict->v.button = 0;
+   pBot.gauss_attack_decision = BOT_GAUSS_ATTACK_NONE;
+   pBot.gauss_attack_reason = BOT_GAUSS_REASON_NONE;
+   pBot.f_gauss_attack_decision_time = gpGlobals->time;
+   pBot.gauss_primary_accounted = FALSE;
    pBot.f_move_speed = 0.0;
 
    // Get bot physics status
@@ -4053,6 +4062,8 @@ static void BotThinkFinalizeMovement(bot_t &pBot)
 {
    edict_t *pEdict = pBot.pEdict;
    float f_strafe_speed;
+
+   BotGaussAuditAttackButtons(pBot);
 
    // save the previous speed (for checking if stuck)
    pBot.f_prev_speed = pBot.f_move_speed;

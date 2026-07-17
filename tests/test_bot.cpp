@@ -139,6 +139,7 @@ void BotFindEnemy(bot_t &pBot)
 static int mock_BotShootAtEnemy_count = 0;
 void BotShootAtEnemy(bot_t &pBot) { (void)pBot; mock_BotShootAtEnemy_count++; }
 qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot) { (void)pBot; return FALSE; }
+void BotGaussAuditAttackButtons(bot_t &pBot) { (void)pBot; }
 static qboolean mock_BotShootTripmine_ret_early = FALSE;
 qboolean BotShootTripmine(bot_t &pBot) { (void)pBot; return mock_BotShootTripmine_ret_early; }
 qboolean BotDetonateSatchel(bot_t &pBot) { (void)pBot; return FALSE; }

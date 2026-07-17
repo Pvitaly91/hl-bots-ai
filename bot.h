@@ -95,6 +95,59 @@ typedef int BOOL;
 #define BOT_GAUSS_SECONDARY_RELEASE_WAIT 2
 #define BOT_GAUSS_SECONDARY_COOLDOWN     3
 
+enum bot_gauss_attack_decision_t
+{
+   BOT_GAUSS_ATTACK_NONE = 0,
+   BOT_GAUSS_ATTACK_SECONDARY,
+   BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+   BOT_GAUSS_ATTACK_PRIMARY_FALLBACK
+};
+
+enum bot_gauss_attack_reason_t
+{
+   BOT_GAUSS_REASON_NONE = 0,
+   BOT_GAUSS_REASON_COOLDOWN,
+   BOT_GAUSS_REASON_RELEASE_WAIT,
+   BOT_GAUSS_REASON_WEAPON_SELECT_WAIT,
+   BOT_GAUSS_REASON_STABILIZING,
+   BOT_GAUSS_REASON_TARGET_LOST_GRACE,
+   BOT_GAUSS_REASON_CHARGE_REPLANNING,
+   BOT_GAUSS_REASON_OVERWATCH_APPROACH,
+   BOT_GAUSS_REASON_NO_SECONDARY_AMMO,
+   BOT_GAUSS_REASON_UNSAFE_RECOIL,
+   BOT_GAUSS_REASON_LADDER,
+   BOT_GAUSS_REASON_WATER,
+   BOT_GAUSS_REASON_AIRBORNE,
+   BOT_GAUSS_REASON_CRITICAL_HEALTH,
+   BOT_GAUSS_REASON_GRENADE_DANGER,
+   BOT_GAUSS_REASON_STRATEGIC_CROSSFIRE,
+   BOT_GAUSS_REASON_WEAPON_UNAVAILABLE,
+   BOT_GAUSS_REASON_BLOCKED_LOS,
+   BOT_GAUSS_REASON_TARGET_INVALID,
+   BOT_GAUSS_REASON_COUNT
+};
+
+#define BOT_GAUSS_SKILL_BUCKET_COUNT 5
+#define BOT_GAUSS_DISTANCE_BUCKET_COUNT 5
+
+typedef struct bot_gauss_attack_counter_s
+{
+   unsigned int secondary_opportunities;
+   unsigned int secondary_starts;
+   unsigned int secondary_releases;
+   unsigned int secondary_waits;
+   unsigned int primary_fallbacks;
+   unsigned int primary_unexplained;
+} bot_gauss_attack_counter_t;
+
+typedef struct bot_gauss_attack_stats_s
+{
+   bot_gauss_attack_counter_t total;
+   bot_gauss_attack_counter_t by_skill_distance
+      [BOT_GAUSS_SKILL_BUCKET_COUNT][BOT_GAUSS_DISTANCE_BUCKET_COUNT];
+   unsigned int primary_fallback_reasons[BOT_GAUSS_REASON_COUNT];
+} bot_gauss_attack_stats_t;
+
 // instant damage (from cbase.h)
 #define DMG_CRUSH       (1 << 0) // crushed by falling or moving object
 #define DMG_BURN        (1 << 3) // heat burned
@@ -303,6 +356,11 @@ typedef struct
    float f_gauss_secondary_cooldown_time;
    float f_gauss_secondary_lost_time;
    float f_gauss_secondary_trace_time;
+   int gauss_secondary_wait_reason;
+   int gauss_attack_decision;
+   int gauss_attack_reason;
+   float f_gauss_attack_decision_time;
+   qboolean gauss_primary_accounted;
    float f_gauss_secondary_planned_charge;
    float f_gauss_secondary_distance_at_start;
    float f_gauss_secondary_last_plan_distance;

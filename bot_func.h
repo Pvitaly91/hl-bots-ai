@@ -35,6 +35,11 @@ void BotRemoveEnemy( bot_t &pBot, qboolean b_keep_tracking, const char *reason);
 void BotFindEnemy( bot_t &pBot );
 void BotShootAtEnemy( bot_t &pBot );
 qboolean BotGaussUpdateSecondaryCharge( bot_t &pBot );
+void BotGaussAuditAttackButtons( bot_t &pBot );
+void BotGaussResetAttackStats( void );
+void BotGaussGetAttackStats( bot_gauss_attack_stats_t *stats );
+const char *BotGaussAttackReasonName( int reason );
+const char *BotGaussDistanceBucketName( int bucket );
 qboolean BotShootTripmine( bot_t &pBot );
 qboolean BotDetonateSatchel( bot_t &pBot );
 

@@ -253,6 +253,11 @@ static int setup_gauss_for_test(bot_t &pBot, edict_t *pBotEdict,
    pBot.m_rgAmmo[6] = uranium;
    pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_IDLE;
    pBot.f_gauss_secondary_cooldown_time = 0.0f;
+   pBot.gauss_secondary_wait_reason = BOT_GAUSS_REASON_NONE;
+   pBot.gauss_attack_decision = BOT_GAUSS_ATTACK_NONE;
+   pBot.gauss_attack_reason = BOT_GAUSS_REASON_NONE;
+   pBot.f_gauss_attack_decision_time = 0.0f;
+   pBot.gauss_primary_accounted = FALSE;
    pBot.f_shoot_time = 0.0f;
    pBot.f_weaponchange_time = 0.0f;
    pBot.b_on_ground = TRUE;
@@ -2712,10 +2717,10 @@ static int test_gauss_secondary_policy_and_state_machine(void)
    ASSERT_TRUE(full_required > capped_required);
    PASS();
 
-   TEST("Gauss secondary is deterministic from 64 through 1600 units");
+   TEST("Gauss secondary is deterministic from 64 through 1800 units");
    const float distances[] = {64.0f, 128.0f, 300.0f, 500.0f,
-      900.0f, 1600.0f};
-   for (int index = 0; index < 6; index++)
+      900.0f, 1400.0f, 1600.0f, 1800.0f};
+   for (int index = 0; index < 8; index++)
    {
       BotGaussResetSecondaryCharge(testbot, BOT_GAUSS_SECONDARY_IDLE);
       testbot.pBotEnemy = pEnemy;
@@ -2725,9 +2730,23 @@ static int test_gauss_secondary_policy_and_state_machine(void)
       ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
          fire_delay[gauss_index], TRUE, TRUE), TRUE);
       ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_HOLD);
+      ASSERT_INT(testbot.gauss_attack_decision,
+         BOT_GAUSS_ATTACK_SECONDARY);
       ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
       ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    }
+   PASS();
+
+   TEST("large distance cannot turn a valid Gauss opportunity into primary");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   pEnemy->v.origin = Vector(3500.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_gauss_safe;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, FALSE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision, BOT_GAUSS_ATTACK_SECONDARY);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    PASS();
 
    TEST("far charge holds ATTACK2 over ticks then releases once");
@@ -2763,20 +2782,87 @@ static int test_gauss_secondary_policy_and_state_machine(void)
    ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
 
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_RELEASE_WAIT);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+
    testbot.m_rgAmmo[6] = 40;
    pEnemy->v.health = 60.0f;
    gpGlobals->time += 0.06f;
    ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
    ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_COOLDOWN);
-   qboolean use_primary = TRUE;
-   qboolean use_secondary = TRUE;
-   BotGaussSelectAttack(testbot, use_primary, use_secondary);
-   ASSERT_INT(use_primary, TRUE);
-   ASSERT_INT(use_secondary, FALSE);
+   pEnemy->v.origin = pBotEdict->v.origin + Vector(1000.0f, 0.0f, 0.0f);
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0.0f;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_COOLDOWN);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
 
    gpGlobals->time = testbot.f_gauss_secondary_cooldown_time + 0.001f;
    ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
    ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   PASS();
+
+   TEST("weapon activation delay cannot leak Gauss primary");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   testbot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason,
+      BOT_GAUSS_REASON_WEAPON_SELECT_WAIT);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("hard block waits for actual Gauss activation before fallback");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 2);
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   testbot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason,
+      BOT_GAUSS_REASON_WEAPON_SELECT_WAIT);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("weapon switch away from active Gauss cannot fire old primary");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   bot_weapon_select_t *glock = GetWeaponSelect(VALVE_WEAPON_GLOCK);
+   ASSERT_TRUE(glock != NULL);
+   const int glock_index = (int)(glock - weapon_select);
+   fire_delay[glock_index].iId = VALVE_WEAPON_GLOCK;
+   pEnemy->v.origin = Vector(500.0f, 0.0f, 0.0f);
+   pBotEdict->v.button = IN_ATTACK2;
+   BotGaussResetAttackStats();
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[glock_index],
+      fire_delay[glock_index], TRUE, FALSE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason,
+      BOT_GAUSS_REASON_WEAPON_SELECT_WAIT);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   BotGaussAuditAttackButtons(testbot);
+   bot_gauss_attack_stats_t switch_stats;
+   BotGaussGetAttackStats(&switch_stats);
+   ASSERT_INT(switch_stats.total.primary_unexplained, 0);
    PASS();
 
    TEST("short secondary uses a limited uranium budget");
@@ -2799,11 +2885,17 @@ static int test_gauss_secondary_policy_and_state_machine(void)
    ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
       fire_delay[gauss_index], TRUE, TRUE), TRUE);
    ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_PRIMARY_FALLBACK);
+   ASSERT_INT(testbot.gauss_attack_reason,
+      BOT_GAUSS_REASON_NO_SECONDARY_AMMO);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   BotGaussAuditAttackButtons(testbot);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    PASS();
 
-   TEST("Gauss overwatch approach permits only short self-defense charge");
+   TEST("Gauss overwatch approach waits instead of using distant primary");
    setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
    num_waypoints = 1;
    waypoints[0].origin = Vector(1000.0f, 0.0f, 0.0f);
@@ -2815,7 +2907,12 @@ static int test_gauss_secondary_policy_and_state_machine(void)
    ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
       fire_delay[gauss_index], TRUE, TRUE), TRUE);
    ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
-   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason,
+      BOT_GAUSS_REASON_OVERWATCH_APPROACH);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
 
    BotGaussResetSecondaryCharge(testbot, BOT_GAUSS_SECONDARY_IDLE);
    pEnemy->v.origin = Vector(128.0f, 0.0f, 0.0f);
@@ -2848,8 +2945,192 @@ static int test_gauss_secondary_policy_and_state_machine(void)
    ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
       fire_delay[gauss_index], TRUE, TRUE), TRUE);
    ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_PRIMARY_FALLBACK);
+   ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_UNSAFE_RECOIL);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("unsafe recoil on Gauss hold does not auto-fallback to primary");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   num_waypoints = 1;
+   waypoints[0].origin = pBotEdict->v.origin;
+   testbot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   testbot.waypoint_goal = 0;
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_nohit;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision, BOT_GAUSS_ATTACK_NONE);
+   ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_UNSAFE_RECOIL);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   testbot.wpt_goal_type = WPT_GOAL_NONE;
+   testbot.waypoint_goal = -1;
+   num_waypoints = 0;
+   PASS();
+
+   TEST("critical health, grenade, and strategy use explicit fallback");
+   const bot_gauss_attack_reason_t hard_reasons[] = {
+      BOT_GAUSS_REASON_CRITICAL_HEALTH,
+      BOT_GAUSS_REASON_GRENADE_DANGER,
+      BOT_GAUSS_REASON_STRATEGIC_CROSSFIRE
+   };
+   for (int hard_case = 0; hard_case < 3; hard_case++)
+   {
+      setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL4, 50);
+      pBotEdict->v.health = 100.0f;
+      testbot.f_grenade_found_time = 0.0f;
+      testbot.wpt_goal_type = WPT_GOAL_NONE;
+      pEnemy->v.origin = Vector(900.0f, 0.0f, 0.0f);
+      if (hard_case == 0)
+         pBotEdict->v.health = BOT_GAUSS_CRITICAL_HEALTH;
+      else if (hard_case == 1)
+         testbot.f_grenade_found_time = gpGlobals->time;
+      else if (hard_case == 2)
+         testbot.wpt_goal_type = WPT_GOAL_BUNKER;
+
+      mock_trace_line_fn = trace_gauss_safe;
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+         fire_delay[gauss_index], TRUE, TRUE), TRUE);
+      ASSERT_INT(testbot.gauss_attack_decision,
+         BOT_GAUSS_ATTACK_PRIMARY_FALLBACK);
+      ASSERT_INT(testbot.gauss_attack_reason, hard_reasons[hard_case]);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+      BotGaussAuditAttackButtons(testbot);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
+   }
+   pBotEdict->v.health = 100.0f;
+   testbot.f_grenade_found_time = 0.0f;
+   testbot.wpt_goal_type = WPT_GOAL_NONE;
+   PASS();
+
+   TEST("blocked direct LOS permits neither secondary nor primary");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_gauss_blocked_los;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision, BOT_GAUSS_ATTACK_NONE);
+   ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_BLOCKED_LOS);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
+   TEST("moving Gauss hold stabilizes without primary then starts secondary");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   num_waypoints = 1;
+   waypoints[0].origin = pBotEdict->v.origin;
+   testbot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   testbot.waypoint_goal = 0;
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   pBotEdict->v.velocity = Vector(100.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_gauss_safe;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision,
+      BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+   ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_STABILIZING);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+
+   pBotEdict->v.velocity = Vector(0.0f, 0.0f, 0.0f);
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+      fire_delay[gauss_index], TRUE, TRUE), TRUE);
+   ASSERT_INT(testbot.gauss_attack_decision, BOT_GAUSS_ATTACK_SECONDARY);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   PASS();
+
+   TEST("Gauss overwatch completes five cycles with zero primary fire");
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL5, 50);
+   num_waypoints = 1;
+   waypoints[0].origin = pBotEdict->v.origin;
+   testbot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   testbot.waypoint_goal = 0;
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   mock_trace_line_fn = trace_gauss_safe;
+   BotGaussResetAttackStats();
+   int primary_count = 0;
+   for (int cycle = 0; cycle < 5; cycle++)
+   {
+      pBotEdict->v.button = 0;
+      testbot.f_shoot_time = 0.0f;
+      ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+         fire_delay[gauss_index], TRUE, TRUE), TRUE);
+      ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_HOLD);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+      if (FBitSet(pBotEdict->v.button, IN_ATTACK))
+         primary_count++;
+
+      gpGlobals->time = testbot.f_gauss_secondary_release_time + 0.001f;
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), TRUE);
+      ASSERT_INT(testbot.gauss_secondary_state,
+         BOT_GAUSS_SECONDARY_RELEASE_WAIT);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+         fire_delay[gauss_index], TRUE, TRUE), TRUE);
+      ASSERT_INT(testbot.gauss_attack_decision,
+         BOT_GAUSS_ATTACK_WAIT_SECONDARY);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+
+      gpGlobals->time = testbot.f_gauss_secondary_release_time +
+         BOT_GAUSS_RELEASE_CONFIRM_DELAY + 0.001f;
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
+      ASSERT_INT(testbot.gauss_secondary_state,
+         BOT_GAUSS_SECONDARY_COOLDOWN);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+
+      testbot.f_shoot_time = 0.0f;
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
+         fire_delay[gauss_index], TRUE, TRUE), TRUE);
+      ASSERT_INT(testbot.gauss_attack_reason, BOT_GAUSS_REASON_COOLDOWN);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+
+      gpGlobals->time = testbot.f_gauss_secondary_cooldown_time + 0.001f;
+      pBotEdict->v.button = 0;
+      ASSERT_INT(BotGaussUpdateSecondaryCharge(testbot), FALSE);
+      ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+   }
+
+   bot_gauss_attack_stats_t stats;
+   BotGaussGetAttackStats(&stats);
+   ASSERT_INT(primary_count, 0);
+   ASSERT_INT(stats.total.secondary_opportunities, 5);
+   ASSERT_INT(stats.total.secondary_starts, 5);
+   ASSERT_INT(stats.total.secondary_releases, 5);
+   ASSERT_INT(stats.total.primary_fallbacks, 0);
+   ASSERT_INT(stats.total.primary_unexplained, 0);
+   ASSERT_INT(stats.by_skill_distance[SKILL5 - SKILL1][3].
+      secondary_starts, 5);
+   PASS();
+
+   TEST("runtime audit counts and suppresses unexplained Gauss primary");
+   BotGaussResetAttackStats();
+   setup_gauss_for_test(testbot, pBotEdict, pEnemy, SKILL4, 50);
+   pEnemy->v.origin = Vector(1000.0f, 0.0f, 0.0f);
+   pBotEdict->v.button = IN_ATTACK;
+   testbot.gauss_attack_decision = BOT_GAUSS_ATTACK_SECONDARY;
+   testbot.gauss_attack_reason = BOT_GAUSS_REASON_NONE;
+   testbot.f_gauss_attack_decision_time = gpGlobals->time;
+   testbot.gauss_primary_accounted = FALSE;
+   BotGaussAuditAttackButtons(testbot);
+   BotGaussGetAttackStats(&stats);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_INT(stats.total.primary_unexplained, 1);
+   ASSERT_INT(stats.by_skill_distance[SKILL4 - SKILL1][3].
+      primary_unexplained, 1);
    PASS();
 
    MapProfileReset();
@@ -2998,6 +3279,7 @@ static int test_gauss_secondary_interruptions(void)
    ASSERT_INT(testbot.wpt_goal_type, WPT_GOAL_BUNKER);
    ASSERT_INT(testbot.waypoint_goal, 23);
    ASSERT_TRUE(MapProfileIsStrategicEventActive());
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
    MapProfileReset();
    gpGlobals->mapname = 0;
@@ -3005,6 +3287,11 @@ static int test_gauss_secondary_interruptions(void)
 
    TEST("ladder, water, and airborne states forbid charge start");
    const int blocked_modes = 3;
+   const bot_gauss_attack_reason_t blocked_reasons[blocked_modes] = {
+      BOT_GAUSS_REASON_LADDER,
+      BOT_GAUSS_REASON_WATER,
+      BOT_GAUSS_REASON_AIRBORNE
+   };
    for (int mode = 0; mode < blocked_modes; mode++)
    {
       BotGaussResetSecondaryCharge(testbot, BOT_GAUSS_SECONDARY_IDLE);
@@ -3014,6 +3301,8 @@ static int test_gauss_secondary_interruptions(void)
       pEnemy->v.deadflag = DEAD_NO;
       testbot.current_weapon.iId = VALVE_WEAPON_GAUSS;
       testbot.m_rgAmmo[6] = 50;
+      testbot.wpt_goal_type = WPT_GOAL_NONE;
+      testbot.waypoint_goal = -1;
       testbot.b_on_ground = mode != 2;
       testbot.b_on_ladder = mode == 0;
       testbot.b_in_water = mode == 1;
@@ -3022,8 +3311,13 @@ static int test_gauss_secondary_interruptions(void)
       ASSERT_INT(BotFireSelectedWeapon(testbot, weapon_select[gauss_index],
          fire_delay[gauss_index], TRUE, TRUE), TRUE);
       ASSERT_INT(testbot.gauss_secondary_state, BOT_GAUSS_SECONDARY_IDLE);
+      ASSERT_INT(testbot.gauss_attack_decision,
+         BOT_GAUSS_ATTACK_PRIMARY_FALLBACK);
+      ASSERT_INT(testbot.gauss_attack_reason, blocked_reasons[mode]);
       ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
       ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+      BotGaussAuditAttackButtons(testbot);
+      ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    }
    PASS();
 
