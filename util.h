@@ -47,6 +47,7 @@ int UTIL_GetTeamModelMappingCount(void);
 qboolean FInShootCone( const Vector & Origin, edict_t *pEdict, float distance, float target_radius, float min_angle);
 qboolean FVisible( const Vector &vecOrigin, edict_t *pEdict, edict_t ** pHit);
 qboolean FVisibleEnemy( const Vector &vecOrigin, edict_t *pEdict, edict_t *pEnemy );
+void UTIL_SelectWeapon(edict_t *pEdict, int weapon_index);
 
 void UTIL_BuildFileName_N(char *filename, int size, char *arg1, char *arg2);
 void GetGameDir (char *game_dir);

@@ -1,12 +1,27 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-84
+HLDM-JKBOTTI-AI-STAND-20260415-10
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
 
 The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, the Python sidecar uses a deterministic rules engine. If the sidecar is absent or errors, the server and bot plugin still run.
+
+## Crossfire Satellite Operations Gauss Stronghold
+
+The `crossfire` map profile now gives one Gauss bot a persistent Satellite Operations second-floor defender role. Zero uranium, temporary loss of targets, fallback weapon selection, and local health or armor needs no longer cancel the role. The bot remains in the bounded room zone, rejects enemy and item routes into the yard, uses guarded window positions, and returns to a firing window after local resupply.
+
+- Stronghold bounds are `X [-1040,-640]`, `Y [128,1340]`, and `Z [-1540,-1450]`; capacity is one live bot.
+- Window firing waypoints are `99` and `100`. Local resource waypoints include health charger `45`, Gauss/uranium `47`, MP5/AR grenades `48`, crossbow `49`, and batteries `58`.
+- Local resources are `weapon_gauss`, `ammo_gaussclip`/`ammo_uranium`, `weapon_9mmAR`, `ammo_ARgrenades`, `weapon_crossbow`, `item_battery`, `item_healthkit`/`func_healthcharger`, and `func_recharge` when present inside the zone.
+- With no Gauss ammo, the bot waits in the stronghold and uses crossbow at range or MP5 at shorter distances, including a safe MP5 grenade lane. Glock remains a last fallback and never causes a zone exit.
+- Projected floor, hull, edge, jump, and recoil checks prevent window drops. Enemies outside remain firing targets but cannot become locomotion goals.
+- A Crossfire strike is the absolute override: the role and local resource claim are cleared and bunker/shaft evacuation becomes authoritative.
+
+Prompt 10 controlled scenarios A-H passed on the isolated `27017` validation server with 12 bots and `jk_ai_balance_enabled 0`: Gauss secondary fire, `0 -> 33/53` local uranium refill, respawn waiting, crossbow and MP5 fallback, MP5 secondary, armor `15 -> 30`, health charger `30 -> 75`, return-to-window, no actual zone exit or recoil fall, and strike egress were all observed. Validation-only commands and entity controls are not included in the production plugin.
+
+A separate injection-free 20-minute natural soak passed with 12 bots: two stronghold entries, `245.4` accumulated stronghold-seconds, two health pickups, four armor pickups, five returns to a window, 96 prevented enemy pursuits, two successful strike exits, zero unexpected zone exits, zero recoil falls, and 18/18 accounted Gauss-secondary starts/releases. The natural match did not randomly deplete uranium, so local ammo respawn and fallback behavior remain evidenced by controlled scenarios B, C, and G rather than being attributed to the soak.
 
 ## What This Repo Contains
 

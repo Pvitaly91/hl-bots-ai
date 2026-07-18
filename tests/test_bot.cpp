@@ -15,12 +15,14 @@ static float mock_random_float_ret = 0.0f;
 
 #define RANDOM_LONG2 mock_RANDOM_LONG2
 #define RANDOM_FLOAT2 mock_RANDOM_FLOAT2
+#define MapProfileShouldPreservePickup mock_MapProfileShouldPreservePickup
 
 // Include the source file under test (brings in all its headers + static functions)
 #include "../bot.cpp"
 
 #undef RANDOM_LONG2
 #undef RANDOM_FLOAT2
+#undef MapProfileShouldPreservePickup
 
 // Mock implementations - return clamped mock_random_*_ret values
 int mock_RANDOM_LONG2(int low, int high)
@@ -39,6 +41,15 @@ float mock_RANDOM_FLOAT2(float low, float high)
    if (val < low) val = low;
    if (val > high) val = high;
    return val;
+}
+
+static qboolean mock_preserve_profile_pickup = FALSE;
+qboolean mock_MapProfileShouldPreservePickup(const bot_t &pBot,
+   const edict_t *pickup)
+{
+   (void)pBot;
+   (void)pickup;
+   return mock_preserve_profile_pickup;
 }
 
 // Test infrastructure
@@ -401,6 +412,7 @@ static void setup_engine_funcs(void)
    // Reset controllable stub returns
    mock_BotHeadTowardWaypoint_ret = FALSE;
    mock_BotHeadTowardWaypoint_count = 0;
+   mock_preserve_profile_pickup = FALSE;
    mock_BotStuckInCorner_ret = FALSE;
    mock_BotCantMoveForward_ret = FALSE;
    mock_BotCanJumpUp_ret = FALSE;
@@ -1746,6 +1758,36 @@ static int test_BotFindItem_battery_priority(void)
    BotFindItem(bot);
 
    ASSERT_PTR_EQ(bot.pBotPickupItem, battery);
+   PASS();
+   return 0;
+}
+
+
+static int test_BotFindItem_preserves_profile_owned_pickup(void)
+{
+   TEST("BotFindItem: profile-owned pickup is not replaced by generic scan");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   bot_t bot;
+   setup_bot_for_test(bot, e);
+   e->v.health = 50.0f;
+   e->v.armorvalue = 0.0f;
+   bot.f_find_item = 0.0f;
+
+   edict_t *profile_pickup = mock_alloc_edict();
+   mock_set_classname(profile_pickup, "item_healthkit");
+   profile_pickup->v.origin = Vector(200.0f, 0.0f, 0.0f);
+   bot.pBotPickupItem = profile_pickup;
+
+   edict_t *generic_pickup = mock_alloc_edict();
+   mock_set_classname(generic_pickup, "item_battery");
+   generic_pickup->v.origin = Vector(40.0f, 0.0f, 0.0f);
+   mock_preserve_profile_pickup = TRUE;
+
+   BotFindItem(bot);
+
+   ASSERT_PTR_EQ(bot.pBotPickupItem, profile_pickup);
    PASS();
    return 0;
 }
@@ -5413,7 +5455,7 @@ static int test_ammo_movement_return_fire_and_crossfire_priority(void)
    e->v.ideal_yaw = 17.0f;
    ASSERT_TRUE(BotDoStrafeGoalDirectedCombat(bot));
    ASSERT_INT(bot.movement_mode, BOT_MOVE_PRIORITY_AMMO_PICKUP);
-   ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
+   ASSERT_TRUE(bot.f_strafe_direction < 0.0f);
    ASSERT_FLOAT(e->v.ideal_yaw, 17.0f);
    PASS();
 
@@ -5445,6 +5487,37 @@ static int test_ammo_movement_return_fire_and_crossfire_priority(void)
    ASSERT_TRUE(BotDoStrafeGoalDirectedCombat(bot));
    ASSERT_INT(bot.movement_mode, BOT_MOVE_PRIORITY_AMMO_PICKUP);
    ASSERT_FLOAT(e->v.ideal_yaw, 180.0f);
+   PASS();
+
+   TEST("stronghold pickup movement follows its waypoint route, not the entity");
+   setup_engine_funcs();
+   setup_ammo_pickup_weapon_defs();
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"stalkyard";
+   e = mock_alloc_edict();
+   enemy = mock_alloc_edict();
+   setup_alive_bot(bot, e);
+   e->v.weapons = (1u << VALVE_WEAPON_MP5);
+   bot.m_rgAmmo[1] = 20;
+   bot.m_rgAmmo[8] = 10;
+   enemy->v.origin = Vector(-200.0f, 0.0f, 0.0f);
+   bot.pBotEnemy = enemy;
+   ammo = mock_alloc_edict();
+   mock_set_classname(ammo, "ammo_9mmAR");
+   ammo->v.origin = Vector(0.0f, 240.0f, 0.0f);
+   bot.pBotPickupItem = ammo;
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(240.0f, 0.0f, 0.0f);
+   bot.curr_waypoint_index = 0;
+   bot.waypoint_goal = 0;
+   bot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   bot.f_move_speed = 320.0f;
+   e->v.v_angle.y = 0.0f;
+
+   ASSERT_TRUE(BotDoStrafeGoalDirectedCombat(bot));
+   ASSERT_INT(bot.movement_mode, BOT_MOVE_PRIORITY_AMMO_PICKUP);
+   ASSERT_FLOAT(bot.f_strafe_direction, 0.0f);
+   ASSERT_TRUE(bot.f_move_speed > 0.0f);
    PASS();
 
    TEST("Crossfire strategic route rejects a nearby ammo detour");
@@ -6043,9 +6116,37 @@ static int test_BotThink_weak_weapon_moves_to_upgrade_while_firing(void)
 
    BotDoStrafe(bot);
    ASSERT_INT(bot.movement_mode, BOT_MOVE_WEAK_WEAPON_ROUTE);
-   ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
+   ASSERT_TRUE(bot.f_strafe_direction < 0.0f);
    ASSERT_TRUE(bot.f_move_speed > 100.0f);
 
+   PASS();
+   return 0;
+}
+
+
+static int test_BotWander_profile_owned_pickup_uses_waypoint_route(void)
+{
+   TEST("BotWander: profile-owned pickup advances its waypoint route");
+   setup_engine_funcs();
+
+   edict_t *e = mock_alloc_edict();
+   edict_t *pickup = mock_alloc_edict();
+   bot_t bot;
+   setup_alive_bot(bot, e);
+   mock_set_classname(pickup, "item_battery");
+   pickup->v.origin = Vector(300.0f, 0.0f, 0.0f);
+
+   bot.pBotPickupItem = pickup;
+   bot.f_look_for_waypoint_time = 0.0f;
+   bot.f_move_speed = bot.f_max_speed;
+   num_waypoints = 1;
+   waypoints[0].origin = Vector(100.0f, 0.0f, 0.0f);
+   mock_preserve_profile_pickup = TRUE;
+   mock_BotHeadTowardWaypoint_ret = TRUE;
+
+   BotWanderFreeRoam(bot, 10.0f);
+
+   ASSERT_INT(mock_BotHeadTowardWaypoint_count, 1);
    PASS();
    return 0;
 }
@@ -6144,7 +6245,7 @@ static int test_BotThink_weak_weaponbox_moves_while_firing(void)
 
    BotDoStrafe(bot);
    ASSERT_INT(bot.movement_mode, BOT_MOVE_WEAK_PHYSICAL_PICKUP);
-   ASSERT_TRUE(bot.f_strafe_direction > 0.0f);
+   ASSERT_TRUE(bot.f_strafe_direction < 0.0f);
    ASSERT_TRUE(bot.f_move_speed > 100.0f);
 
    PASS();
@@ -6600,6 +6701,7 @@ int main(void)
    fail |= test_BotFindItem_healthkit_full_hp();
    fail |= test_BotFindItem_battery();
    fail |= test_BotFindItem_battery_priority();
+   fail |= test_BotFindItem_preserves_profile_owned_pickup();
    fail |= test_BotFindItem_spawn_weapon_priority();
    fail |= test_BotFindItem_weak_loadout_weapon_priority();
    fail |= test_BotFindItem_close_mp5_behind_overrides_fov();
@@ -6747,6 +6849,7 @@ int main(void)
    // Phase 6c: BotThink weak weapon behavior
    fail |= test_BotThink_weak_weapon_scans_while_seeking_upgrade();
    fail |= test_BotThink_weak_weapon_moves_to_upgrade_while_firing();
+   fail |= test_BotWander_profile_owned_pickup_uses_waypoint_route();
    fail |= test_BotDoStrafe_weak_bot_never_uses_forward_enemy_pursuit();
    fail |= test_BotThink_weak_weaponbox_moves_while_firing();
    fail |= test_BotThink_spawned_weak_weapon_seeks();

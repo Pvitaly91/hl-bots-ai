@@ -11,6 +11,7 @@
 #include <meta_api.h>
 
 #include "bot.h"
+#include "bot_trace.h"
 #include "bot_weapons.h"
 #include "waypoint.h"
 #include "util.h"
@@ -82,6 +83,38 @@ static const float CROSSFIRE_GAUSS_MAX_TARGET_DISTANCE = 3000.0f;
 static const int CROSSFIRE_GAUSS_MIN_VISIBLE_LANES = 2;
 static const int CROSSFIRE_GAUSS_HOLD_START_MIN_AMMO =
    BOT_GAUSS_SECONDARY_MIN_AMMO * 3;
+static const float CROSSFIRE_SATELLITE_STRONGHOLD_MIN_X = -1040.0f;
+static const float CROSSFIRE_SATELLITE_STRONGHOLD_MAX_X = -640.0f;
+static const float CROSSFIRE_SATELLITE_STRONGHOLD_MIN_Y = 128.0f;
+static const float CROSSFIRE_SATELLITE_STRONGHOLD_MAX_Y = 1340.0f;
+static const float CROSSFIRE_SATELLITE_STRONGHOLD_MIN_Z = -1540.0f;
+static const float CROSSFIRE_SATELLITE_STRONGHOLD_MAX_Z = -1450.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_AMMO_SCAN_INTERVAL = 0.25f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_STATION_USE_DISTANCE = 112.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_PICKUP_APPROACH_DISTANCE =
+   320.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_ARRIVAL_DISTANCE =
+   24.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_BRIDGE_ARRIVAL_DISTANCE =
+   32.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_RESOURCE_RADIUS = 1600.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_FALLBACK_HYSTERESIS = 160.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_WEAPON_RETRY_TIME = 0.35f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE = 720.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_MP5_DISTANCE = 560.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_EGRESS_X = -560.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_DROP_Z = -1580.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_JUMP_INTERVAL = 0.55f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_MOVE_TURN_LIMIT = 45.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_SUMMARY_INTERVAL = 60.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_SCAN_TIME = 8.0f;
+static const int CROSSFIRE_GAUSS_STRONGHOLD_AMMO_LOW = 12;
+static const int CROSSFIRE_GAUSS_STRONGHOLD_AMMO_CRITICAL = 3;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_CRITICAL = 40.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_LOW = 75.0f;
+static const float CROSSFIRE_GAUSS_STRONGHOLD_ARMOR_LOW = 60.0f;
+static const int CROSSFIRE_SATELLITE_GAUSS_STRONGHOLD_CAPACITY = 1;
+static const int CROSSFIRE_GAUSS_STRONGHOLD_MAX_RESOURCES = 32;
 static const int CROSSFIRE_MAX_MAIN_DOORS = 4;
 static const int AMBIENT_SOUND_STOP_FLAG = (1 << 5);
 
@@ -113,6 +146,24 @@ enum CrossfirePrecisionHoldMode
    CROSSFIRE_PRECISION_HOLD_CROSSBOW,
    CROSSFIRE_PRECISION_HOLD_GAUSS
 };
+
+enum CrossfireGaussStrongholdResourceType
+{
+   CROSSFIRE_STRONGHOLD_RESOURCE_NONE = 0,
+   CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO,
+   CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK,
+   CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH,
+   CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR,
+   CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW,
+   CROSSFIRE_STRONGHOLD_RESOURCE_MP5,
+   CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES
+};
+
+typedef struct
+{
+   edict_t *entity;
+   int type;
+} crossfire_gauss_stronghold_resource_t;
 
 typedef struct
 {
@@ -154,6 +205,37 @@ static float g_crossfire_precision_last_target_time[32];
 static float g_crossfire_precision_hold_retry_time[32];
 static float g_crossfire_precision_stuck_since[32];
 static qboolean g_crossfire_precision_hold_arrived[32];
+static int g_crossfire_gauss_stronghold_stage[32];
+static int g_crossfire_gauss_stronghold_window_goal[32];
+static int g_crossfire_gauss_stronghold_resource_goal[32];
+static edict_t *g_crossfire_gauss_stronghold_resource[32];
+static int g_crossfire_gauss_stronghold_resource_type[32];
+static int g_crossfire_gauss_stronghold_ammo_before[32];
+static float g_crossfire_gauss_stronghold_health_before[32];
+static float g_crossfire_gauss_stronghold_armor_before[32];
+static int g_crossfire_gauss_stronghold_weapon_ammo_before[32];
+static int g_crossfire_gauss_stronghold_weapon_ammo2_before[32];
+static qboolean g_crossfire_gauss_stronghold_weapon_owned_before[32];
+static int g_crossfire_gauss_stronghold_last_ammo[32];
+static int g_crossfire_gauss_stronghold_fallback_weapon[32];
+static float g_crossfire_gauss_stronghold_next_weapon_select[32];
+static int g_crossfire_gauss_stronghold_return_bridge[32];
+static qboolean g_crossfire_gauss_stronghold_strike_egress[32];
+static int g_crossfire_gauss_stronghold_strike_window[32];
+static int g_crossfire_gauss_stronghold_strike_bridge[32];
+static float g_crossfire_gauss_stronghold_strike_next_jump[32];
+static float g_crossfire_gauss_stronghold_next_scan[32];
+static float g_crossfire_gauss_stronghold_next_summary[32];
+static float g_crossfire_gauss_stronghold_next_window_change[32];
+static qboolean g_crossfire_gauss_stronghold_was_inside[32];
+static float g_crossfire_gauss_stronghold_next_guard_trace[32];
+static crossfire_gauss_stronghold_resource_t
+   g_crossfire_gauss_stronghold_resources
+      [CROSSFIRE_GAUSS_STRONGHOLD_MAX_RESOURCES];
+static int g_crossfire_gauss_stronghold_resource_count = 0;
+static crossfire_gauss_stronghold_stats_t
+   g_crossfire_gauss_stronghold_stats;
+static float g_crossfire_gauss_stronghold_stats_time = 0.0f;
 
 static void CrossfireTacticsReset(void);
 static void CrossfireTacticsOnEntitySpawn(edict_t *entity);
@@ -181,6 +263,15 @@ static void CrossfireTacticsClearPrecisionHold(
 static qboolean CrossfireTacticsEnsurePrecisionHoldGoal(bot_t &pBot);
 static qboolean CrossfireTacticsHandlePrecisionHoldMovement(bot_t &pBot);
 static qboolean CrossfireTacticsIsPrecisionHoldActive(const bot_t &pBot);
+static qboolean CrossfireTacticsEnsureGaussStrongholdGoal(bot_t &pBot);
+static qboolean CrossfireTacticsHandleGaussStrongholdMovement(bot_t &pBot);
+static qboolean CrossfireTacticsHandleGaussStrongholdStrikeEgress(
+   bot_t &pBot);
+static qboolean CrossfireTacticsAllowWaypoint(
+   bot_t &pBot, int waypoint_index, const char *context);
+static void CrossfireTacticsApplyMovementSafety(bot_t &pBot);
+static int CrossfireTacticsPreferredWeapon(
+   const bot_t &pBot, float target_distance);
 
 
 static qboolean CrossfireTacticsIsCrossfire(void)
@@ -239,6 +330,275 @@ static int CrossfireTacticsBotArrayIndex(const bot_t &pBot)
    }
 
    return -1;
+}
+
+
+static const char *CrossfireTacticsGaussStrongholdStageName(int stage)
+{
+   switch (stage)
+   {
+      case CROSSFIRE_GAUSS_STRONGHOLD_APPROACH: return "approach";
+      case CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD: return "window_hold";
+      case CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_GAUSS: return "resupply_gauss";
+      case CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_HEALTH: return "resupply_health";
+      case CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_ARMOR: return "resupply_armor";
+      case CROSSFIRE_GAUSS_STRONGHOLD_ACQUIRE_FALLBACK: return "acquire_fallback";
+      case CROSSFIRE_GAUSS_STRONGHOLD_WAIT_RESPAWN: return "wait_respawn";
+      case CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW: return "return_to_window";
+      case CROSSFIRE_GAUSS_STRONGHOLD_LOCAL_COVER: return "local_cover";
+      default: return "none";
+   }
+}
+
+
+static const char *CrossfireTacticsGaussStrongholdResourceName(int type)
+{
+   switch (type)
+   {
+      case CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO: return "gauss_ammo";
+      case CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK: return "gauss_repickup";
+      case CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH: return "health";
+      case CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR: return "armor";
+      case CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW: return "crossbow";
+      case CROSSFIRE_STRONGHOLD_RESOURCE_MP5: return "mp5";
+      case CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES: return "mp5_grenades";
+      default: return "none";
+   }
+}
+
+
+static Vector CrossfireTacticsStrongholdEntityOrigin(const edict_t *entity)
+{
+   if (entity == NULL)
+      return Vector(0.0f, 0.0f, 0.0f);
+
+   if (entity->v.classname != 0 &&
+       strncmp(STRING(entity->v.classname), "func_", 5) == 0 &&
+       entity->v.size.Length() > 0.0f)
+      return (entity->v.absmin + entity->v.absmax) * 0.5f;
+
+   return entity->v.origin;
+}
+
+
+static qboolean CrossfireTacticsIsOriginInsideGaussStronghold(
+   const Vector &origin)
+{
+   return origin.x >= CROSSFIRE_SATELLITE_STRONGHOLD_MIN_X &&
+      origin.x <= CROSSFIRE_SATELLITE_STRONGHOLD_MAX_X &&
+      origin.y >= CROSSFIRE_SATELLITE_STRONGHOLD_MIN_Y &&
+      origin.y <= CROSSFIRE_SATELLITE_STRONGHOLD_MAX_Y &&
+      origin.z >= CROSSFIRE_SATELLITE_STRONGHOLD_MIN_Z &&
+      origin.z <= CROSSFIRE_SATELLITE_STRONGHOLD_MAX_Z;
+}
+
+
+qboolean MapProfileCrossfireIsWaypointInsideGaussStronghold(
+   int waypoint_index)
+{
+   if (waypoint_index < 0 || waypoint_index >= num_waypoints)
+      return FALSE;
+
+   const WAYPOINT &waypoint = waypoints[waypoint_index];
+   if (waypoint.flags & (W_FL_DELETED | W_FL_JUMP | W_FL_LONGJUMP |
+       W_FL_LADDER | W_FL_LIFT_START | W_FL_LIFT_END))
+      return FALSE;
+
+   return CrossfireTacticsIsOriginInsideGaussStronghold(waypoint.origin);
+}
+
+
+static qboolean CrossfireTacticsIsGaussStrongholdReserved(int bot_index)
+{
+   return bot_index >= 0 && bot_index < 32 &&
+      g_crossfire_gauss_stronghold_stage[bot_index] !=
+         CROSSFIRE_GAUSS_STRONGHOLD_NONE;
+}
+
+
+static qboolean CrossfireTacticsIsGaussStrongholdPersistent(int bot_index)
+{
+   return CrossfireTacticsIsGaussStrongholdReserved(bot_index) &&
+      g_crossfire_gauss_stronghold_stage[bot_index] !=
+         CROSSFIRE_GAUSS_STRONGHOLD_APPROACH;
+}
+
+
+qboolean MapProfileCrossfireIsGaussStrongholdActive(const bot_t &pBot)
+{
+   return CrossfireTacticsIsGaussStrongholdPersistent(
+      CrossfireTacticsBotArrayIndex(pBot));
+}
+
+
+int MapProfileCrossfireGaussStrongholdStage(const bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   return bot_index >= 0 ? g_crossfire_gauss_stronghold_stage[bot_index] :
+      CROSSFIRE_GAUSS_STRONGHOLD_NONE;
+}
+
+
+void MapProfileCrossfireGetGaussStrongholdStats(
+   crossfire_gauss_stronghold_stats_t *stats)
+{
+   if (stats != NULL)
+      *stats = g_crossfire_gauss_stronghold_stats;
+}
+
+
+static int CrossfireTacticsGaussStrongholdAmmo(const bot_t &pBot)
+{
+   const int ammo_index = weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1;
+   return ammo_index >= 0 && ammo_index < MAX_AMMO_SLOTS ?
+      pBot.m_rgAmmo[ammo_index] : 0;
+}
+
+
+static int CrossfireTacticsWeaponAmmo(const bot_t &pBot, int weapon_id,
+   qboolean secondary)
+{
+   if (weapon_id <= 0 || weapon_id >= MAX_WEAPONS)
+      return 0;
+
+   const int ammo_index = secondary ? weapon_defs[weapon_id].iAmmo2 :
+      weapon_defs[weapon_id].iAmmo1;
+   return ammo_index >= 0 && ammo_index < MAX_AMMO_SLOTS ?
+      pBot.m_rgAmmo[ammo_index] : 0;
+}
+
+
+static void CrossfireTacticsSetGaussStrongholdStage(
+   bot_t &pBot, int bot_index, int stage, const char *reason)
+{
+   const int old_stage = g_crossfire_gauss_stronghold_stage[bot_index];
+   if (old_stage == stage)
+      return;
+
+   g_crossfire_gauss_stronghold_stage[bot_index] = stage;
+   if (stage != CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW ||
+       old_stage != CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW)
+      g_crossfire_gauss_stronghold_return_bridge[bot_index] = -1;
+   if (stage == CROSSFIRE_GAUSS_STRONGHOLD_WAIT_RESPAWN)
+      g_crossfire_gauss_stronghold_stats.wait_respawn_entries++;
+   BotTrace(pBot,
+      "gauss_stronghold_stage: old=%s new=%s reason=%s",
+      CrossfireTacticsGaussStrongholdStageName(old_stage),
+      CrossfireTacticsGaussStrongholdStageName(stage),
+      reason != NULL ? reason : "state_update");
+}
+
+
+static void CrossfireTacticsClearGaussStrongholdResource(int bot_index)
+{
+   if (bot_index < 0 || bot_index >= 32)
+      return;
+
+   bot_t &bot = bots[bot_index];
+   const int resource_type =
+      g_crossfire_gauss_stronghold_resource_type[bot_index];
+   if (bot.pBotPickupItem ==
+       g_crossfire_gauss_stronghold_resource[bot_index])
+      bot.pBotPickupItem = NULL;
+   if (resource_type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH)
+      bot.b_use_health_station = FALSE;
+   else if (resource_type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR)
+      bot.b_use_HEV_station = FALSE;
+
+   g_crossfire_gauss_stronghold_resource[bot_index] = NULL;
+   g_crossfire_gauss_stronghold_resource_type[bot_index] =
+      CROSSFIRE_STRONGHOLD_RESOURCE_NONE;
+   g_crossfire_gauss_stronghold_resource_goal[bot_index] = -1;
+   g_crossfire_gauss_stronghold_ammo_before[bot_index] = 0;
+   g_crossfire_gauss_stronghold_health_before[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_armor_before[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_weapon_ammo_before[bot_index] = 0;
+   g_crossfire_gauss_stronghold_weapon_ammo2_before[bot_index] = 0;
+   g_crossfire_gauss_stronghold_weapon_owned_before[bot_index] = FALSE;
+}
+
+
+static void CrossfireTacticsRejectUnmanagedStrongholdPickup(
+   bot_t &pBot, int bot_index)
+{
+   edict_t *pickup = pBot.pBotPickupItem;
+   edict_t *managed = g_crossfire_gauss_stronghold_resource[bot_index];
+   if (pickup == NULL || pickup == managed)
+      return;
+
+   BotTrace(pBot,
+      "gauss_stronghold_pickup_rejected: entity=%d reason=unmanaged",
+      ENTINDEX(pickup));
+   pBot.pBotPickupItem = NULL;
+   pBot.f_find_item = gpGlobals->time + 0.5f;
+}
+
+
+static void CrossfireTacticsClearGaussStronghold(
+   int bot_index, const char *reason)
+{
+   if (bot_index < 0 || bot_index >= 32 ||
+       !CrossfireTacticsIsGaussStrongholdReserved(bot_index))
+      return;
+
+   bot_t &bot = bots[bot_index];
+   const qboolean strike = reason != NULL && strcmp(reason, "strike") == 0;
+   if (strike)
+   {
+      g_crossfire_gauss_stronghold_stats.strike_exits++;
+      g_crossfire_gauss_stronghold_strike_egress[bot_index] =
+         bot.pEdict != NULL && !bot.pEdict->free &&
+         CrossfireTacticsIsOriginInsideGaussStronghold(
+            bot.pEdict->v.origin);
+      g_crossfire_gauss_stronghold_strike_window[bot_index] =
+         g_crossfire_gauss_stronghold_window_goal[bot_index];
+      g_crossfire_gauss_stronghold_strike_bridge[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_next_jump[bot_index] =
+         gpGlobals->time;
+      // Preserve the current graph anchor and prevent its old timeout from
+      // deleting the first authoritative evacuation goal.
+      bot.f_waypoint_time = gpGlobals->time;
+   }
+   else
+   {
+      g_crossfire_gauss_stronghold_strike_egress[bot_index] = FALSE;
+      g_crossfire_gauss_stronghold_strike_window[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_bridge[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_next_jump[bot_index] = 0.0f;
+   }
+
+   if (bot.pEdict != NULL && !bot.pEdict->free)
+      BotTrace(bot, "gauss_stronghold_left: reason=%s",
+         reason != NULL ? reason : "administrative_reset");
+   CrossfireTacticsClearGaussStrongholdResource(bot_index);
+   g_crossfire_gauss_stronghold_stage[bot_index] =
+      CROSSFIRE_GAUSS_STRONGHOLD_NONE;
+   g_crossfire_gauss_stronghold_window_goal[bot_index] = -1;
+   g_crossfire_gauss_stronghold_last_ammo[bot_index] = 0;
+   g_crossfire_gauss_stronghold_fallback_weapon[bot_index] = 0;
+   g_crossfire_gauss_stronghold_next_weapon_select[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_return_bridge[bot_index] = -1;
+   g_crossfire_gauss_stronghold_next_scan[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_next_summary[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_next_window_change[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_was_inside[bot_index] = FALSE;
+   g_crossfire_gauss_stronghold_next_guard_trace[bot_index] = 0.0f;
+}
+
+
+static int CrossfireTacticsGaussStrongholdReservations(
+   const bot_t &pBot)
+{
+   int reservations = 0;
+   for (int index = 0; index < 32; index++)
+   {
+      if (&bots[index] == &pBot ||
+          !CrossfireTacticsIsGaussStrongholdReserved(index) ||
+          !CrossfireTacticsBotAvailable(index))
+         continue;
+      reservations++;
+   }
+   return reservations;
 }
 
 
@@ -301,6 +661,284 @@ static qboolean CrossfireTacticsHasImmediateDanger(const bot_t &pBot)
    return pBot.b_see_tripmine ||
       (pBot.f_grenade_found_time > 0.0f &&
        pBot.f_grenade_found_time + 1.0f > gpGlobals->time);
+}
+
+
+static int CrossfireTacticsGaussStrongholdResourceType(
+   const char *classname)
+{
+   if (classname == NULL)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_NONE;
+   if (stricmp(classname, "ammo_gaussclip") == 0 ||
+       stricmp(classname, "ammo_uranium") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO;
+   if (stricmp(classname, "weapon_gauss") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK;
+   if (stricmp(classname, "item_healthkit") == 0 ||
+       stricmp(classname, "func_healthcharger") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH;
+   if (stricmp(classname, "item_battery") == 0 ||
+       stricmp(classname, "func_recharge") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR;
+   if (stricmp(classname, "weapon_crossbow") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW;
+   if (stricmp(classname, "weapon_9mmAR") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_MP5;
+   if (stricmp(classname, "ammo_ARgrenades") == 0)
+      return CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES;
+   return CROSSFIRE_STRONGHOLD_RESOURCE_NONE;
+}
+
+
+static void CrossfireTacticsRegisterGaussStrongholdResource(edict_t *entity)
+{
+   if (entity == NULL || entity->free || entity->v.classname == 0)
+      return;
+
+   const int type = CrossfireTacticsGaussStrongholdResourceType(
+      STRING(entity->v.classname));
+   if (type == CROSSFIRE_STRONGHOLD_RESOURCE_NONE ||
+       !CrossfireTacticsIsOriginInsideGaussStronghold(
+          CrossfireTacticsStrongholdEntityOrigin(entity)))
+      return;
+
+   for (int index = 0;
+        index < g_crossfire_gauss_stronghold_resource_count; index++)
+   {
+      if (g_crossfire_gauss_stronghold_resources[index].entity == entity)
+         return;
+   }
+
+   if (g_crossfire_gauss_stronghold_resource_count >=
+       CROSSFIRE_GAUSS_STRONGHOLD_MAX_RESOURCES)
+      return;
+
+   crossfire_gauss_stronghold_resource_t &resource =
+      g_crossfire_gauss_stronghold_resources
+         [g_crossfire_gauss_stronghold_resource_count++];
+   resource.entity = entity;
+   resource.type = type;
+}
+
+
+static qboolean CrossfireTacticsGaussStrongholdResourceActive(
+   const crossfire_gauss_stronghold_resource_t &resource)
+{
+   const edict_t *entity = resource.entity;
+   if (entity == NULL || entity->free || entity->v.classname == 0)
+      return FALSE;
+
+   if (resource.type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH ||
+       resource.type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR)
+   {
+      const char *classname = STRING(entity->v.classname);
+      if (strncmp(classname, "func_", 5) == 0)
+         return entity->v.frame == 0;
+   }
+
+   return !(entity->v.effects & EF_NODRAW) && entity->v.frame <= 0;
+}
+
+
+static qboolean CrossfireTacticsGaussStrongholdResourceClaimed(
+   int bot_index, const edict_t *entity)
+{
+   for (int index = 0; index < 32; index++)
+   {
+      if (index == bot_index || !CrossfireTacticsBotAvailable(index))
+         continue;
+      if (g_crossfire_gauss_stronghold_resource[index] == entity)
+         return TRUE;
+   }
+   return FALSE;
+}
+
+
+static qboolean CrossfireTacticsShouldPreservePickup(
+   const bot_t &pBot, const edict_t *pickup)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (pickup == NULL || bot_index < 0 ||
+       !CrossfireTacticsIsGaussStrongholdPersistent(bot_index) ||
+       g_crossfire_gauss_stronghold_resource[bot_index] != pickup)
+      return FALSE;
+
+   for (int index = 0;
+        index < g_crossfire_gauss_stronghold_resource_count; index++)
+   {
+      const crossfire_gauss_stronghold_resource_t &resource =
+         g_crossfire_gauss_stronghold_resources[index];
+      if (resource.entity == pickup)
+         return CrossfireTacticsGaussStrongholdResourceActive(resource);
+   }
+
+   return FALSE;
+}
+
+
+static qboolean CrossfireTacticsGaussStrongholdWaypointMatchesResource(
+   int waypoint_index, int type)
+{
+   const WAYPOINT &waypoint = waypoints[waypoint_index];
+   switch (type)
+   {
+      case CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO:
+         return (waypoint.flags & W_FL_AMMO) &&
+            (waypoint.itemflags & W_IFL_AMMO_GAUSS);
+      case CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK:
+         return (waypoint.flags & W_FL_WEAPON) &&
+            (waypoint.itemflags & W_IFL_GAUSS);
+      case CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH:
+         return (waypoint.flags & W_FL_HEALTH) != 0;
+      case CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR:
+         return (waypoint.flags & W_FL_ARMOR) != 0;
+      case CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW:
+         return (waypoint.flags & W_FL_WEAPON) &&
+            (waypoint.itemflags & W_IFL_CROSSBOW);
+      case CROSSFIRE_STRONGHOLD_RESOURCE_MP5:
+         return (waypoint.flags & W_FL_WEAPON) &&
+            (waypoint.itemflags & W_IFL_MP5);
+      case CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES:
+         return (waypoint.flags & W_FL_AMMO) &&
+            (waypoint.itemflags & W_IFL_AMMO_ARGRENADES);
+      default:
+         return FALSE;
+   }
+}
+
+
+static int CrossfireTacticsFindGaussStrongholdResourceWaypoint(
+   const bot_t &pBot, const edict_t *entity, int type)
+{
+   const Vector origin = CrossfireTacticsStrongholdEntityOrigin(entity);
+   int best_index = -1;
+   float best_score = 999999.0f;
+
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(index) ||
+          !CrossfireTacticsGaussStrongholdWaypointMatchesResource(
+             index, type))
+         continue;
+
+      const float physical_distance =
+         (waypoints[index].origin - origin).Length();
+      if (physical_distance > 192.0f)
+         continue;
+
+      float route_distance = physical_distance;
+      if (pBot.curr_waypoint_index >= 0 &&
+          pBot.curr_waypoint_index < num_waypoints)
+      {
+         route_distance = WaypointDistanceFromTo(
+            pBot.curr_waypoint_index, index);
+         if (route_distance >= WAYPOINT_MAX_DISTANCE)
+            continue;
+      }
+
+      const float score = route_distance + physical_distance * 0.5f;
+      if (score < best_score)
+      {
+         best_score = score;
+         best_index = index;
+      }
+   }
+
+   return best_index;
+}
+
+
+static edict_t *CrossfireTacticsFindGaussStrongholdResource(
+   const bot_t &pBot, int bot_index, int type, int *waypoint_index)
+{
+   edict_t *best_entity = NULL;
+   int best_waypoint = -1;
+   float best_distance = CROSSFIRE_GAUSS_STRONGHOLD_RESOURCE_RADIUS;
+
+   for (int index = 0;
+        index < g_crossfire_gauss_stronghold_resource_count; index++)
+   {
+      const crossfire_gauss_stronghold_resource_t &resource =
+         g_crossfire_gauss_stronghold_resources[index];
+      if (resource.type != type ||
+          !CrossfireTacticsGaussStrongholdResourceActive(resource) ||
+          CrossfireTacticsGaussStrongholdResourceClaimed(
+             bot_index, resource.entity))
+         continue;
+
+      const int goal = CrossfireTacticsFindGaussStrongholdResourceWaypoint(
+         pBot, resource.entity, type);
+      if (goal < 0)
+         continue;
+
+      const float distance = (CrossfireTacticsStrongholdEntityOrigin(
+         resource.entity) - pBot.pEdict->v.origin).Length();
+      if (distance < best_distance)
+      {
+         best_distance = distance;
+         best_entity = resource.entity;
+         best_waypoint = goal;
+      }
+   }
+
+   if (waypoint_index != NULL)
+      *waypoint_index = best_waypoint;
+   return best_entity;
+}
+
+
+static qboolean CrossfireTacticsSelectGaussStrongholdResource(
+   bot_t &pBot, int bot_index, int resource_type, int stage,
+   const char *reason)
+{
+   int goal = -1;
+   edict_t *entity = CrossfireTacticsFindGaussStrongholdResource(
+      pBot, bot_index, resource_type, &goal);
+   if (entity == NULL || goal < 0)
+      return FALSE;
+
+   CrossfireTacticsClearGaussStrongholdResource(bot_index);
+   g_crossfire_gauss_stronghold_resource[bot_index] = entity;
+   g_crossfire_gauss_stronghold_resource_type[bot_index] = resource_type;
+   g_crossfire_gauss_stronghold_resource_goal[bot_index] = goal;
+   g_crossfire_gauss_stronghold_ammo_before[bot_index] =
+      CrossfireTacticsGaussStrongholdAmmo(pBot);
+   g_crossfire_gauss_stronghold_health_before[bot_index] =
+      pBot.pEdict->v.health;
+   g_crossfire_gauss_stronghold_armor_before[bot_index] =
+      pBot.pEdict->v.armorvalue;
+   const int weapon_id = resource_type ==
+      CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW ? VALVE_WEAPON_CROSSBOW :
+      (resource_type == CROSSFIRE_STRONGHOLD_RESOURCE_MP5 ||
+       resource_type == CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES ?
+         VALVE_WEAPON_MP5 : 0);
+   g_crossfire_gauss_stronghold_weapon_owned_before[bot_index] =
+      weapon_id != 0 && BotIsCarryingWeapon(pBot, weapon_id);
+   g_crossfire_gauss_stronghold_weapon_ammo_before[bot_index] =
+      CrossfireTacticsWeaponAmmo(pBot, weapon_id, FALSE);
+   g_crossfire_gauss_stronghold_weapon_ammo2_before[bot_index] =
+      CrossfireTacticsWeaponAmmo(pBot, weapon_id, TRUE);
+
+   pBot.pBotPickupItem = entity;
+   pBot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   pBot.waypoint_goal = goal;
+   pBot.f_waypoint_goal_time = gpGlobals->time + 2.0f;
+   CrossfireTacticsSetGaussStrongholdStage(
+      pBot, bot_index, stage, reason);
+
+   BotTrace(pBot,
+      "gauss_stronghold_resource: type=%s entity=%d distance=%.0f ammo_before=%d ammo_after=%d health_before=%.0f health_after=%.0f armor_before=%.0f armor_after=%.0f",
+      CrossfireTacticsGaussStrongholdResourceName(resource_type),
+      ENTINDEX(entity),
+      (CrossfireTacticsStrongholdEntityOrigin(entity) -
+         pBot.pEdict->v.origin).Length(),
+      g_crossfire_gauss_stronghold_ammo_before[bot_index],
+      CrossfireTacticsGaussStrongholdAmmo(pBot),
+      g_crossfire_gauss_stronghold_health_before[bot_index],
+      pBot.pEdict->v.health,
+      g_crossfire_gauss_stronghold_armor_before[bot_index],
+      pBot.pEdict->v.armorvalue);
+   return TRUE;
 }
 
 
@@ -489,14 +1127,53 @@ static qboolean CrossfireTacticsGaussLaneHasSafeRecoil(
       return TRUE;
 
    const Vector side(-forward.y, forward.x, 0.0f);
-   return CrossfireTacticsHasFloorBelow(pBot, recoil,
-             CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH) &&
-      CrossfireTacticsHasFloorBelow(pBot,
-         recoil + side * CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET,
-         CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH) &&
-      CrossfireTacticsHasFloorBelow(pBot,
-         recoil - side * CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET,
-         CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH);
+   static const float recoil_checks[] = { 48.0f, 88.0f, 128.0f };
+   for (int index = 0; index < 3; index++)
+   {
+      const Vector projected = origin - forward * recoil_checks[index];
+      if (!CrossfireTacticsHasFloorBelow(pBot, projected,
+             CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH) ||
+          !CrossfireTacticsHasFloorBelow(pBot,
+             projected + side * CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET,
+             CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH) ||
+          !CrossfireTacticsHasFloorBelow(pBot,
+             projected - side * CROSSFIRE_GAUSS_SIDE_FLOOR_OFFSET,
+             CROSSFIRE_GAUSS_RECOIL_DROP_DEPTH))
+         return FALSE;
+   }
+
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsGaussStrongholdWindowReached(
+   const bot_t &pBot, int window_goal)
+{
+   if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(window_goal))
+      return FALSE;
+
+   const Vector &origin = pBot.pEdict->v.origin;
+   const float distance = (origin - waypoints[window_goal].origin).Length();
+   if (distance <= CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_ARRIVAL_DISTANCE)
+      return TRUE;
+   if (distance > CROSSFIRE_GAUSS_HOLD_ARRIVAL_DISTANCE)
+      return FALSE;
+
+   int visible_lanes = 0;
+   int recoil_safe_lanes = 0;
+   for (int lane = 0; lane < 6; lane++)
+   {
+      const Vector target = CrossfireTacticsGaussLaneTarget(lane);
+      if (!CrossfireTacticsGaussLaneVisible(pBot, origin, target))
+         continue;
+
+      visible_lanes++;
+      if (CrossfireTacticsGaussLaneHasSafeRecoil(pBot, origin, target))
+         recoil_safe_lanes++;
+   }
+
+   return visible_lanes >= CROSSFIRE_GAUSS_MIN_VISIBLE_LANES &&
+      recoil_safe_lanes * 2 >= visible_lanes;
 }
 
 
@@ -591,11 +1268,20 @@ static int CrossfireTacticsFindGaussHoldWaypoint(
          if (reservation_pass == 0 && reservations > 0)
             continue;
 
+         const qboolean satellite_stronghold =
+            MapProfileCrossfireIsWaypointInsideGaussStronghold(index);
+         if (satellite_stronghold &&
+             CrossfireTacticsGaussStrongholdReservations(pBot) >=
+                CROSSFIRE_SATELLITE_GAUSS_STRONGHOLD_CAPACITY)
+            continue;
+
          const int unsafe_lanes = visible_lanes - recoil_safe_lanes;
          float score = route_distance - elevation * 1.25f -
             visible_lanes * 150.0f - cover * 120.0f -
             recoil_safe_lanes * 140.0f + unsafe_lanes * 280.0f +
             reservations * 1200.0f;
+         if (satellite_stronghold)
+            score -= 4000.0f;
          if (waypoint.flags & W_FL_AIMING)
             score -= 200.0f;
          if (waypoint.flags & W_FL_CROUCH)
@@ -622,6 +1308,1011 @@ static int CrossfireTacticsFindGaussHoldWaypoint(
 }
 
 
+static int CrossfireTacticsFindGaussStrongholdWindowWaypoint(
+   const bot_t &pBot, int excluded_waypoint)
+{
+   int best_index = -1;
+   float best_score = 999999.0f;
+
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      const WAYPOINT &waypoint = waypoints[index];
+      if (index == excluded_waypoint ||
+          !MapProfileCrossfireIsWaypointInsideGaussStronghold(index) ||
+          (waypoint.flags & (W_FL_WEAPON | W_FL_AMMO |
+             W_FL_HEALTH | W_FL_ARMOR)))
+         continue;
+
+      float route_distance =
+         (waypoint.origin - pBot.pEdict->v.origin).Length();
+      if (pBot.curr_waypoint_index >= 0 &&
+          pBot.curr_waypoint_index < num_waypoints)
+      {
+         route_distance = WaypointDistanceFromTo(
+            pBot.curr_waypoint_index, index);
+         if (route_distance >= WAYPOINT_MAX_DISTANCE)
+            continue;
+      }
+
+      int visible_lanes = 0;
+      int recoil_safe_lanes = 0;
+      for (int lane = 0; lane < 6; lane++)
+      {
+         const Vector target = CrossfireTacticsGaussLaneTarget(lane);
+         if (!CrossfireTacticsGaussLaneVisible(
+                pBot, waypoint.origin, target))
+            continue;
+         visible_lanes++;
+         if (CrossfireTacticsGaussLaneHasSafeRecoil(
+                pBot, waypoint.origin, target))
+            recoil_safe_lanes++;
+      }
+
+      if (visible_lanes < CROSSFIRE_GAUSS_MIN_VISIBLE_LANES ||
+          recoil_safe_lanes * 2 < visible_lanes)
+         continue;
+
+      const int cover = CrossfireTacticsCountWaypointCover(
+         pBot, waypoint.origin);
+      const int reservations = CrossfireTacticsGaussHoldReservations(
+         index, pBot);
+      float score = route_distance - visible_lanes * 180.0f -
+         recoil_safe_lanes * 180.0f - cover * 100.0f +
+         reservations * 1200.0f;
+      if (waypoint.flags & W_FL_AIMING)
+         score -= 160.0f;
+      if (score < best_score)
+      {
+         best_score = score;
+         best_index = index;
+      }
+   }
+
+   return best_index;
+}
+
+
+static int CrossfireTacticsFindGaussStrongholdInteriorWaypoint(
+   const bot_t &pBot)
+{
+   const Vector interior(-900.0f, 760.0f, -1500.0f);
+   int best_index = -1;
+   float best_score = 999999.0f;
+
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      const WAYPOINT &waypoint = waypoints[index];
+      if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(index) ||
+          (waypoint.flags & (W_FL_WEAPON | W_FL_AMMO | W_FL_HEALTH |
+             W_FL_ARMOR | W_FL_AIMING)))
+         continue;
+
+      float route_distance =
+         (waypoint.origin - pBot.pEdict->v.origin).Length();
+      if (pBot.curr_waypoint_index >= 0 &&
+          pBot.curr_waypoint_index < num_waypoints)
+      {
+         route_distance = WaypointDistanceFromTo(
+            pBot.curr_waypoint_index, index);
+         if (route_distance >= WAYPOINT_MAX_DISTANCE)
+            continue;
+      }
+
+      const float score = route_distance +
+         (waypoint.origin - interior).Length() * 0.75f;
+      if (score < best_score)
+      {
+         best_score = score;
+         best_index = index;
+      }
+   }
+
+   return best_index;
+}
+
+
+static qboolean CrossfireTacticsStrongholdWeaponUsable(
+   const bot_t &pBot, int weapon_id)
+{
+   bot_weapon_select_t *select = GetWeaponSelect(weapon_id);
+   return select != NULL &&
+      BotIsCarryingWeapon(const_cast<bot_t &>(pBot), weapon_id) &&
+      BotCanUseWeapon(const_cast<bot_t &>(pBot), *select);
+}
+
+
+static void CrossfireTacticsUpdateGaussStrongholdFallback(
+   bot_t &pBot, int bot_index, float target_distance)
+{
+   if (CrossfireTacticsGaussStrongholdAmmo(pBot) >=
+       BOT_GAUSS_SECONDARY_MIN_AMMO)
+   {
+      g_crossfire_gauss_stronghold_fallback_weapon[bot_index] = 0;
+      g_crossfire_gauss_stronghold_next_weapon_select[bot_index] = 0.0f;
+      return;
+   }
+
+   const qboolean crossbow_usable =
+      CrossfireTacticsStrongholdWeaponUsable(
+         pBot, VALVE_WEAPON_CROSSBOW);
+   const qboolean mp5_usable = CrossfireTacticsStrongholdWeaponUsable(
+      pBot, VALVE_WEAPON_MP5);
+   const int old_weapon =
+      g_crossfire_gauss_stronghold_fallback_weapon[bot_index];
+   int new_weapon = old_weapon;
+
+   if (old_weapon == VALVE_WEAPON_CROSSBOW && crossbow_usable &&
+       target_distance >= CROSSFIRE_GAUSS_STRONGHOLD_MP5_DISTANCE)
+      new_weapon = old_weapon;
+   else if (old_weapon == VALVE_WEAPON_MP5 && mp5_usable &&
+            target_distance <=
+               CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE +
+                  CROSSFIRE_GAUSS_STRONGHOLD_FALLBACK_HYSTERESIS)
+      new_weapon = old_weapon;
+   else
+   {
+      if (target_distance >=
+             CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE &&
+          crossbow_usable)
+         new_weapon = VALVE_WEAPON_CROSSBOW;
+      else if (mp5_usable)
+         new_weapon = VALVE_WEAPON_MP5;
+      else if (crossbow_usable)
+         new_weapon = VALVE_WEAPON_CROSSBOW;
+      else
+         new_weapon = 0;
+   }
+
+   if (new_weapon != old_weapon)
+   {
+      g_crossfire_gauss_stronghold_fallback_weapon[bot_index] = new_weapon;
+      g_crossfire_gauss_stronghold_next_weapon_select[bot_index] = 0.0f;
+      if (new_weapon == VALVE_WEAPON_CROSSBOW)
+         g_crossfire_gauss_stronghold_stats.crossbow_fallbacks++;
+      else if (new_weapon == VALVE_WEAPON_MP5)
+         g_crossfire_gauss_stronghold_stats.mp5_fallbacks++;
+   }
+
+   if (new_weapon == 0)
+   {
+      g_crossfire_gauss_stronghold_next_weapon_select[bot_index] = 0.0f;
+      return;
+   }
+
+   if (pBot.current_weapon.iId == new_weapon)
+   {
+      g_crossfire_gauss_stronghold_next_weapon_select[bot_index] = 0.0f;
+      return;
+   }
+   if (g_crossfire_gauss_stronghold_next_weapon_select[bot_index] >
+       gpGlobals->time)
+      return;
+
+   UTIL_SelectWeapon(pBot.pEdict, new_weapon);
+   g_crossfire_gauss_stronghold_next_weapon_select[bot_index] =
+      gpGlobals->time + CROSSFIRE_GAUSS_STRONGHOLD_WEAPON_RETRY_TIME;
+   BotTrace(pBot,
+      "gauss_stronghold_fallback: weapon=%s distance=%.0f reason=%s",
+      new_weapon == VALVE_WEAPON_CROSSBOW ? "crossbow" : "mp5",
+      target_distance, new_weapon == old_weapon ? "retry" : "condition");
+}
+
+
+static void CrossfireTacticsCompleteGaussStrongholdResource(
+   bot_t &pBot, int bot_index, qboolean successful)
+{
+   const int type =
+      g_crossfire_gauss_stronghold_resource_type[bot_index];
+   edict_t *entity = g_crossfire_gauss_stronghold_resource[bot_index];
+   const int ammo_after = CrossfireTacticsGaussStrongholdAmmo(pBot);
+   const float health_after = pBot.pEdict->v.health;
+   const float armor_after = pBot.pEdict->v.armorvalue;
+   const int resource_goal =
+      g_crossfire_gauss_stronghold_resource_goal[bot_index];
+
+   if (MapProfileCrossfireIsWaypointInsideGaussStronghold(resource_goal) &&
+       (pBot.pEdict->v.origin - waypoints[resource_goal].origin).Length() <=
+          CROSSFIRE_GAUSS_STRONGHOLD_PICKUP_APPROACH_DISTANCE)
+   {
+      // Physical pickup/station steering may leave the generic navigator's
+      // current node at the old firing window. Re-anchor before returning.
+      pBot.curr_waypoint_index = resource_goal;
+      pBot.waypoint_origin = waypoints[resource_goal].origin;
+      pBot.f_waypoint_time = gpGlobals->time;
+   }
+
+   if (successful)
+   {
+      if (type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO)
+         g_crossfire_gauss_stronghold_stats.gauss_ammo_pickups++;
+      else if (type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK)
+         g_crossfire_gauss_stronghold_stats.gauss_repicks++;
+      else if (type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH)
+         g_crossfire_gauss_stronghold_stats.health_pickups++;
+      else if (type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR)
+         g_crossfire_gauss_stronghold_stats.armor_pickups++;
+
+      if ((type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO ||
+           type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK) &&
+          ammo_after >= BOT_GAUSS_SECONDARY_MIN_AMMO &&
+          BotIsCarryingWeapon(pBot, VALVE_WEAPON_GAUSS))
+         UTIL_SelectWeapon(pBot.pEdict, VALVE_WEAPON_GAUSS);
+   }
+
+   BotTrace(pBot,
+      "gauss_stronghold_resource: type=%s entity=%d distance=0 ammo_before=%d ammo_after=%d health_before=%.0f health_after=%.0f armor_before=%.0f armor_after=%.0f result=%s",
+      CrossfireTacticsGaussStrongholdResourceName(type),
+      entity != NULL ? ENTINDEX(entity) : 0,
+      g_crossfire_gauss_stronghold_ammo_before[bot_index], ammo_after,
+      g_crossfire_gauss_stronghold_health_before[bot_index], health_after,
+      g_crossfire_gauss_stronghold_armor_before[bot_index], armor_after,
+      successful ? "acquired" : "inactive_without_gain");
+
+   CrossfireTacticsClearGaussStrongholdResource(bot_index);
+   CrossfireTacticsSetGaussStrongholdStage(pBot, bot_index,
+      CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW,
+      successful ? "resource_acquired" : "resource_unavailable");
+}
+
+
+static qboolean CrossfireTacticsUpdateGaussStrongholdResource(
+   bot_t &pBot, int bot_index)
+{
+   edict_t *entity = g_crossfire_gauss_stronghold_resource[bot_index];
+   if (entity == NULL)
+      return FALSE;
+
+   const int type =
+      g_crossfire_gauss_stronghold_resource_type[bot_index];
+   const int ammo_after = CrossfireTacticsGaussStrongholdAmmo(pBot);
+   const int weapon_id = type == CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW ?
+      VALVE_WEAPON_CROSSBOW :
+      (type == CROSSFIRE_STRONGHOLD_RESOURCE_MP5 ||
+       type == CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES ?
+         VALVE_WEAPON_MP5 : 0);
+   const int weapon_ammo_after =
+      CrossfireTacticsWeaponAmmo(pBot, weapon_id, FALSE);
+   const int weapon_ammo2_after =
+      CrossfireTacticsWeaponAmmo(pBot, weapon_id, TRUE);
+   const char *classname = entity->v.classname != 0 ?
+      STRING(entity->v.classname) : "";
+   const qboolean health_station =
+      type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH &&
+      stricmp(classname, "func_healthcharger") == 0;
+   const qboolean armor_station =
+      type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR &&
+      stricmp(classname, "func_recharge") == 0;
+   const qboolean health_gain = pBot.pEdict->v.health >
+      g_crossfire_gauss_stronghold_health_before[bot_index];
+   const qboolean armor_gain = pBot.pEdict->v.armorvalue >
+      g_crossfire_gauss_stronghold_armor_before[bot_index];
+   const qboolean successful =
+      ((type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO ||
+        type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK) &&
+       ammo_after > g_crossfire_gauss_stronghold_ammo_before[bot_index]) ||
+      (type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH &&
+       health_gain && (!health_station ||
+          pBot.pEdict->v.health >=
+             CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_LOW)) ||
+      (type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR &&
+       armor_gain && (!armor_station ||
+          pBot.pEdict->v.armorvalue >=
+             CROSSFIRE_GAUSS_STRONGHOLD_ARMOR_LOW)) ||
+      (type == CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW &&
+       BotIsCarryingWeapon(pBot, VALVE_WEAPON_CROSSBOW) &&
+       (!g_crossfire_gauss_stronghold_weapon_owned_before[bot_index] ||
+        weapon_ammo_after >
+           g_crossfire_gauss_stronghold_weapon_ammo_before[bot_index])) ||
+      (type == CROSSFIRE_STRONGHOLD_RESOURCE_MP5 &&
+       BotIsCarryingWeapon(pBot, VALVE_WEAPON_MP5) &&
+       (!g_crossfire_gauss_stronghold_weapon_owned_before[bot_index] ||
+        weapon_ammo_after >
+           g_crossfire_gauss_stronghold_weapon_ammo_before[bot_index])) ||
+      (type == CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES &&
+       weapon_ammo2_after >
+          g_crossfire_gauss_stronghold_weapon_ammo2_before[bot_index]);
+
+   qboolean active = FALSE;
+   for (int index = 0;
+        index < g_crossfire_gauss_stronghold_resource_count; index++)
+   {
+      if (g_crossfire_gauss_stronghold_resources[index].entity == entity)
+      {
+         active = CrossfireTacticsGaussStrongholdResourceActive(
+            g_crossfire_gauss_stronghold_resources[index]);
+         break;
+      }
+   }
+
+   if (successful || !active)
+   {
+      CrossfireTacticsCompleteGaussStrongholdResource(
+         pBot, bot_index, successful ||
+            (health_station && health_gain) ||
+            (armor_station && armor_gain));
+      return FALSE;
+   }
+
+   pBot.pBotPickupItem = entity;
+   pBot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   pBot.waypoint_goal =
+      g_crossfire_gauss_stronghold_resource_goal[bot_index];
+   pBot.f_waypoint_goal_time = gpGlobals->time + 2.0f;
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsGaussStrongholdStationInUseRange(
+   const bot_t &pBot, int bot_index, qboolean *health_station_out,
+   Vector *target_out)
+{
+   edict_t *entity = g_crossfire_gauss_stronghold_resource[bot_index];
+   if (pBot.pEdict == NULL || entity == NULL || entity->free ||
+       entity->v.classname == 0 || entity->v.frame != 0)
+      return FALSE;
+
+   const int type =
+      g_crossfire_gauss_stronghold_resource_type[bot_index];
+   const char *classname = STRING(entity->v.classname);
+   const qboolean health_station =
+      type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH &&
+      stricmp(classname, "func_healthcharger") == 0;
+   const qboolean armor_station =
+      type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR &&
+      stricmp(classname, "func_recharge") == 0;
+   if (!health_station && !armor_station)
+      return FALSE;
+
+   const Vector target = CrossfireTacticsStrongholdEntityOrigin(entity);
+   if ((target - pBot.pEdict->v.origin).Length() >
+       CROSSFIRE_GAUSS_STRONGHOLD_STATION_USE_DISTANCE)
+      return FALSE;
+
+   if (health_station_out != NULL)
+      *health_station_out = health_station;
+   if (target_out != NULL)
+      *target_out = target;
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsDriveGaussStrongholdStationUse(
+   bot_t &pBot, int bot_index)
+{
+   qboolean health_station = FALSE;
+   Vector target;
+   if (!CrossfireTacticsGaussStrongholdStationInUseRange(
+          pBot, bot_index, &health_station, &target))
+      return FALSE;
+
+   qboolean &using_station = health_station ?
+      pBot.b_use_health_station : pBot.b_use_HEV_station;
+   float &use_time = health_station ?
+      pBot.f_use_health_time : pBot.f_use_HEV_time;
+   if (!using_station)
+      use_time = gpGlobals->time;
+   using_station = TRUE;
+   pBot.v_use_target = target;
+   pBot.f_dont_avoid_wall_time = gpGlobals->time + 1.0f;
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_direction = 0.0f;
+   pBot.f_move_speed = 0.0f;
+   pBot.f_strafe_time = gpGlobals->time + 1.0f;
+   pBot.f_strafe_direction = 0.0f;
+
+   const Vector use_direction = target - GetGunPosition(pBot.pEdict);
+   const Vector use_angles = UTIL_VecToAngles(use_direction);
+   pBot.pEdict->v.idealpitch = UTIL_WrapAngle(use_angles.x);
+   pBot.pEdict->v.ideal_yaw = UTIL_WrapAngle(use_angles.y);
+   pBot.pEdict->v.button &= ~(IN_ATTACK | IN_ATTACK2 | IN_JUMP | IN_DUCK);
+   pBot.pEdict->v.button |= IN_USE;
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsFinishGaussStrongholdPickupApproach(
+   bot_t &pBot, int bot_index)
+{
+   edict_t *entity = g_crossfire_gauss_stronghold_resource[bot_index];
+   if (entity == NULL || entity->free || entity->v.classname == 0 ||
+       pBot.pBotEnemy != NULL)
+      return FALSE;
+
+   const char *classname = STRING(entity->v.classname);
+   if (strncmp(classname, "func_", 5) == 0)
+      return FALSE;
+
+   const Vector target = CrossfireTacticsStrongholdEntityOrigin(entity);
+   const Vector direction = target - pBot.pEdict->v.origin;
+   if (!CrossfireTacticsIsOriginInsideGaussStronghold(target) ||
+       direction.Length() >
+          CROSSFIRE_GAUSS_STRONGHOLD_PICKUP_APPROACH_DISTANCE ||
+       !FVisible(target, pBot.pEdict, entity))
+      return FALSE;
+
+   Vector hull_target = target;
+   if (fabs(hull_target.z - pBot.pEdict->v.origin.z) <= 64.0f)
+      hull_target.z = pBot.pEdict->v.origin.z;
+   TraceResult hull_trace;
+   UTIL_TraceHull(pBot.pEdict->v.origin, hull_target, ignore_monsters,
+      human_hull, pBot.pEdict->v.pContainingEntity, &hull_trace);
+   if (hull_trace.fStartSolid ||
+       (hull_trace.flFraction < 0.95f && hull_trace.pHit != entity))
+      return FALSE;
+
+   const int resource_goal =
+      g_crossfire_gauss_stronghold_resource_goal[bot_index];
+   if (MapProfileCrossfireIsWaypointInsideGaussStronghold(resource_goal))
+   {
+      // Goal-directed combat steers the legs through curr_waypoint_index.
+      // Re-anchor it before taking over direct movement so a stale firing
+      // window cannot pull the bot away from the visible room pickup.
+      pBot.curr_waypoint_index = resource_goal;
+      pBot.waypoint_origin = waypoints[resource_goal].origin;
+      pBot.f_waypoint_time = gpGlobals->time;
+   }
+
+   const Vector angles = UTIL_VecToAngles(direction);
+   pBot.pEdict->v.ideal_yaw = UTIL_WrapAngle(angles.y);
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_direction = 1.0f;
+   pBot.f_move_speed = pBot.f_max_speed;
+   pBot.f_strafe_direction = 0.0f;
+   pBot.f_dont_avoid_wall_time = gpGlobals->time + 0.5f;
+   pBot.pEdict->v.button &= ~IN_JUMP;
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsGaussStrongholdSegmentSafe(
+   const bot_t &pBot, const Vector &start, const Vector &end)
+{
+   if (!CrossfireTacticsIsOriginInsideGaussStronghold(start) ||
+       !CrossfireTacticsIsOriginInsideGaussStronghold(end))
+      return FALSE;
+
+   TraceResult trace;
+   const Vector eye_offset(0.0f, 0.0f, 36.0f);
+   UTIL_TraceLine(start + eye_offset, end + eye_offset,
+      ignore_monsters, pBot.pEdict->v.pContainingEntity, &trace);
+   if (trace.fStartSolid || trace.flFraction < 0.95f)
+      return FALSE;
+
+   TraceResult hull_trace;
+   UTIL_TraceHull(start, end, ignore_monsters, human_hull,
+      pBot.pEdict->v.pContainingEntity, &hull_trace);
+   if (hull_trace.fStartSolid || hull_trace.flFraction < 0.95f)
+      return FALSE;
+
+   const Vector delta = end - start;
+   const float distance = delta.Make2D().Length();
+   const int samples = (int)(distance / 64.0f) + 1;
+   for (int index = 1; index <= samples; index++)
+   {
+      const float fraction = (float)index / (float)samples;
+      const Vector point = start + delta * fraction;
+      if (!CrossfireTacticsIsOriginInsideGaussStronghold(point) ||
+          !CrossfireTacticsHasFloorBelow(pBot, point, 96.0f))
+         return FALSE;
+   }
+
+   return TRUE;
+}
+
+
+static int CrossfireTacticsFindGaussStrongholdReturnBridge(
+   const bot_t &pBot, int window_goal)
+{
+   const Vector &origin = pBot.pEdict->v.origin;
+   const Vector &window = waypoints[window_goal].origin;
+   int best_index = -1;
+   float best_score = 999999.0f;
+
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      const WAYPOINT &waypoint = waypoints[index];
+      if (index == window_goal ||
+          !MapProfileCrossfireIsWaypointInsideGaussStronghold(index) ||
+          (waypoint.flags & (W_FL_WEAPON | W_FL_AMMO | W_FL_HEALTH |
+             W_FL_ARMOR | W_FL_AIMING | W_FL_DOOR)))
+         continue;
+
+      const float first_distance =
+         (waypoint.origin - origin).Make2D().Length();
+      if (first_distance <
+             CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_ARRIVAL_DISTANCE ||
+          first_distance > 640.0f ||
+          !CrossfireTacticsGaussStrongholdSegmentSafe(
+             pBot, origin, waypoint.origin) ||
+          !CrossfireTacticsGaussStrongholdSegmentSafe(
+             pBot, waypoint.origin, window))
+         continue;
+
+      const float score = first_distance +
+         (window - waypoint.origin).Make2D().Length();
+      if (score < best_score)
+      {
+         best_score = score;
+         best_index = index;
+      }
+   }
+
+   return best_index;
+}
+
+
+static qboolean CrossfireTacticsDriveGaussStrongholdReturn(
+   bot_t &pBot, int bot_index)
+{
+   if (g_crossfire_gauss_stronghold_stage[bot_index] !=
+       CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW)
+      return FALSE;
+
+   const int window_goal =
+      g_crossfire_gauss_stronghold_window_goal[bot_index];
+   if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(window_goal))
+      return FALSE;
+   if (CrossfireTacticsGaussStrongholdWindowReached(pBot, window_goal))
+      return FALSE;
+
+   // This route is floor-checked below and again by movement safety. Prevent
+   // the earlier generic drop turn from replacing its yaw every frame.
+   pBot.f_drop_check_time = gpGlobals->time + 0.5f;
+
+   Vector target = waypoints[window_goal].origin;
+   qboolean targeting_bridge = FALSE;
+   int &bridge = g_crossfire_gauss_stronghold_return_bridge[bot_index];
+   if (MapProfileCrossfireIsWaypointInsideGaussStronghold(bridge))
+   {
+      target = waypoints[bridge].origin;
+      targeting_bridge = TRUE;
+      if ((target - pBot.pEdict->v.origin).Make2D().Length() <=
+          CROSSFIRE_GAUSS_STRONGHOLD_BRIDGE_ARRIVAL_DISTANCE)
+      {
+         bridge = -1;
+         target = waypoints[window_goal].origin;
+         targeting_bridge = FALSE;
+      }
+   }
+
+   if (!targeting_bridge)
+   {
+      bridge = -1;
+      if (!CrossfireTacticsGaussStrongholdSegmentSafe(
+             pBot, pBot.pEdict->v.origin, target))
+      {
+         bridge = CrossfireTacticsFindGaussStrongholdReturnBridge(
+            pBot, window_goal);
+         if (bridge < 0)
+            return FALSE;
+         target = waypoints[bridge].origin;
+         targeting_bridge = TRUE;
+      }
+   }
+
+   const Vector direction = target - pBot.pEdict->v.origin;
+   const float arrival_distance = targeting_bridge ?
+      CROSSFIRE_GAUSS_STRONGHOLD_BRIDGE_ARRIVAL_DISTANCE :
+      CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_ARRIVAL_DISTANCE;
+   pBot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   pBot.waypoint_goal = targeting_bridge ? bridge : window_goal;
+   pBot.f_waypoint_goal_time = gpGlobals->time + 2.0f;
+   if (direction.Make2D().Length() <= arrival_distance)
+   {
+      if (targeting_bridge)
+         bridge = -1;
+      return FALSE;
+   }
+
+   // Keep the profile authoritative for the full verified room segment. The
+   // generic graph clears intermediate goals at broad arrival radii and can
+   // reacquire unrelated pickups, which lets the bot drift toward a drop.
+   const float desired_yaw = UTIL_WrapAngle(
+      UTIL_VecToAngles(direction).y);
+   pBot.pEdict->v.ideal_yaw = desired_yaw;
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_direction = 1.0f;
+   pBot.f_move_speed = pBot.f_max_speed;
+   pBot.f_strafe_direction = 0.0f;
+   pBot.f_dont_avoid_wall_time = gpGlobals->time + 0.5f;
+   pBot.pEdict->v.button &= ~IN_JUMP;
+   // Goal-directed strategic strafing uses the current route node to steer
+   // the legs independently from combat aim.
+   pBot.curr_waypoint_index = pBot.waypoint_goal;
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsHandleGaussStrongholdStrikeEgress(
+   bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index < 0 ||
+       !g_crossfire_gauss_stronghold_strike_egress[bot_index])
+      return FALSE;
+
+   if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL ||
+       pBot.pEdict->free || pBot.pEdict->v.deadflag != DEAD_NO)
+   {
+      g_crossfire_gauss_stronghold_strike_egress[bot_index] = FALSE;
+      g_crossfire_gauss_stronghold_strike_window[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_bridge[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_next_jump[bot_index] = 0.0f;
+      return FALSE;
+   }
+
+   // Strike egress deliberately owns its verified window/drop movement.
+   pBot.f_drop_check_time = gpGlobals->time + 0.5f;
+
+   const Vector &origin = pBot.pEdict->v.origin;
+   if (origin.x >= CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_EGRESS_X - 8.0f ||
+       origin.z <= CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_DROP_Z)
+   {
+      g_crossfire_gauss_stronghold_strike_egress[bot_index] = FALSE;
+      g_crossfire_gauss_stronghold_strike_window[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_bridge[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_next_jump[bot_index] = 0.0f;
+      pBot.curr_waypoint_index = -1;
+      pBot.f_waypoint_time = gpGlobals->time;
+      BotTrace(pBot,
+         "gauss_stronghold_strike_egress: state=complete origin=%.0f,%.0f,%.0f",
+         origin.x, origin.y, origin.z);
+      return FALSE;
+   }
+
+   int &window = g_crossfire_gauss_stronghold_strike_window[bot_index];
+   if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(window))
+      window = CrossfireTacticsFindGaussStrongholdWindowWaypoint(pBot, -1);
+
+   qboolean outward = window < 0 ||
+      CrossfireTacticsGaussStrongholdWindowReached(pBot, window);
+   Vector target = outward ?
+      Vector(CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_EGRESS_X,
+         MapProfileCrossfireIsWaypointInsideGaussStronghold(window) ?
+            waypoints[window].origin.y : origin.y,
+         origin.z) : waypoints[window].origin;
+
+   int &bridge = g_crossfire_gauss_stronghold_strike_bridge[bot_index];
+   if (!outward)
+   {
+      if (MapProfileCrossfireIsWaypointInsideGaussStronghold(bridge))
+      {
+         target = waypoints[bridge].origin;
+         if ((target - origin).Make2D().Length() <=
+             CROSSFIRE_GAUSS_STRONGHOLD_BRIDGE_ARRIVAL_DISTANCE)
+         {
+            bridge = -1;
+            target = waypoints[window].origin;
+         }
+      }
+      else if (!CrossfireTacticsGaussStrongholdSegmentSafe(
+                  pBot, origin, target))
+      {
+         bridge = CrossfireTacticsFindGaussStrongholdReturnBridge(
+            pBot, window);
+         if (bridge >= 0)
+            target = waypoints[bridge].origin;
+      }
+   }
+   else
+      bridge = -1;
+
+   const Vector direction = target - origin;
+   const float desired_yaw = UTIL_WrapAngle(
+      UTIL_VecToAngles(direction).y);
+   const float yaw_error = fabs(UTIL_WrapAngle(
+      desired_yaw - pBot.pEdict->v.v_angle.y));
+   pBot.pEdict->v.ideal_yaw = desired_yaw;
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_direction = 1.0f;
+   pBot.f_move_speed = yaw_error <=
+      CROSSFIRE_GAUSS_STRONGHOLD_MOVE_TURN_LIMIT ?
+         pBot.f_max_speed : 0.0f;
+   pBot.f_strafe_direction = 0.0f;
+   pBot.f_dont_avoid_wall_time = gpGlobals->time + 0.5f;
+   pBot.pEdict->v.button &= ~(IN_JUMP | IN_DUCK);
+   pBot.curr_waypoint_index = outward ? -1 :
+      (MapProfileCrossfireIsWaypointInsideGaussStronghold(bridge) ?
+         bridge : window);
+   if (outward)
+   {
+      pBot.pEdict->v.button |= IN_DUCK;
+      if (pBot.f_move_speed > 0.0f &&
+          g_crossfire_gauss_stronghold_strike_next_jump[bot_index] <=
+             gpGlobals->time)
+      {
+         pBot.pEdict->v.button |= IN_JUMP;
+         g_crossfire_gauss_stronghold_strike_next_jump[bot_index] =
+            gpGlobals->time +
+               CROSSFIRE_GAUSS_STRONGHOLD_STRIKE_JUMP_INTERVAL;
+      }
+   }
+   return TRUE;
+}
+
+
+static void CrossfireTacticsSetGaussStrongholdWindowGoal(
+   bot_t &pBot, int bot_index, int stage, const char *reason)
+{
+   CrossfireTacticsClearGaussStrongholdResource(bot_index);
+   pBot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   const int bridge = g_crossfire_gauss_stronghold_return_bridge[bot_index];
+   pBot.waypoint_goal = stage ==
+         CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW &&
+         MapProfileCrossfireIsWaypointInsideGaussStronghold(bridge) ?
+      bridge : g_crossfire_gauss_stronghold_window_goal[bot_index];
+   pBot.f_waypoint_goal_time = gpGlobals->time + 2.0f;
+   pBot.pTrackSoundEdict = NULL;
+   pBot.f_track_sound_time = -1.0f;
+   CrossfireTacticsSetGaussStrongholdStage(
+      pBot, bot_index, stage, reason);
+}
+
+
+static void CrossfireTacticsCompleteGaussStrongholdReturn(
+   bot_t &pBot, int bot_index, int goal)
+{
+   if (g_crossfire_gauss_stronghold_stage[bot_index] !=
+       CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW)
+      return;
+   if (goal != g_crossfire_gauss_stronghold_window_goal[bot_index])
+      return;
+
+   g_crossfire_gauss_stronghold_stats.returns_to_window++;
+   CrossfireTacticsSetGaussStrongholdStage(pBot, bot_index,
+      CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD, "window_reached");
+   BotTrace(pBot,
+      "gauss_stronghold_return_window: waypoint=%d route_distance=0",
+      goal);
+}
+
+
+static qboolean CrossfireTacticsEnsureGaussStrongholdGoal(bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index < 0 || !CrossfireTacticsIsGaussStrongholdPersistent(
+          bot_index) || pBot.pEdict == NULL)
+      return FALSE;
+
+   int &window_goal =
+      g_crossfire_gauss_stronghold_window_goal[bot_index];
+   if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(window_goal))
+   {
+      window_goal = CrossfireTacticsFindGaussStrongholdWindowWaypoint(
+         pBot, -1);
+      if (window_goal < 0)
+      {
+         CrossfireTacticsClearPrecisionHold(
+            bot_index, "entire_zone_unreachable");
+         return FALSE;
+      }
+      g_crossfire_precision_hold_goal[bot_index] = window_goal;
+   }
+
+   // Generic item scanning must not override the role's staged local
+   // resource target or its return route.
+   CrossfireTacticsRejectUnmanagedStrongholdPickup(pBot, bot_index);
+
+   const qboolean inside = CrossfireTacticsIsOriginInsideGaussStronghold(
+      pBot.pEdict->v.origin);
+   if (g_crossfire_gauss_stronghold_was_inside[bot_index] && !inside)
+   {
+      g_crossfire_gauss_stronghold_stats.unexpected_zone_exits++;
+      if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_RELEASE_WAIT ||
+          pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_COOLDOWN)
+         g_crossfire_gauss_stronghold_stats.recoil_falls++;
+      BotTrace(pBot,
+         "gauss_stronghold_unexpected_exit: origin=%.0f,%.0f,%.0f",
+         pBot.pEdict->v.origin.x, pBot.pEdict->v.origin.y,
+         pBot.pEdict->v.origin.z);
+   }
+   g_crossfire_gauss_stronghold_was_inside[bot_index] = inside;
+
+   if (!inside)
+   {
+      CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+         CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW,
+         "displaced_outside_zone");
+      return TRUE;
+   }
+
+   if (pBot.wpt_goal_type == WPT_GOAL_ENEMY &&
+       !MapProfileCrossfireIsWaypointInsideGaussStronghold(
+          pBot.waypoint_goal))
+   {
+      if (g_crossfire_gauss_stronghold_next_guard_trace[bot_index] <=
+          gpGlobals->time)
+      {
+         g_crossfire_gauss_stronghold_next_guard_trace[bot_index] =
+            gpGlobals->time + 1.0f;
+         g_crossfire_gauss_stronghold_stats.attempted_enemy_pursuits++;
+         g_crossfire_gauss_stronghold_stats.enemy_pursuit_prevented++;
+         BotTrace(pBot,
+            "gauss_stronghold_exit_prevented: candidate_goal=%d candidate_origin=%.0f,%.0f,%.0f reason=enemy_pursuit",
+            pBot.waypoint_goal,
+            pBot.waypoint_goal >= 0 && pBot.waypoint_goal < num_waypoints ?
+               waypoints[pBot.waypoint_goal].origin.x : 0.0f,
+            pBot.waypoint_goal >= 0 && pBot.waypoint_goal < num_waypoints ?
+               waypoints[pBot.waypoint_goal].origin.y : 0.0f,
+            pBot.waypoint_goal >= 0 && pBot.waypoint_goal < num_waypoints ?
+               waypoints[pBot.waypoint_goal].origin.z : 0.0f);
+      }
+   }
+
+   const int ammo = CrossfireTacticsGaussStrongholdAmmo(pBot);
+   if (g_crossfire_gauss_stronghold_last_ammo[bot_index] > 0 && ammo == 0)
+      g_crossfire_gauss_stronghold_stats.ammo_depletion_events++;
+   g_crossfire_gauss_stronghold_last_ammo[bot_index] = ammo;
+
+   float target_distance = CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE;
+   if (!FNullEnt(pBot.pBotEnemy))
+   {
+      target_distance =
+         (pBot.pBotEnemy->v.origin - pBot.pEdict->v.origin).Length();
+      g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+   }
+   CrossfireTacticsUpdateGaussStrongholdFallback(
+      pBot, bot_index, target_distance);
+
+   if (CrossfireTacticsUpdateGaussStrongholdResource(pBot, bot_index))
+      return TRUE;
+
+   if (g_crossfire_gauss_stronghold_stage[bot_index] ==
+       CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW)
+   {
+      if (CrossfireTacticsGaussStrongholdWindowReached(pBot, window_goal))
+      {
+         CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+            CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW,
+            "window_reached");
+         CrossfireTacticsCompleteGaussStrongholdReturn(
+            pBot, bot_index, window_goal);
+      }
+      else
+      {
+         // A completed pickup owns the next leg. Do not immediately select
+         // another low-health/armor resource while still beside the first.
+         CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+            CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW,
+            "return_pending");
+      }
+      return TRUE;
+   }
+
+   if (g_crossfire_gauss_stronghold_next_scan[bot_index] >
+       gpGlobals->time)
+   {
+      CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+         g_crossfire_gauss_stronghold_stage[bot_index], "scan_throttle");
+      return TRUE;
+   }
+   g_crossfire_gauss_stronghold_next_scan[bot_index] = gpGlobals->time +
+      CROSSFIRE_GAUSS_STRONGHOLD_AMMO_SCAN_INTERVAL;
+
+   if (CrossfireTacticsHasImmediateDanger(pBot))
+   {
+      const int cover_goal =
+         CrossfireTacticsFindGaussStrongholdInteriorWaypoint(pBot);
+      if (cover_goal >= 0)
+      {
+         pBot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+         pBot.waypoint_goal = cover_goal;
+         pBot.f_waypoint_goal_time = gpGlobals->time + 1.0f;
+         CrossfireTacticsSetGaussStrongholdStage(pBot, bot_index,
+            CROSSFIRE_GAUSS_STRONGHOLD_LOCAL_COVER,
+            "immediate_local_danger");
+         return TRUE;
+      }
+   }
+
+   if (pBot.pEdict->v.health <=
+          CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_CRITICAL &&
+       CrossfireTacticsSelectGaussStrongholdResource(pBot, bot_index,
+          CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH,
+          CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_HEALTH,
+          "critical_health"))
+      return TRUE;
+
+   if (ammo <= CROSSFIRE_GAUSS_STRONGHOLD_AMMO_LOW &&
+       (CrossfireTacticsSelectGaussStrongholdResource(pBot, bot_index,
+          CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO,
+          CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_GAUSS,
+          ammo <= CROSSFIRE_GAUSS_STRONGHOLD_AMMO_CRITICAL ?
+             "critical_uranium" : "low_uranium") ||
+        CrossfireTacticsSelectGaussStrongholdResource(pBot, bot_index,
+          CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK,
+          CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_GAUSS,
+          "gauss_repickup")))
+      return TRUE;
+
+   if (pBot.pEdict->v.armorvalue <
+          CROSSFIRE_GAUSS_STRONGHOLD_ARMOR_LOW &&
+       CrossfireTacticsSelectGaussStrongholdResource(pBot, bot_index,
+          CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR,
+          CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_ARMOR,
+          "low_armor"))
+      return TRUE;
+
+   if (pBot.pEdict->v.health < CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_LOW &&
+       CrossfireTacticsSelectGaussStrongholdResource(pBot, bot_index,
+          CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH,
+          CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_HEALTH,
+          "health_topping"))
+      return TRUE;
+
+   if (FNullEnt(pBot.pBotEnemy) &&
+       g_crossfire_precision_last_target_time[bot_index] +
+          CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_SCAN_TIME <= gpGlobals->time &&
+       g_crossfire_gauss_stronghold_next_window_change[bot_index] <=
+          gpGlobals->time)
+   {
+      const int alternate =
+         CrossfireTacticsFindGaussStrongholdWindowWaypoint(
+            pBot, window_goal);
+      g_crossfire_gauss_stronghold_next_window_change[bot_index] =
+         gpGlobals->time + CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_SCAN_TIME;
+      g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+      if (alternate >= 0)
+      {
+         window_goal = alternate;
+         g_crossfire_precision_hold_goal[bot_index] = alternate;
+         CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+            CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW,
+            "scan_alternate_window");
+         return TRUE;
+      }
+   }
+
+   if (ammo < BOT_GAUSS_SECONDARY_MIN_AMMO)
+   {
+      const int preferred =
+         g_crossfire_gauss_stronghold_fallback_weapon[bot_index];
+      if (preferred == 0)
+      {
+         const int first_type = target_distance >=
+            CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE ?
+               CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW :
+               CROSSFIRE_STRONGHOLD_RESOURCE_MP5;
+         const int second_type = first_type ==
+            CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW ?
+               CROSSFIRE_STRONGHOLD_RESOURCE_MP5 :
+               CROSSFIRE_STRONGHOLD_RESOURCE_CROSSBOW;
+         if (CrossfireTacticsSelectGaussStrongholdResource(
+                pBot, bot_index, first_type,
+                CROSSFIRE_GAUSS_STRONGHOLD_ACQUIRE_FALLBACK,
+                "fallback_required") ||
+             CrossfireTacticsSelectGaussStrongholdResource(
+                pBot, bot_index, second_type,
+                CROSSFIRE_GAUSS_STRONGHOLD_ACQUIRE_FALLBACK,
+                "alternate_fallback"))
+            return TRUE;
+      }
+
+      if (g_crossfire_gauss_stronghold_fallback_weapon[bot_index] ==
+             VALVE_WEAPON_MP5 &&
+          CrossfireTacticsWeaponAmmo(pBot, VALVE_WEAPON_MP5, TRUE) <= 0 &&
+          CrossfireTacticsSelectGaussStrongholdResource(pBot, bot_index,
+             CROSSFIRE_STRONGHOLD_RESOURCE_MP5_GRENADES,
+             CROSSFIRE_GAUSS_STRONGHOLD_ACQUIRE_FALLBACK,
+             "mp5_grenade_resupply"))
+         return TRUE;
+
+      CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+         CROSSFIRE_GAUSS_STRONGHOLD_WAIT_RESPAWN,
+         "gauss_resources_inactive");
+      return TRUE;
+   }
+
+   CrossfireTacticsSetGaussStrongholdWindowGoal(pBot, bot_index,
+      CrossfireTacticsGaussStrongholdWindowReached(pBot, window_goal) ?
+         CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD :
+         CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW,
+      ammo >= BOT_GAUSS_SECONDARY_MIN_AMMO ?
+         "gauss_ready" : "return_window");
+   return TRUE;
+}
+
+
 static int CrossfireTacticsPrecisionHoldGoalType(int mode)
 {
    return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
@@ -636,6 +2327,7 @@ static void CrossfireTacticsClearPrecisionHold(
       return;
 
    bot_t &bot = bots[bot_index];
+   CrossfireTacticsClearGaussStronghold(bot_index, reason);
    const int mode = g_crossfire_precision_hold_mode[bot_index];
    const int goal = g_crossfire_precision_hold_goal[bot_index];
    const qboolean had_hold = mode != CROSSFIRE_PRECISION_HOLD_NONE &&
@@ -687,6 +2379,17 @@ static const char *CrossfireTacticsPrecisionHoldCancellationReason(
    if (CrossfireTacticsIsBotStrikeActivator(pBot))
       return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
          "strike" : "strike activator";
+   if (CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
+   {
+      if (pBot.pEdict == NULL || pBot.pEdict->free ||
+          pBot.pEdict->v.deadflag != DEAD_NO ||
+          pBot.pEdict->v.health <= 0.0f)
+         return "death";
+      if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(
+             g_crossfire_gauss_stronghold_window_goal[bot_index]))
+         return "entire_zone_unreachable";
+      return NULL;
+   }
    if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
        !BotIsCarryingWeapon(const_cast<bot_t &>(pBot), VALVE_WEAPON_GAUSS))
       return "weapon_lost";
@@ -774,6 +2477,10 @@ static qboolean CrossfireTacticsEnsurePrecisionHoldGoal(bot_t &pBot)
    if (g_crossfire_precision_hold_goal[bot_index] >= 0)
    {
       const int mode = g_crossfire_precision_hold_mode[bot_index];
+      if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+          CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
+         return CrossfireTacticsEnsureGaussStrongholdGoal(pBot);
+
       const char *reason = CrossfireTacticsPrecisionHoldCancellationReason(
          pBot, bot_index);
       if (reason != NULL)
@@ -849,6 +2556,29 @@ static qboolean CrossfireTacticsEnsurePrecisionHoldGoal(bot_t &pBot)
    g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
    g_crossfire_precision_stuck_since[bot_index] = 0.0f;
    g_crossfire_precision_hold_arrived[bot_index] = FALSE;
+
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+       MapProfileCrossfireIsWaypointInsideGaussStronghold(goal))
+   {
+      g_crossfire_gauss_stronghold_stage[bot_index] =
+         CROSSFIRE_GAUSS_STRONGHOLD_APPROACH;
+      g_crossfire_gauss_stronghold_window_goal[bot_index] = goal;
+      g_crossfire_gauss_stronghold_resource_goal[bot_index] = -1;
+      g_crossfire_gauss_stronghold_resource[bot_index] = NULL;
+      g_crossfire_gauss_stronghold_resource_type[bot_index] =
+         CROSSFIRE_STRONGHOLD_RESOURCE_NONE;
+      g_crossfire_gauss_stronghold_last_ammo[bot_index] =
+         CrossfireTacticsGaussStrongholdAmmo(pBot);
+      g_crossfire_gauss_stronghold_fallback_weapon[bot_index] = 0;
+      g_crossfire_gauss_stronghold_next_weapon_select[bot_index] = 0.0f;
+      g_crossfire_gauss_stronghold_strike_egress[bot_index] = FALSE;
+      g_crossfire_gauss_stronghold_strike_window[bot_index] = -1;
+      g_crossfire_gauss_stronghold_strike_bridge[bot_index] = -1;
+      g_crossfire_gauss_stronghold_next_scan[bot_index] = 0.0f;
+      g_crossfire_gauss_stronghold_next_summary[bot_index] = 0.0f;
+      g_crossfire_gauss_stronghold_next_window_change[bot_index] = 0.0f;
+      g_crossfire_gauss_stronghold_was_inside[bot_index] = FALSE;
+   }
 
    pBot.wpt_goal_type = CrossfireTacticsPrecisionHoldGoalType(mode);
    pBot.waypoint_goal = goal;
@@ -1342,7 +3072,32 @@ static void CrossfireTacticsReset(void)
 {
    CrossfireTacticsResetBunkerShaftRoutes();
    for (int index = 0; index < 32; index++)
+   {
       CrossfireTacticsClearPrecisionHold(index, NULL);
+      g_crossfire_gauss_stronghold_stage[index] =
+         CROSSFIRE_GAUSS_STRONGHOLD_NONE;
+      g_crossfire_gauss_stronghold_window_goal[index] = -1;
+      g_crossfire_gauss_stronghold_resource_goal[index] = -1;
+      g_crossfire_gauss_stronghold_resource[index] = NULL;
+      g_crossfire_gauss_stronghold_resource_type[index] =
+         CROSSFIRE_STRONGHOLD_RESOURCE_NONE;
+      g_crossfire_gauss_stronghold_return_bridge[index] = -1;
+      g_crossfire_gauss_stronghold_next_weapon_select[index] = 0.0f;
+      g_crossfire_gauss_stronghold_strike_egress[index] = FALSE;
+      g_crossfire_gauss_stronghold_strike_window[index] = -1;
+      g_crossfire_gauss_stronghold_strike_bridge[index] = -1;
+      g_crossfire_gauss_stronghold_strike_next_jump[index] = 0.0f;
+      g_crossfire_gauss_stronghold_next_guard_trace[index] = 0.0f;
+      g_crossfire_gauss_stronghold_next_window_change[index] = 0.0f;
+   }
+
+   memset(g_crossfire_gauss_stronghold_resources, 0,
+      sizeof(g_crossfire_gauss_stronghold_resources));
+   g_crossfire_gauss_stronghold_resource_count = 0;
+   memset(&g_crossfire_gauss_stronghold_stats, 0,
+      sizeof(g_crossfire_gauss_stronghold_stats));
+   g_crossfire_gauss_stronghold_stats_time =
+      gpGlobals != NULL ? gpGlobals->time : 0.0f;
 
    g_crossfire_strike_end_time = 0.0f;
    g_crossfire_strike_start_time = 0.0f;
@@ -1370,6 +3125,8 @@ static void CrossfireTacticsOnEntitySpawn(edict_t *entity)
 
    const char *classname = STRING(entity->v.classname);
 
+   CrossfireTacticsRegisterGaussStrongholdResource(entity);
+
    if (stricmp(classname, "trigger_multiple") == 0 &&
        !FStringNull(entity->v.target) &&
        stricmp(STRING(entity->v.target), "strike_mm") == 0)
@@ -1394,10 +3151,58 @@ static void CrossfireTacticsOnEntitySpawn(edict_t *entity)
 }
 
 
+static void CrossfireTacticsUpdateGaussStrongholdStats(void)
+{
+   float elapsed = gpGlobals->time - g_crossfire_gauss_stronghold_stats_time;
+   if (elapsed < 0.0f || elapsed > 1.0f)
+      elapsed = 0.0f;
+   g_crossfire_gauss_stronghold_stats_time = gpGlobals->time;
+
+   for (int index = 0; index < 32; index++)
+   {
+      if (!CrossfireTacticsIsGaussStrongholdReserved(index))
+         continue;
+
+      if (!CrossfireTacticsBotAvailable(index))
+      {
+         CrossfireTacticsClearPrecisionHold(index, "death");
+         continue;
+      }
+
+      if (!CrossfireTacticsIsGaussStrongholdPersistent(index))
+         continue;
+
+      g_crossfire_gauss_stronghold_stats.seconds_in_stronghold += elapsed;
+      if (g_crossfire_gauss_stronghold_next_summary[index] >
+          gpGlobals->time)
+         continue;
+
+      g_crossfire_gauss_stronghold_next_summary[index] = gpGlobals->time +
+         CROSSFIRE_GAUSS_STRONGHOLD_SUMMARY_INTERVAL;
+      const crossfire_gauss_stronghold_stats_t &stats =
+         g_crossfire_gauss_stronghold_stats;
+      BotTrace(bots[index],
+         "gauss_stronghold_summary: entries=%u seconds=%.0f ammo_depletions=%u gauss_ammo=%u gauss_repicks=%u waits=%u health=%u armor=%u crossbow=%u mp5=%u returns=%u pursuits=%u exits_prevented=%u enemy_pursuits_prevented=%u unexpected_exits=%u window_jumps=%u recoil_falls=%u strike_exits=%u",
+         stats.stronghold_entries, stats.seconds_in_stronghold,
+         stats.ammo_depletion_events, stats.gauss_ammo_pickups,
+         stats.gauss_repicks, stats.wait_respawn_entries,
+         stats.health_pickups, stats.armor_pickups,
+         stats.crossbow_fallbacks, stats.mp5_fallbacks,
+         stats.returns_to_window, stats.attempted_enemy_pursuits,
+         stats.window_exit_prevented,
+         stats.enemy_pursuit_prevented, stats.unexpected_zone_exits,
+         stats.window_jumps_prevented, stats.recoil_falls,
+         stats.strike_exits);
+   }
+}
+
+
 static void CrossfireTacticsStartFrame(void)
 {
    if (!CrossfireTacticsIsCrossfire())
       return;
+
+   CrossfireTacticsUpdateGaussStrongholdStats();
 
    if (g_crossfire_next_bot_strike_time <= 0.0f)
    {
@@ -1542,40 +3347,45 @@ static int CrossfireTacticsFindBunkerWaypoint(const bot_t &pBot)
    if (!CrossfireTacticsIsCrossfire() || pBot.pEdict == NULL)
       return -1;
 
-   int best_index = -1;
-   float best_score = 999999.0f;
+   int best_route_index = -1;
+   int best_physical_index = -1;
+   float best_route_score = 999999.0f;
+   float best_physical_score = 999999.0f;
+   const qboolean has_route_start = pBot.curr_waypoint_index >= 0 &&
+      pBot.curr_waypoint_index < num_waypoints;
 
    for (int index = 0; index < num_waypoints; index++)
    {
       if (!CrossfireTacticsIsBunkerGoalWaypoint(waypoints[index]))
          continue;
 
-      float distance;
-
-      if (pBot.curr_waypoint_index >= 0 && pBot.curr_waypoint_index < num_waypoints)
-      {
-         distance = WaypointDistanceFromTo(pBot.curr_waypoint_index, index);
-
-         if (distance >= WAYPOINT_UNREACHABLE)
-            continue;
-      }
-      else
-      {
-         distance = (pBot.pEdict->v.origin - waypoints[index].origin).Length();
-      }
-
-      // Prefer a short route while spreading bots across the available shelter nodes.
-      const float score = distance +
+      const float reservation_penalty =
          CrossfireTacticsWaypointReservations(index, pBot) * 512.0f;
-
-      if (score < best_score)
+      const float physical_score =
+         (pBot.pEdict->v.origin - waypoints[index].origin).Length() +
+         reservation_penalty;
+      if (physical_score < best_physical_score)
       {
-         best_score = score;
-         best_index = index;
+         best_physical_score = physical_score;
+         best_physical_index = index;
+      }
+
+      if (has_route_start)
+      {
+         const float route_distance = WaypointDistanceFromTo(
+            pBot.curr_waypoint_index, index);
+         const float route_score = route_distance + reservation_penalty;
+         if (route_distance < WAYPOINT_UNREACHABLE &&
+             route_score < best_route_score)
+         {
+            best_route_score = route_score;
+            best_route_index = index;
+         }
       }
    }
 
-   return best_index;
+   // A stale or disconnected route-matrix anchor must not cancel evacuation.
+   return best_route_index >= 0 ? best_route_index : best_physical_index;
 }
 
 
@@ -2080,11 +3890,14 @@ static qboolean CrossfireTacticsShaftMovementOverridesCombat(
 static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
    const bot_t &pBot)
 {
-   if (pBot.pEdict == NULL || pBot.pBotEnemy == NULL)
+   if (pBot.pEdict == NULL)
       return FALSE;
 
    if (CrossfireTacticsIsPrecisionHoldActive(pBot))
       return TRUE;
+
+   if (pBot.pBotEnemy == NULL)
+      return FALSE;
 
    const qboolean evacuating = CrossfireTacticsIsStrikeActive() &&
       !CrossfireTacticsIsBotSheltered(pBot);
@@ -2100,11 +3913,21 @@ static qboolean CrossfireTacticsShouldYieldToStrategicMovement(
 
 static qboolean CrossfireTacticsShouldSuppressCombat(const bot_t &pBot)
 {
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index >= 0 &&
+       CrossfireTacticsIsGaussStrongholdPersistent(bot_index) &&
+       CrossfireTacticsGaussStrongholdStationInUseRange(
+          pBot, bot_index, NULL, NULL))
+      return TRUE;
+
+   if (bot_index >= 0 &&
+       g_crossfire_gauss_stronghold_strike_egress[bot_index])
+      return TRUE;
+
    if (!CrossfireTacticsIsStrikeActive() || pBot.pEdict == NULL ||
        CrossfireTacticsIsBotSheltered(pBot))
       return FALSE;
 
-   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
    return bot_index >= 0 &&
       CrossfireTacticsShaftMovementOverridesCombat(pBot, bot_index);
 }
@@ -2247,6 +4070,94 @@ static Vector CrossfireTacticsPrecisionWatchTarget(
 }
 
 
+static qboolean CrossfireTacticsHandleGaussStrongholdMovement(bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index < 0 || pBot.pEdict == NULL ||
+       !CrossfireTacticsIsGaussStrongholdReserved(bot_index))
+      return FALSE;
+
+   int stage = g_crossfire_gauss_stronghold_stage[bot_index];
+   if (stage == CROSSFIRE_GAUSS_STRONGHOLD_APPROACH)
+   {
+      const int goal = g_crossfire_precision_hold_goal[bot_index];
+      if (goal < 0 || goal >= num_waypoints ||
+          !CrossfireTacticsIsOriginInsideGaussStronghold(
+             pBot.pEdict->v.origin) ||
+          !CrossfireTacticsGaussStrongholdWindowReached(pBot, goal))
+         return FALSE;
+
+      g_crossfire_precision_hold_arrived[bot_index] = TRUE;
+      g_crossfire_precision_hold_until[bot_index] = 0.0f;
+      g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+      g_crossfire_gauss_stronghold_window_goal[bot_index] = goal;
+      g_crossfire_gauss_stronghold_was_inside[bot_index] = TRUE;
+      g_crossfire_gauss_stronghold_stats.stronghold_entries++;
+      CrossfireTacticsSetGaussStrongholdStage(pBot, bot_index,
+         CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD, "window_arrival");
+      BotTrace(pBot,
+         "gauss_stronghold_entered: bot=%s zone=satellite_operations goal=%d ammo=%d health=%.0f armor=%.0f",
+         pBot.name, goal, CrossfireTacticsGaussStrongholdAmmo(pBot),
+         pBot.pEdict->v.health, pBot.pEdict->v.armorvalue);
+      stage = CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD;
+   }
+
+   if (!CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
+      return FALSE;
+
+   if (stage == CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_GAUSS ||
+       stage == CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_HEALTH ||
+       stage == CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_ARMOR ||
+       stage == CROSSFIRE_GAUSS_STRONGHOLD_ACQUIRE_FALLBACK)
+   {
+      if (CrossfireTacticsDriveGaussStrongholdStationUse(
+             pBot, bot_index))
+         return TRUE;
+      if (CrossfireTacticsFinishGaussStrongholdPickupApproach(
+             pBot, bot_index))
+         return TRUE;
+      return FALSE;
+   }
+
+   if (stage == CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW &&
+       CrossfireTacticsDriveGaussStrongholdReturn(pBot, bot_index))
+      return TRUE;
+
+   if (stage == CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW)
+   {
+      const int window_goal =
+         g_crossfire_gauss_stronghold_window_goal[bot_index];
+      if (!CrossfireTacticsGaussStrongholdWindowReached(
+             pBot, window_goal))
+         return FALSE;
+      CrossfireTacticsCompleteGaussStrongholdReturn(
+         pBot, bot_index, window_goal);
+   }
+   else
+   {
+      const int goal = pBot.waypoint_goal;
+      if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(goal) ||
+          (pBot.pEdict->v.origin - waypoints[goal].origin).Length() >
+             CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_ARRIVAL_DISTANCE)
+         return FALSE;
+   }
+
+   pBot.f_pause_time = 0.0f;
+   pBot.f_move_speed = 0.0f;
+   pBot.f_strafe_direction = 0.0f;
+   if (pBot.pBotEnemy == NULL)
+   {
+      const Vector target = CrossfireTacticsPrecisionWatchTarget(
+         pBot, CROSSFIRE_PRECISION_HOLD_GAUSS);
+      const Vector direction = target - pBot.pEdict->v.origin;
+      const Vector angles = UTIL_VecToAngles(direction);
+      pBot.pEdict->v.idealpitch = UTIL_WrapAngle(-angles.x);
+      pBot.pEdict->v.ideal_yaw = UTIL_WrapAngle(angles.y);
+   }
+   return TRUE;
+}
+
+
 static qboolean CrossfireTacticsHandlePrecisionHoldMovement(bot_t &pBot)
 {
    if (!CrossfireTacticsIsPrecisionHoldActive(pBot))
@@ -2254,6 +4165,10 @@ static qboolean CrossfireTacticsHandlePrecisionHoldMovement(bot_t &pBot)
 
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
    const int mode = g_crossfire_precision_hold_mode[bot_index];
+   if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+       CrossfireTacticsIsGaussStrongholdReserved(bot_index))
+      return CrossfireTacticsHandleGaussStrongholdMovement(pBot);
+
    const int goal = g_crossfire_precision_hold_goal[bot_index];
    const float arrival_distance =
       mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
@@ -2301,8 +4216,200 @@ static qboolean CrossfireTacticsHandlePrecisionHoldMovement(bot_t &pBot)
 }
 
 
+static qboolean CrossfireTacticsAllowWaypoint(
+   bot_t &pBot, int waypoint_index, const char *context)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (CrossfireTacticsIsStrikeActive() || bot_index < 0 ||
+       !CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
+      return TRUE;
+
+   if (MapProfileCrossfireIsWaypointInsideGaussStronghold(waypoint_index))
+      return TRUE;
+
+   const qboolean bot_inside = pBot.pEdict != NULL &&
+      CrossfireTacticsIsOriginInsideGaussStronghold(pBot.pEdict->v.origin);
+   if (!bot_inside && pBot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD &&
+       context != NULL &&
+       (strcmp(context, "route") == 0 ||
+        strcmp(context, "initial") == 0 ||
+        strcmp(context, "visibility") == 0))
+      return TRUE;
+
+   const qboolean enemy_pursuit = pBot.wpt_goal_type == WPT_GOAL_ENEMY;
+   const char *reason = enemy_pursuit ? "enemy_pursuit" : "outside_zone";
+   if (waypoint_index >= 0 && waypoint_index < num_waypoints)
+   {
+      if (waypoints[waypoint_index].origin.z <
+          CROSSFIRE_SATELLITE_STRONGHOLD_MIN_Z)
+         reason = "floor_drop";
+      else if (waypoints[waypoint_index].flags &
+               (W_FL_JUMP | W_FL_LONGJUMP))
+         reason = "window";
+   }
+
+   if (g_crossfire_gauss_stronghold_next_guard_trace[bot_index] <=
+       gpGlobals->time)
+   {
+      g_crossfire_gauss_stronghold_next_guard_trace[bot_index] =
+         gpGlobals->time + 1.0f;
+      g_crossfire_gauss_stronghold_stats.window_exit_prevented++;
+      if (enemy_pursuit)
+      {
+         g_crossfire_gauss_stronghold_stats.attempted_enemy_pursuits++;
+         g_crossfire_gauss_stronghold_stats.enemy_pursuit_prevented++;
+      }
+      const Vector origin = waypoint_index >= 0 &&
+         waypoint_index < num_waypoints ? waypoints[waypoint_index].origin :
+         Vector(0.0f, 0.0f, 0.0f);
+      BotTrace(pBot,
+         "gauss_stronghold_exit_prevented: candidate_goal=%d candidate_origin=%.0f,%.0f,%.0f reason=%s context=%s",
+         waypoint_index, origin.x, origin.y, origin.z, reason,
+         context != NULL ? context : "unknown");
+   }
+   return FALSE;
+}
+
+
+static void CrossfireTacticsApplyMovementSafety(bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (CrossfireTacticsIsStrikeActive() || bot_index < 0 ||
+       pBot.pEdict == NULL ||
+       !CrossfireTacticsIsGaussStrongholdPersistent(bot_index) ||
+       !CrossfireTacticsIsOriginInsideGaussStronghold(
+          pBot.pEdict->v.origin))
+      return;
+
+   const qboolean jump_requested =
+      FBitSet(pBot.pEdict->v.button, IN_JUMP) ||
+      pBot.b_longjump_do_jump || pBot.b_combat_longjump;
+   if (jump_requested)
+   {
+      pBot.pEdict->v.button &= ~IN_JUMP;
+      pBot.b_longjump_do_jump = FALSE;
+      pBot.b_combat_longjump = FALSE;
+      pBot.f_longjump_time = 0.0f;
+      g_crossfire_gauss_stronghold_stats.window_jumps_prevented++;
+   }
+
+   if (fabs(pBot.f_move_speed) < 1.0f &&
+       fabs(pBot.f_strafe_direction) < 1.0f)
+      return;
+
+   const float yaw = deg2rad(pBot.pEdict->v.v_angle.y);
+   const Vector forward((float)cos(yaw), (float)sin(yaw), 0.0f);
+   const Vector right(forward.y, -forward.x, 0.0f);
+   float strafe_speed = 0.0f;
+   if (pBot.f_move_speed != 0.0f)
+   {
+      strafe_speed = pBot.f_strafe_direction *
+         (pBot.f_move_speed <= 20.0f ?
+            pBot.f_max_speed : pBot.f_move_speed);
+   }
+   Vector movement = forward * pBot.f_move_speed +
+      right * strafe_speed;
+   if (movement.Length() < 1.0f)
+      return;
+
+   const Vector projected = pBot.pEdict->v.origin +
+      movement.Normalize() * 72.0f;
+   const qboolean outside =
+      !CrossfireTacticsIsOriginInsideGaussStronghold(projected);
+   const qboolean unsupported =
+      !CrossfireTacticsHasFloorBelow(pBot, projected, 96.0f);
+   qboolean converging_to_safe_goal = FALSE;
+   if (!outside && unsupported &&
+       MapProfileCrossfireIsWaypointInsideGaussStronghold(
+          pBot.waypoint_goal))
+   {
+      const Vector &goal = waypoints[pBot.waypoint_goal].origin;
+      converging_to_safe_goal =
+         (projected - goal).Length() + 8.0f <
+         (pBot.pEdict->v.origin - goal).Length();
+   }
+   if (!outside && (!unsupported || converging_to_safe_goal))
+      return;
+
+   pBot.f_move_speed = 0.0f;
+   pBot.f_strafe_direction = 0.0f;
+   pBot.pEdict->v.button &= ~IN_JUMP;
+   Vector turn_target(-900.0f, 760.0f, -1500.0f);
+   if (MapProfileCrossfireIsWaypointInsideGaussStronghold(
+          pBot.waypoint_goal))
+   {
+      const Vector &goal = waypoints[pBot.waypoint_goal].origin;
+      if (CrossfireTacticsGaussStrongholdSegmentSafe(
+             pBot, pBot.pEdict->v.origin, goal))
+         turn_target = goal;
+   }
+
+   // Stop the unsafe frame, but keep turning toward a verified local goal.
+   // Replacing that yaw with the generic room center can alternate forever
+   // with precise return steering after the broad waypoint radius fires.
+   const Vector direction = turn_target - pBot.pEdict->v.origin;
+   pBot.pEdict->v.ideal_yaw = UTIL_WrapAngle(
+      UTIL_VecToAngles(direction).y);
+
+   if (g_crossfire_gauss_stronghold_next_guard_trace[bot_index] <=
+       gpGlobals->time)
+   {
+      g_crossfire_gauss_stronghold_next_guard_trace[bot_index] =
+         gpGlobals->time + 1.0f;
+      g_crossfire_gauss_stronghold_stats.window_exit_prevented++;
+      BotTrace(pBot,
+         "gauss_stronghold_exit_prevented: candidate_goal=%d candidate_origin=%.0f,%.0f,%.0f reason=%s context=movement",
+         pBot.curr_waypoint_index, projected.x, projected.y, projected.z,
+         unsupported ? "window" : "outside_zone");
+   }
+}
+
+
+static int CrossfireTacticsPreferredWeapon(
+   const bot_t &pBot, float target_distance)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index < 0 ||
+       !CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
+      return 0;
+
+   if (CrossfireTacticsGaussStrongholdAmmo(pBot) >=
+          BOT_GAUSS_SECONDARY_MIN_AMMO &&
+       CrossfireTacticsStrongholdWeaponUsable(pBot, VALVE_WEAPON_GAUSS))
+      return VALVE_WEAPON_GAUSS;
+
+   const int retained =
+      g_crossfire_gauss_stronghold_fallback_weapon[bot_index];
+   if (retained == VALVE_WEAPON_CROSSBOW &&
+       target_distance >= CROSSFIRE_GAUSS_STRONGHOLD_MP5_DISTANCE &&
+       CrossfireTacticsStrongholdWeaponUsable(pBot, retained))
+      return retained;
+   if (retained == VALVE_WEAPON_MP5 &&
+       target_distance <= CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE +
+          CROSSFIRE_GAUSS_STRONGHOLD_FALLBACK_HYSTERESIS &&
+       CrossfireTacticsStrongholdWeaponUsable(pBot, retained))
+      return retained;
+
+   if (target_distance >= CROSSFIRE_GAUSS_STRONGHOLD_CROSSBOW_DISTANCE &&
+       CrossfireTacticsStrongholdWeaponUsable(
+          pBot, VALVE_WEAPON_CROSSBOW))
+      return VALVE_WEAPON_CROSSBOW;
+   if (CrossfireTacticsStrongholdWeaponUsable(pBot, VALVE_WEAPON_MP5))
+      return VALVE_WEAPON_MP5;
+   if (CrossfireTacticsStrongholdWeaponUsable(
+          pBot, VALVE_WEAPON_CROSSBOW))
+      return VALVE_WEAPON_CROSSBOW;
+   if (CrossfireTacticsStrongholdWeaponUsable(pBot, VALVE_WEAPON_GLOCK))
+      return VALVE_WEAPON_GLOCK;
+   return 0;
+}
+
+
 static qboolean CrossfireProfileHandleSpecialMovement(bot_t &pBot)
 {
+   if (CrossfireTacticsHandleGaussStrongholdStrikeEgress(pBot))
+      return TRUE;
+
    if (CrossfireTacticsHandleBunkerDefenseMovement(pBot))
       return TRUE;
 
@@ -2332,7 +4439,11 @@ static const map_profile_t g_crossfire_profile =
    CrossfireTacticsShouldYieldToStrategicMovement,
    CrossfireTacticsShouldSuppressCombat,
    CrossfireTacticsShouldPrioritizeCombat,
-   CrossfireTacticsCanNoticeCombatTarget
+   CrossfireTacticsCanNoticeCombatTarget,
+   CrossfireTacticsShouldPreservePickup,
+   CrossfireTacticsAllowWaypoint,
+   CrossfireTacticsApplyMovementSafety,
+   CrossfireTacticsPreferredWeapon
 };
 
 

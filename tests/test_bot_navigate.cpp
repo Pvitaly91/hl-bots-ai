@@ -2500,6 +2500,36 @@ static void setup_weak_weapon_goal_select(bot_weapon_select_t saved_select[3])
    weapon_select[1].waypoint_flag = W_IFL_SHOTGUN;
 }
 
+
+static void trace_crossfire_stronghold_geometry(const float *v1,
+   const float *v2, int fNoMonsters, int hullNumber,
+   edict_t *pentToSkip, TraceResult *ptr)
+{
+   (void)fNoMonsters;
+   (void)hullNumber;
+   (void)pentToSkip;
+   const Vector start(v1[0], v1[1], v1[2]);
+   const Vector end(v2[0], v2[1], v2[2]);
+   const float horizontal = (end - start).Make2D().Length();
+
+   memset(ptr, 0, sizeof(*ptr));
+   ptr->flFraction = 1.0f;
+   ptr->vecEndPos[0] = end.x;
+   ptr->vecEndPos[1] = end.y;
+   ptr->vecEndPos[2] = end.z;
+   if ((end.z < start.z - 20.0f && horizontal < 1.0f) ||
+       ((end - start).Length() <= 140.0f && start.x < -350.0f &&
+        start.y > 350.0f))
+   {
+      ptr->flFraction = 0.5f;
+      const Vector hit = (start + end) * 0.5f;
+      ptr->vecEndPos[0] = hit.x;
+      ptr->vecEndPos[1] = hit.y;
+      ptr->vecEndPos[2] = hit.z;
+      ptr->vecPlaneNormal[2] = 1.0f;
+   }
+}
+
 static void setup_active_weapon_waypoint(int index, Vector origin,
    int itemflags, float route_distance)
 {
@@ -3551,6 +3581,59 @@ static int test_head_toward_goal_routing(void)
    BotHeadTowardWaypoint(bot);
 
    ASSERT_INT(bot.curr_waypoint_index, 1);
+   PASS();
+   return 0;
+}
+
+static int test_head_toward_crossfire_stronghold_rejects_drop_route(void)
+{
+   TEST("BotHeadTowardWaypoint: Crossfire stronghold rejects drop route");
+   mock_reset();
+   reset_navigate_mocks();
+   MapProfileReset();
+   gpGlobals->mapname = (string_t)(long)"crossfire";
+   gpGlobals->time = 100.0f;
+   InitWeaponSelect(SUBMOD_HLDM);
+
+   weapon_defs[VALVE_WEAPON_GLOCK].iId = VALVE_WEAPON_GLOCK;
+   weapon_defs[VALVE_WEAPON_GLOCK].iAmmo1 = 1;
+   weapon_defs[VALVE_WEAPON_GAUSS].iId = VALVE_WEAPON_GAUSS;
+   weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1 = 6;
+
+   setup_bot_for_test(bots[0], mock_alloc_edict());
+   bots[0].weapon_skill = SKILL5;
+   bots[0].pEdict->v.origin = Vector(-1200.0f, 0.0f, -1720.0f);
+   bots[0].pEdict->v.weapons = (1u << VALVE_WEAPON_GLOCK) |
+      (1u << VALVE_WEAPON_GAUSS);
+   bots[0].m_rgAmmo[1] = 50;
+   bots[0].m_rgAmmo[6] = 30;
+   bots[0].curr_waypoint_index = 0;
+   bots[0].pBotEnemy = mock_alloc_edict();
+   bots[0].pBotEnemy->v.flags = FL_CLIENT;
+   bots[0].pBotEnemy->v.origin = Vector(0.0f, -600.0f, -1720.0f);
+
+   setup_waypoint(0, Vector(-1200.0f, 0.0f, -1720.0f));
+   setup_waypoint(1, Vector(-735.6f, 592.4f, -1500.0f), W_FL_AIMING);
+   setup_waypoint(2, Vector(-447.4f, -424.6f, -1691.1f), W_FL_JUMP);
+   mock_WaypointDistanceFromTo_by_dest[0] = 0.0f;
+   mock_WaypointDistanceFromTo_by_dest[1] = 300.0f;
+   mock_trace_line_fn = trace_crossfire_stronghold_geometry;
+
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[0]));
+   ASSERT_INT(bots[0].waypoint_goal, 1);
+   bots[0].pEdict->v.origin = waypoints[1].origin;
+   bots[0].curr_waypoint_index = 1;
+   bots[0].waypoint_origin = waypoints[1].origin;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[0]));
+
+   mock_WaypointRouteFromTo_result = 2;
+   const qboolean found =
+      BotHeadTowardWaypointFindNextRoute(bots[0], FALSE);
+   ASSERT_FALSE(found);
+   ASSERT_INT(bots[0].curr_waypoint_index, 1);
+   ASSERT_INT(bots[0].waypoint_goal, 1);
+
+   MapProfileReset();
    PASS();
    return 0;
 }
@@ -6301,6 +6384,7 @@ int main(void)
    failures += test_head_toward_jump_flag();
    failures += test_head_toward_goal_reached();
    failures += test_head_toward_goal_routing();
+   failures += test_head_toward_crossfire_stronghold_rejects_drop_route();
    failures += test_head_toward_ladder_flag();
    failures += test_head_toward_in_water_exit();
    failures += test_head_toward_retry_loop();

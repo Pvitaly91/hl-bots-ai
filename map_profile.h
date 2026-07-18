@@ -27,6 +27,12 @@ typedef struct
    qboolean (*should_prioritize_combat)(const bot_t &pBot);
    qboolean (*can_notice_combat_target)(const bot_t &pBot,
       const edict_t *target);
+   qboolean (*should_preserve_pickup)(const bot_t &pBot,
+      const edict_t *pickup);
+   qboolean (*allow_waypoint)(bot_t &pBot, int waypoint_index,
+      const char *context);
+   void (*apply_movement_safety)(bot_t &pBot);
+   int (*preferred_weapon)(const bot_t &pBot, float target_distance);
 } map_profile_t;
 
 void MapProfileReset(void);
@@ -43,6 +49,12 @@ qboolean MapProfileShouldSuppressCombat(const bot_t &pBot);
 qboolean MapProfileShouldPrioritizeCombat(const bot_t &pBot);
 qboolean MapProfileCanNoticeCombatTarget(const bot_t &pBot,
    const edict_t *target);
+qboolean MapProfileShouldPreservePickup(const bot_t &pBot,
+   const edict_t *pickup);
+qboolean MapProfileAllowWaypoint(bot_t &pBot, int waypoint_index,
+   const char *context);
+void MapProfileApplyMovementSafety(bot_t &pBot);
+int MapProfilePreferredWeapon(const bot_t &pBot, float target_distance);
 const char *MapProfileGetActiveName(void);
 
 #endif // MAP_PROFILE_H

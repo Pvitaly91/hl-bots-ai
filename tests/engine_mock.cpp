@@ -13,6 +13,7 @@
 #include <math.h>
 
 #include <extdll.h>
+#include <usercmd.h>
 #include <dllapi.h>
 #include <h_export.h>
 #include <meta_api.h>
@@ -34,6 +35,7 @@
 float mock_cvar_bm_gluon_mod_val = 0.0f;
 float mock_cvar_displaysoundlist_val = 0.0f;
 float mock_cvar_sv_gravity_val = 800.0f;
+int mock_last_weaponselect = -1;
 
 // ============================================================
 // Mock edict pool
@@ -377,7 +379,11 @@ static float mock_pfnCVarGetFloat(const char *szVarName)
 
 // DLL function stubs (MDLL_CmdStart/CmdEnd for UTIL_SelectWeapon)
 static void mock_pfnCmdStart(const edict_t *player, const struct usercmd_s *cmd, unsigned int random_seed)
-{ (void)player; (void)cmd; (void)random_seed; }
+{
+   (void)player;
+   (void)random_seed;
+   mock_last_weaponselect = cmd != NULL ? cmd->weaponselect : -1;
+}
 static void mock_pfnCmdEnd(const edict_t *player)
 { (void)player; }
 
@@ -526,6 +532,7 @@ void mock_reset(void)
    mock_cvar_bm_gluon_mod_val = 0.0f;
    mock_cvar_displaysoundlist_val = 0.0f;
    mock_cvar_sv_gravity_val = 800.0f;
+   mock_last_weaponselect = -1;
 
    // Clear extern globals
    memset(bots, 0, sizeof(bots));

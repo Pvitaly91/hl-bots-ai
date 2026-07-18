@@ -203,6 +203,44 @@ qboolean MapProfileCanNoticeCombatTarget(const bot_t &pBot,
 }
 
 
+qboolean MapProfileShouldPreservePickup(const bot_t &pBot,
+   const edict_t *pickup)
+{
+   const map_profile_t *profile = MapProfileResolve();
+
+   return profile != NULL && profile->should_preserve_pickup != NULL &&
+      profile->should_preserve_pickup(pBot, pickup);
+}
+
+
+qboolean MapProfileAllowWaypoint(bot_t &pBot, int waypoint_index,
+   const char *context)
+{
+   const map_profile_t *profile = MapProfileResolve();
+
+   return profile == NULL || profile->allow_waypoint == NULL ||
+      profile->allow_waypoint(pBot, waypoint_index, context);
+}
+
+
+void MapProfileApplyMovementSafety(bot_t &pBot)
+{
+   const map_profile_t *profile = MapProfileResolve();
+
+   if (profile != NULL && profile->apply_movement_safety != NULL)
+      profile->apply_movement_safety(pBot);
+}
+
+
+int MapProfilePreferredWeapon(const bot_t &pBot, float target_distance)
+{
+   const map_profile_t *profile = MapProfileResolve();
+
+   return profile != NULL && profile->preferred_weapon != NULL ?
+      profile->preferred_weapon(pBot, target_distance) : 0;
+}
+
+
 const char *MapProfileGetActiveName(void)
 {
    const map_profile_t *profile = MapProfileResolve();

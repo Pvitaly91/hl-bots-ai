@@ -1376,6 +1376,39 @@ static qboolean HaveRoomForThrow(bot_t & pBot)
 }
 
 
+static qboolean HaveRoomForMP5Grenade(bot_t &pBot, float launch_angle)
+{
+   if (pBot.pEdict == NULL || pBot.pBotEnemy == NULL)
+      return FALSE;
+
+   const Vector muzzle = GetGunPosition(pBot.pEdict);
+   const Vector enemy_aim =
+      pBot.pBotEnemy->v.origin + pBot.pBotEnemy->v.view_ofs;
+   TraceResult trace;
+   UTIL_TraceMove(muzzle, enemy_aim, ignore_monsters,
+      pBot.pEdict, &trace);
+   if (trace.flFraction <= 0.999999f && trace.pHit != pBot.pBotEnemy)
+      return FALSE;
+
+   Vector launch_angles = UTIL_VecToAngles(
+      pBot.pBotEnemy->v.origin - muzzle);
+   launch_angles.x = launch_angle;
+   const Vector launch_direction = UTIL_AnglesToForward(launch_angles);
+   float corridor_distance =
+      (pBot.pBotEnemy->v.origin - muzzle).Length() * 0.25f;
+   if (corridor_distance < 96.0f)
+      corridor_distance = 96.0f;
+   else if (corridor_distance > 160.0f)
+      corridor_distance = 160.0f;
+
+   UTIL_TraceMove(muzzle,
+      muzzle + launch_direction * corridor_distance,
+      ignore_monsters, pBot.pEdict, &trace);
+   return trace.flFraction > 0.999999f ||
+      trace.pHit == pBot.pBotEnemy;
+}
+
+
 //
 static qboolean CheckWeaponFireConditions(bot_t & pBot, const bot_weapon_select_t &select, qboolean &use_primary, qboolean &use_secondary)
 {
@@ -1396,19 +1429,17 @@ static qboolean CheckWeaponFireConditions(bot_t & pBot, const bot_weapon_select_
    else if (select.iId == VALVE_WEAPON_MP5 && use_secondary)
    {
       qboolean ok = FALSE;
+      Vector v_enemy =
+         pBot.pBotEnemy->v.origin - GetGunPosition(pEdict);
+      float angle = ValveWeaponMP5_GetBestLaunchAngleByDistanceAndHeight(
+         v_enemy.Length(), v_enemy.z);
 
-      if(HaveRoomForThrow(pBot))
+      if(angle >= -89.0 && angle <= 89.0 &&
+         HaveRoomForMP5Grenade(pBot, angle))
       {
-         // setup bot aim angle by distance and height to enemy
-         Vector v_enemy = pBot.pBotEnemy->v.origin - GetGunPosition(pEdict);
-
-         float angle = ValveWeaponMP5_GetBestLaunchAngleByDistanceAndHeight(v_enemy.Length(), v_enemy.z);
-         if(angle >= -89.0 && angle <= 89.0)
-         {
-            pBot.b_set_special_shoot_angle = TRUE;
-            pBot.f_special_shoot_angle = angle;
-            ok = TRUE;
-         }
+         pBot.b_set_special_shoot_angle = TRUE;
+         pBot.f_special_shoot_angle = angle;
+         ok = TRUE;
       }
 
       if(!ok)
@@ -3118,7 +3149,7 @@ static qboolean BotFireWeaponFallbackSearch(bot_t &pBot, const bot_weapon_select
 // Spend carried MP5 grenades before ordinary current/random weapon selection.
 static qboolean BotFireWeaponTryPrioritizedMP5Grenade(bot_t &pBot, const bot_weapon_select_t *pSelect, const bot_fire_delay_t *pDelay, float distance, float height, int weapon_choice)
 {
-   if(weapon_choice != 0 ||
+   if((weapon_choice != 0 && weapon_choice != VALVE_WEAPON_MP5) ||
       !BotIsCarryingWeapon(pBot, VALVE_WEAPON_MP5) ||
       pBot.b_in_water)
       return FALSE;
@@ -3130,10 +3161,9 @@ static qboolean BotFireWeaponTryPrioritizedMP5Grenade(bot_t &pBot, const bot_wea
 
    if(pSelect[select_index].iId != VALVE_WEAPON_MP5 ||
       !IsValidWeaponChoose(pBot, pSelect[select_index]) ||
-      !IsValidToFireAtTheMoment(pBot, pSelect[select_index]) ||
-      !BotSkilledEnoughForSecondaryAttack(pBot, pSelect[select_index]) ||
-      !IsValidSecondaryAttack(pBot, pSelect[select_index], distance, height, FALSE) ||
-      !HaveRoomForThrow(pBot))
+       !IsValidToFireAtTheMoment(pBot, pSelect[select_index]) ||
+       !BotSkilledEnoughForSecondaryAttack(pBot, pSelect[select_index]) ||
+       !IsValidSecondaryAttack(pBot, pSelect[select_index], distance, height, FALSE))
       return FALSE;
 
    Vector v_actual_enemy =
@@ -3142,6 +3172,8 @@ static qboolean BotFireWeaponTryPrioritizedMP5Grenade(bot_t &pBot, const bot_wea
       v_actual_enemy.Length(), v_actual_enemy.z);
 
    if(launch_angle < -89.0f || launch_angle > 89.0f)
+      return FALSE;
+   if(!HaveRoomForMP5Grenade(pBot, launch_angle))
       return FALSE;
 
    qboolean use_primary =
@@ -3202,6 +3234,9 @@ static qboolean BotFireWeapon(const Vector & v_enemy, bot_t &pBot, int weapon_ch
    float distance = v_enemy.Length();  // how far away is the enemy?
    float height = v_enemy.z; // how high is enemy?
 
+   if (weapon_choice == 0)
+      weapon_choice = MapProfilePreferredWeapon(pBot, distance);
+
    if(weapon_choice == 0 && BotShouldUseCrowbarAtCloseRange(pBot, distance))
       weapon_choice = VALVE_WEAPON_CROWBAR;
 
@@ -3216,7 +3251,10 @@ static qboolean BotFireWeapon(const Vector & v_enemy, bot_t &pBot, int weapon_ch
    if (BotFireWeaponHandleCharging(pBot, pSelect, pDelay, FALSE))
       return TRUE;
 
-   if (BotFireWeaponHandleCrossbowZoomExit(
+   // An explicit profile choice is authoritative. Do not spend the frame
+   // toggling the old crossbow zoom when the bot must switch weapons now.
+   if ((weapon_choice == 0 || weapon_choice == VALVE_WEAPON_CROSSBOW) &&
+       BotFireWeaponHandleCrossbowZoomExit(
           pBot, pSelect, distance, height))
       return TRUE;
 

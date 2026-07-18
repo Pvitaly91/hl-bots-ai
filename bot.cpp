@@ -1223,8 +1223,12 @@ static qboolean BotIsInSpawnWeaponSearchWindow(const bot_t &pBot);
 
 static qboolean BotFindItemCheckExpiry(bot_t &pBot)
 {
+   const qboolean preserve_profile_pickup = pBot.pBotPickupItem != NULL &&
+      MapProfileShouldPreservePickup(pBot, pBot.pBotPickupItem);
+
    // forget about our item if it's been five seconds
-   if (pBot.f_last_item_found > 0 && pBot.f_last_item_found + 5.0 < gpGlobals->time)
+   if (!preserve_profile_pickup && pBot.f_last_item_found > 0 &&
+       pBot.f_last_item_found + 5.0 < gpGlobals->time)
    {
       pBot.f_find_item = gpGlobals->time + 2.0;
       pBot.f_last_item_found = -1;
@@ -1232,7 +1236,7 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
    }
 
    // Reconsider a coordinated target when a visible, closer bot committed to it.
-   if (pBot.pBotPickupItem &&
+   if (!preserve_profile_pickup && pBot.pBotPickupItem &&
        BotFindItemClaimedByVisibleBot(pBot, pBot.pBotPickupItem))
    {
       pBot.f_last_item_found = -1;
@@ -1240,7 +1244,8 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
    }
 
    // forget about item if it we picked it up
-   if (pBot.pBotPickupItem && ((pBot.pBotPickupItem->v.effects & EF_NODRAW) ||
+   if (!preserve_profile_pickup && pBot.pBotPickupItem &&
+      ((pBot.pBotPickupItem->v.effects & EF_NODRAW) ||
       pBot.pBotPickupItem->v.frame > 0 ||
       !BotEntityIsVisible(pBot, UTIL_GetOriginWithExtent(pBot, pBot.pBotPickupItem))))
    {
@@ -1248,7 +1253,7 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
       pBot.pBotPickupItem = NULL;
    }
 
-   if (pBot.pBotPickupItem)
+   if (pBot.pBotPickupItem && !preserve_profile_pickup)
    {
       bot_ammo_need_info_t ammo_info;
       bot_ammo_need_t ammo_need = BotFindItemGetAmmoSourceNeed(pBot,
@@ -1271,6 +1276,11 @@ static qboolean BotFindItemCheckExpiry(bot_t &pBot)
          pBot.pBotPickupItem = NULL;
       }
    }
+
+   // The active map profile owns both this target and its route. Generic
+   // item discovery must not replace it while the profile keeps it valid.
+   if (preserve_profile_pickup)
+      return TRUE;
 
    if (pBot.f_find_item > gpGlobals->time)
       return TRUE;
@@ -2714,8 +2724,11 @@ static void BotWanderFreeRoam(bot_t &pBot, float moved_distance)
 
    const qboolean force_weapon_route = pBot.pBotEnemy != NULL &&
       pBot.b_only_has_weak_weapons && !BotHasPriorityWeaponPickup(pBot);
+   const qboolean force_profile_route = pBot.pBotPickupItem != NULL &&
+      MapProfileShouldPreservePickup(pBot, pBot.pBotPickupItem);
 
-   if ((pBot.pBotPickupItem == NULL || force_weapon_route) &&
+   if ((pBot.pBotPickupItem == NULL || force_weapon_route ||
+        force_profile_route) &&
        (pBot.f_look_for_waypoint_time <= gpGlobals->time) &&
        (num_waypoints != 0))
    {
@@ -3055,13 +3068,13 @@ static void BotDoStrafe_AlignWithTarget(bot_t &pBot, const Vector &target)
    else if(angle_diff > 45.0f)
    {
       // strafe on left
-      pBot.f_strafe_direction = 1.0;
+      pBot.f_strafe_direction = -1.0;
       pBot.f_move_direction = 1.0;
    }
    else if(angle_diff <= -45.0f)
    {
       // strafe on right
-      pBot.f_strafe_direction = -1.0;
+      pBot.f_strafe_direction = 1.0;
       pBot.f_move_direction = 1.0;
    }
    else
@@ -3239,8 +3252,9 @@ static qboolean BotDoStrafeGoalDirectedCombat(bot_t &pBot)
    qboolean has_movement_target = FALSE;
 
    if ((pBot.movement_mode == BOT_MOVE_WEAK_PHYSICAL_PICKUP ||
-        pBot.movement_mode == BOT_MOVE_PRIORITY_AMMO_PICKUP) &&
-       BotHasPriorityCombatPickup(pBot))
+         pBot.movement_mode == BOT_MOVE_PRIORITY_AMMO_PICKUP) &&
+       BotHasPriorityCombatPickup(pBot) &&
+       pBot.wpt_goal_type != WPT_GOAL_GAUSS_HOLD)
    {
       movement_target = pBot.pBotPickupItem->v.origin;
       has_movement_target = TRUE;
@@ -4063,6 +4077,7 @@ static void BotThinkFinalizeMovement(bot_t &pBot)
    edict_t *pEdict = pBot.pEdict;
    float f_strafe_speed;
 
+   MapProfileApplyMovementSafety(pBot);
    BotGaussAuditAttackButtons(pBot);
 
    // save the previous speed (for checking if stuck)

@@ -2,6 +2,21 @@
 
 Use this checklist before spending a real human session on the control-vs-treatment workflow.
 
+## Crossfire Satellite Gauss Stronghold
+
+The production `crossfire` profile contains a persistent capacity-one Satellite Operations Gauss defender. No additional cvar is required. The role keeps the bot on the second floor, performs local Gauss/health/armor/fallback resupply, attacks through waypoints `99/100`, and refuses movement goals into the central yard. A Crossfire strike always clears the role and restores bunker/shaft evacuation.
+
+Operational checks after deploying a build that contains Prompt 10:
+
+- Confirm `map crossfire`, 12 bots, and `jk_ai_balance_enabled 0`.
+- Confirm the plugin marker and SHA-256 match the committed production build and preserve the timestamped previous-plugin backup.
+- Keep `jk_botti bot_trace 0` and server logging off during normal operation. If temporary trace is enabled to diagnose `gauss_stronghold_*` transitions, return both settings to off afterward.
+- Do not deploy the validation binary and do not expect `ammo_validation` or entity-control commands on production. Their absence is a production safety check.
+- During observation, distinguish prevention counters from failures: `window_jumps_prevented` and `window_exit_prevented` count blocked attempts; `unexpected_zone_exits` and `recoil_falls` must remain zero.
+- On uranium depletion, expect `RESUPPLY_GAUSS` or `WAIT_RESPAWN`, local crossbow/MP5 fallback, then `RETURN_TO_WINDOW`; Glock must not trigger an exit.
+- On low armor or health, expect waypoint `58` batteries or waypoint `45` health charger use followed by return to `99/100`.
+- During strike, expect `gauss_stronghold_left: reason=strike`, the local pickup to clear, and an existing bunker/shaft goal to take over immediately.
+
 ## Product-Minimum Public Server Mode
 
 Use the public launcher when the goal is a usable public `crossfire` server, not a control/treatment evidence session:

@@ -208,6 +208,23 @@ static void trace_partial_hit(const float *v1, const float *v2,
    ptr->vecEndPos[2] = (v1[2] + v2[2]) / 2;
 }
 
+
+// Simulate a window sill: lower body traces are blocked, while the weapon's
+// muzzle and launch corridor through the opening remain clear.
+static void trace_low_blocked_muzzle_clear(const float *v1, const float *v2,
+                                           int fNoMonsters, int hullNumber,
+                                           edict_t *pentToSkip,
+                                           TraceResult *ptr)
+{
+   if (v1[2] <= 0.0f)
+   {
+      trace_partial_hit(v1, v2, fNoMonsters, hullNumber, pentToSkip, ptr);
+      return;
+   }
+
+   trace_nohit(v1, v2, fNoMonsters, hullNumber, pentToSkip, ptr);
+}
+
 // Give a bot a weapon
 static void give_bot_weapon(bot_t &pBot, int weapon_id, int clip, int ammo1, int ammo2)
 {
@@ -2634,6 +2651,37 @@ static int test_crossbow_distance_and_ammo_policy(void)
    ASSERT_INT(testbot.current_weapon_index, glock_index);
    PASS();
 
+   TEST("explicit MP5 fallback bypasses crossbow zoom-exit handling");
+   int mp5_index = -1;
+   for (int index = 0; weapon_select[index].iId; index++)
+   {
+      if (weapon_select[index].iId == VALVE_WEAPON_MP5)
+      {
+         mp5_index = index;
+         break;
+      }
+   }
+   ASSERT_TRUE(mp5_index >= 0);
+   weapon_defs[VALVE_WEAPON_MP5].iId = VALVE_WEAPON_MP5;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1 = 2;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2 = 3;
+   pBotEdict->v.weapons |= (1u << VALVE_WEAPON_MP5);
+   testbot.m_rgAmmo[2] = 50;
+   testbot.m_rgAmmo[3] = 0;
+   testbot.current_weapon_index = crossbow_index;
+   testbot.current_weapon.iId = VALVE_WEAPON_CROSSBOW;
+   testbot.f_weaponchange_time = 0.0f;
+   testbot.crossbow_zoom_request = BOT_CROSSBOW_ZOOM_NONE;
+   testbot.f_crossbow_zoom_toggle_time = 0.0f;
+   pEnemy->v.origin = Vector(500, 0, 0);
+   pBotEdict->v.fov = 20;
+   pBotEdict->v.button = 0;
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot,
+      VALVE_WEAPON_MP5), TRUE);
+   ASSERT_INT(testbot.current_weapon_index, mp5_index);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
+   PASS();
+
    return 0;
 }
 
@@ -3462,6 +3510,21 @@ static int test_mp5_secondary_attack_policy(void)
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) != 0);
    ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) == 0);
    ASSERT_INT(testbot.b_set_special_shoot_angle, FALSE);
+   PASS();
+
+   TEST("MP5 grenade uses a clear muzzle lane above a window sill");
+   pEnemy->v.origin = Vector(500, 0, 0);
+   pBotEdict->v.button = 0;
+   testbot.f_shoot_time = 0;
+   testbot.m_rgAmmo[8] = 5;
+   testbot.b_set_special_shoot_angle = FALSE;
+   mock_trace_line_fn = trace_nohit;
+   mock_trace_hull_fn = trace_low_blocked_muzzle_clear;
+   ASSERT_INT(HaveRoomForThrow(testbot), FALSE);
+   ASSERT_INT(BotFireWeapon(Vector(500, 0, 0), testbot, 0), TRUE);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK2) != 0);
+   ASSERT_TRUE((pBotEdict->v.button & IN_ATTACK) == 0);
+   ASSERT_INT(testbot.b_set_special_shoot_angle, TRUE);
    PASS();
 
    return 0;

@@ -199,7 +199,8 @@ static void BotFindWaypoint_RankByDistance( bot_t &pBot, float *min_distance, in
           (index != pBot.prev_waypoint_index[1]) &&
           (index != pBot.prev_waypoint_index[2]) &&
           (index != pBot.prev_waypoint_index[3]) &&
-          (index != pBot.prev_waypoint_index[4]))
+          (index != pBot.prev_waypoint_index[4]) &&
+          MapProfileAllowWaypoint(pBot, index, "neighbor"))
       {
          // find the distance from the bot to this waypoint
          distance = (pEdict->v.origin - waypoints[index].origin).Length();
@@ -1260,6 +1261,32 @@ static void BotFindWaypointGoal( bot_t &pBot )
 }
 
 
+static int BotHeadTowardWaypointFilterInitial(
+   bot_t &pBot, int candidate, const char *context)
+{
+   if (candidate >= 0 &&
+       MapProfileAllowWaypoint(pBot, candidate, context))
+      return candidate;
+
+   int best_index = -1;
+   float best_distance = REACHABLE_RANGE;
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      if (!MapProfileAllowWaypoint(pBot, index, context))
+         continue;
+
+      const float distance =
+         (pBot.pEdict->v.origin - waypoints[index].origin).Length();
+      if (distance < best_distance)
+      {
+         best_distance = distance;
+         best_index = index;
+      }
+   }
+   return best_index;
+}
+
+
 static qboolean BotHeadTowardWaypointFindInitial(bot_t &pBot)
 {
    edict_t *pEdict = pBot.pEdict;
@@ -1278,6 +1305,8 @@ static qboolean BotHeadTowardWaypointFindInitial(bot_t &pBot)
       // find the nearest reachable waypoint
       i = WaypointFindReachable(pEdict, REACHABLE_RANGE);
    }
+
+   i = BotHeadTowardWaypointFilterInitial(pBot, i, "initial");
 
    if (i == -1)
    {
@@ -1378,6 +1407,8 @@ static qboolean BotHeadTowardWaypointCheckVisibility(bot_t &pBot)
       // find the nearest reachable waypoint
       i = WaypointFindReachable(pEdict, REACHABLE_RANGE);
    }
+
+   i = BotHeadTowardWaypointFilterInitial(pBot, i, "visibility");
 
    if (i == -1)
    {
@@ -1543,6 +1574,18 @@ static qboolean BotHeadTowardWaypointCheckUnderwaterExit(bot_t &pBot)
 static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoint_found)
 {
    int i;
+   qboolean profile_blocked_route = FALSE;
+
+   if (pBot.waypoint_goal >= 0 &&
+       !MapProfileAllowWaypoint(pBot, pBot.waypoint_goal, "goal"))
+   {
+      BotTrace(pBot, "map profile rejected goal: type=%s wpt=%d",
+         BotTraceGoalTypeName(pBot.wpt_goal_type), pBot.waypoint_goal);
+      pBot.waypoint_goal = -1;
+      pBot.wpt_goal_type = WPT_GOAL_NONE;
+      pBot.f_waypoint_goal_time = 0.0f;
+      MapProfileEnsureStrategicGoal(pBot);
+   }
 
    if (pBot.wpt_goal_type == WPT_GOAL_AMMO &&
        !BotAmmoWaypointGoalStillNeeded(pBot))
@@ -1607,6 +1650,22 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
       // get the next waypoint to reach goal...
       i = WaypointRouteFromTo(pBot.curr_waypoint_index, pBot.waypoint_goal);
 
+      if (i != WAYPOINT_UNREACHABLE &&
+          !MapProfileAllowWaypoint(pBot, i, "route"))
+      {
+         profile_blocked_route = TRUE;
+         BotTrace(pBot, "map profile rejected route node: wpt=%d goal=%d",
+            i, pBot.waypoint_goal);
+         MapProfileEnsureStrategicGoal(pBot);
+         i = WaypointRouteFromTo(
+            pBot.curr_waypoint_index, pBot.waypoint_goal);
+         if (i != WAYPOINT_UNREACHABLE &&
+             !MapProfileAllowWaypoint(pBot, i, "route"))
+            i = WAYPOINT_UNREACHABLE;
+         else if (i != WAYPOINT_UNREACHABLE)
+            profile_blocked_route = FALSE;
+      }
+
       if (i != WAYPOINT_UNREACHABLE)  // can we get to the goal from here?
       {
          waypoint_found = TRUE;
@@ -1621,6 +1680,9 @@ static qboolean BotHeadTowardWaypointFindNextRoute(bot_t &pBot, qboolean waypoin
          pBot.f_waypoint_time = gpGlobals->time;
       }
    }
+
+   if (profile_blocked_route)
+      return FALSE;
 
    if (waypoint_found == FALSE)
    {

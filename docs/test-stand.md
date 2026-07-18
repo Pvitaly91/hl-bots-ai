@@ -1,10 +1,53 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-84
+HLDM-JKBOTTI-AI-STAND-20260415-10
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
+
+## Prompt 10: Satellite Operations Gauss Stronghold
+
+Prompt 10 replaces the short-lived Satellite Operations Gauss hold with a persistent, capacity-one stronghold role in the `crossfire` map profile. The original failure was confirmed in tests: `CrossfireTacticsPrecisionHoldCancellationReason` returned `no_ammo`; `CrossfireTacticsClearPrecisionHold` then cleared the hold and `pBotPickupItem`; generic goals and routes could subsequently select lower-floor, yard, jump, or window-drop waypoints. Hold expiry and no-target timeout created the same escape path.
+
+The authoritative stronghold geometry is:
+
+- bounds: `X [-1040,-640]`, `Y [128,1340]`, `Z [-1540,-1450]`
+- floor/firing height: approximately `Z -1536` for map pickups and `Z -1500` for bot waypoint origins
+- firing positions: waypoints `99` and `100` near `(-735.6,592.4,-1500)`
+- interior route/bridge nodes: `101`, `102`, `103`, `227`, and `295`
+- local resource positions: health charger waypoint `45`, Gauss and uranium waypoint `47`, MP5 and AR grenades waypoint `48`, crossbow waypoint `49`, batteries waypoint `58`
+- known lower/outside route nodes rejected by the role: `36`, `37`, `40`, `104-112`, `197`, `224`, and `282`; jump, long-jump, ladder, lift, floor-drop, and unsupported-window candidates are also rejected generically
+
+The map entity evidence used by the profile is:
+
+- `weapon_gauss` at `(-976,608,-1520)` and `ammo_gaussclip` at `(-944,608,-1520)`; runtime pickup origins resolve at `Z -1536`
+- `weapon_9mmAR` at `(-960,1280,-1520)` and `ammo_ARgrenades` at `(-976,1248,-1520)`
+- `weapon_crossbow` at `(-688,944,-1520)`
+- `item_battery` at `(-712,280,-1520)` and `(-680,280,-1520)`
+- local `func_healthcharger` brush model `*41`, bounds `(-848,256,-1504)` to `(-816,264,-1456)`, centered at `(-832,260,-1480)`
+- the controller also recognizes local `ammo_uranium`, `item_healthkit`, and `func_recharge` entities if a compatible map version supplies them
+
+The persistent state machine is `NONE -> APPROACH -> WINDOW_HOLD`, with local branches through `RESUPPLY_GAUSS`, `RESUPPLY_HEALTH`, `RESUPPLY_ARMOR`, `ACQUIRE_FALLBACK`, `WAIT_RESPAWN`, `RETURN_TO_WINDOW`, and `LOCAL_COVER`. Zero uranium, no target, expired legacy hold time, fallback switching, low armor, and low health do not clear the role. Death, map reset, administrative reset, true whole-zone unreachability, or strike can clear it. Strike remains an immediate authoritative transition to existing bunker/shaft behavior.
+
+Zone lock is applied to initial waypoint selection, route nodes, generic goals, pickups, and final movement. A projected human hull and floor trace guards direct pickup movement; bridge routing handles room dividers; the current waypoint is re-anchored when a direct local pickup takes over. Final movement suppresses outward jump/forward/strafe motion when projected support is missing, and Gauss recoil selection checks safe projected lanes. Enemies in the yard remain aim/fire targets but cannot pull the bot out of the room.
+
+Controlled validation A-H ran on the isolated Linux validation container at `27017`, with 12 bots, no AI balance, and a validation-only binary that is never deployed:
+
+- A: Gauss secondary charged and released through a window without enemy locomotion or an actual exit.
+- B: uranium depleted to zero, `ammo_gaussclip` entity `154` was selected at waypoint `47`, ammo changed `0 -> 33`, and the bot returned to waypoint `99/100` with Gauss selected.
+- C: inactive uranium/Gauss produced `WAIT_RESPAWN`; crossbow was used while waiting; respawned ammo changed `0 -> 53`; the bot returned to the window and restored Gauss.
+- D: local battery entity `179` at waypoint `58` changed armor `15 -> 30`, followed by return-to-window.
+- E: local health charger entity `152` at waypoint `45` changed health `30 -> 75`, followed by return-to-window.
+- F: an enemy below the window was attacked with Gauss secondary; no lower route, outward jump, actual zone exit, or recoil fall occurred.
+- G: zero uranium selected crossbow for a distant target, MP5 for a medium target, and fired one safe MP5 secondary grenade without leaving the zone.
+- H: strike cleared the role and pickup, assigned bunker waypoint `165`, and moved the bot through waypoint `111` outside the room toward evacuation.
+
+The controlled aggregate ended with one entry, `162.7` stronghold-seconds, three ammo pickups, four wait transitions, one health pickup, two armor pickups, two crossbow and two MP5 fallback transitions, nine returns, 106 prevented enemy pursuits, zero unexpected exits, zero recoil falls, and one strike exit. The reported `window_jumps` value is a prevention counter, not an actual jump count; actual window jumps were zero. Gauss decision accounting was `9` opportunities, `9` starts, `9` releases, and `0` unexplained primary fallbacks.
+
+The independent natural soak ran for `1200.0` seconds with 12 bots and no loadout, entity, enemy, spawn, or teleport injection. It recorded two entries, `245.4` stronghold-seconds, two health pickups, four armor pickups, five returns, 96 prevented enemy pursuits, 43 prevented outward jump attempts, zero unexpected exits, zero actual window jumps, zero recoil falls, and two successful strike exits. Gauss accounting recorded 18 opportunities, 18 starts, 18 releases, 73 waits, and zero unexplained primary use. Natural play did not deplete uranium or need crossbow/MP5 fallback during this sample; those branches are proven by controlled B/C/G and are not over-claimed as natural events.
+
+Required focused Linux tests passed for `test_map_profile_crossfire`, `test_bot_navigate`, `test_bot`, `test_bot_combat`, `test_bot_weapons`, and `test_bot_trace`. The full clean i386/SSE3 suite passed, including the final `test_bot` `213/213` and Crossfire map-profile `32/32` totals. Visual Studio `Release|Win32` also builds `jk_botti_mm.dll` successfully.
 
 ## One-Command Test Launch
 

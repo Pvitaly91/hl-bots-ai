@@ -32,6 +32,7 @@ void mock_add_breakable(edict_t *pEdict, int material_breakable);
 extern float mock_cvar_bm_gluon_mod_val;
 extern float mock_cvar_displaysoundlist_val;
 extern float mock_cvar_sv_gravity_val;
+extern int mock_last_weaponselect;
 
 // Control what TRACE_HULL / TRACE_LINE return
 typedef void (*mock_trace_fn)(const float *v1, const float *v2,
