@@ -2,20 +2,24 @@
 
 Use this checklist before spending a real human session on the control-vs-treatment workflow.
 
-## Crossfire Satellite Gauss Stronghold
+## Crossfire Satellite Recruitment and Gauss Stronghold
 
-The production `crossfire` profile contains a persistent capacity-one Satellite Operations Gauss defender. No additional cvar is required. The role keeps the bot on the second floor, performs local Gauss/health/armor/fallback resupply, attacks through waypoints `99/100`, and refuses movement goals into the central yard. A Crossfire strike always clears the role and restores bunker/shaft evacuation.
+The production `crossfire` profile contains a deterministic one-life recruitment path into the persistent capacity-one Satellite Operations Gauss defender role. No additional cvar is required. Nearby exterior and first-floor bots have a 70% volunteer decision, one owner follows the safe indoor route, and standby volunteers continue normal play until replacement is needed. The persistent role keeps the owner on the second floor, performs local Gauss/health/armor/fallback resupply, attacks through waypoints `99/100`, and refuses movement goals into the central yard. A Crossfire strike always clears recruitment and restores bunker/shaft evacuation.
 
-Operational checks after deploying a build that contains Prompt 10:
+Operational checks after deploying a build that contains Prompt 11:
 
 - Confirm `map crossfire`, 12 bots, and `jk_ai_balance_enabled 0`.
 - Confirm the plugin marker and SHA-256 match the committed production build and preserve the timestamped previous-plugin backup.
-- Keep `jk_botti bot_trace 0` and server logging off during normal operation. If temporary trace is enabled to diagnose `gauss_stronghold_*` transitions, return both settings to off afterward.
+- Keep `jk_botti bot_trace 0` and server logging off during normal operation. If temporary trace is enabled to diagnose `satellite_recruit_*` or `gauss_stronghold_*` transitions, return both settings to off afterward.
 - Do not deploy the validation binary and do not expect `ammo_validation` or entity-control commands on production. Their absence is a production safety check.
+- Expect at most one assigned approacher across exterior waypoint `112`, first-floor waypoint `128`, the internal stair anchors, and stronghold waypoint `45`; standby volunteers must not crowd the stairs.
+- A declined bot must not reroll after leaving and re-entering the recruitment bounds in the same life. Death/new spawn permits a new roll; a strike does not reroll the current life.
+- During approach, enemies may be attacked but must not replace `gauss_hold` movement, and external weapon/ammo pickups must not pull the owner into the central yard.
+- A bot does not need Gauss before assignment. After arrival it should use local waypoint `47`, wait there if necessary, then move to firing waypoint `99/100` without releasing the reservation.
 - During observation, distinguish prevention counters from failures: `window_jumps_prevented` and `window_exit_prevented` count blocked attempts; `unexpected_zone_exits` and `recoil_falls` must remain zero.
 - On uranium depletion, expect `RESUPPLY_GAUSS` or `WAIT_RESPAWN`, local crossbow/MP5 fallback, then `RETURN_TO_WINDOW`; Glock must not trigger an exit.
 - On low armor or health, expect waypoint `58` batteries or waypoint `45` health charger use followed by return to `99/100`.
-- During strike, expect `gauss_stronghold_left: reason=strike`, the local pickup to clear, and an existing bunker/shaft goal to take over immediately.
+- During strike, expect `satellite_recruit_released: reason=strike` and `gauss_stronghold_left: reason=strike`, the local pickup to clear, and an existing bunker/shaft goal to take over immediately.
 
 ## Product-Minimum Public Server Mode
 

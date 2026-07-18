@@ -114,6 +114,36 @@ static const float CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_CRITICAL = 40.0f;
 static const float CROSSFIRE_GAUSS_STRONGHOLD_HEALTH_LOW = 75.0f;
 static const float CROSSFIRE_GAUSS_STRONGHOLD_ARMOR_LOW = 60.0f;
 static const int CROSSFIRE_SATELLITE_GAUSS_STRONGHOLD_CAPACITY = 1;
+static const int CROSSFIRE_SATELLITE_RECRUIT_PERCENT = 70;
+static const float CROSSFIRE_SATELLITE_RECRUIT_MIN_X = -1250.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_MAX_X = -320.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_MIN_Y = -360.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_MAX_Y = 1560.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_MIN_Z = -1840.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_MAX_Z = -1450.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_ROUTE_DISTANCE = 1400.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_PHYSICAL_DISTANCE = 1200.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_WAYPOINT_RADIUS = 96.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_STAGE_DISTANCE = 72.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_DIRECT_DISTANCE = 40.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_APPROACH_TIMEOUT = 60.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_REASSIGN_COOLDOWN = 4.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_STRIKE_RECOVERY = 5.0f;
+static const float CROSSFIRE_SATELLITE_RECRUIT_STAIR_SPEED = 220.0f;
+static const Vector CROSSFIRE_SATELLITE_EXTERIOR_ENTRY(
+   -555.3f, 360.9f, -1660.0f);
+static const Vector CROSSFIRE_SATELLITE_FIRST_FLOOR_ENTRY(
+   -666.7f, 251.2f, -1668.0f);
+static const Vector CROSSFIRE_SATELLITE_FIRST_FLOOR_CORRIDOR(
+   -704.0f, 192.0f, -1660.0f);
+static const Vector CROSSFIRE_SATELLITE_STAIR_ENTRY(
+   -832.0f, -16.0f, -1644.0f);
+static const Vector CROSSFIRE_SATELLITE_STAIR_MIDDLE(
+   -832.0f, 86.0f, -1580.0f);
+static const Vector CROSSFIRE_SATELLITE_SECOND_FLOOR_LANDING(
+   -832.0f, 176.0f, -1516.0f);
+static const Vector CROSSFIRE_SATELLITE_STRONGHOLD_ENTRY(
+   -833.0f, 319.0f, -1500.0f);
 static const int CROSSFIRE_GAUSS_STRONGHOLD_MAX_RESOURCES = 32;
 static const int CROSSFIRE_MAX_MAIN_DOORS = 4;
 static const int AMBIENT_SOUND_STOP_FLAG = (1 << 5);
@@ -229,12 +259,31 @@ static float g_crossfire_gauss_stronghold_next_summary[32];
 static float g_crossfire_gauss_stronghold_next_window_change[32];
 static qboolean g_crossfire_gauss_stronghold_was_inside[32];
 static float g_crossfire_gauss_stronghold_next_guard_trace[32];
+static int g_crossfire_satellite_recruit_state[32];
+static int g_crossfire_satellite_recruit_roll[32];
+static unsigned int g_crossfire_satellite_spawn_epoch[32];
+static float g_crossfire_satellite_observed_spawn_time[32];
+static qboolean g_crossfire_satellite_was_in_zone[32];
+static float g_crossfire_satellite_route_distance[32];
+static float g_crossfire_satellite_assignment_score[32];
+static float g_crossfire_satellite_approach_start_time[32];
+static float g_crossfire_satellite_retry_time[32];
+static int g_crossfire_satellite_anchor_step[32];
+static float g_crossfire_satellite_last_standby_trace[32];
+static qboolean g_crossfire_satellite_gauss_counted[32];
+static int g_crossfire_satellite_owner = -1;
+static unsigned int g_crossfire_satellite_map_epoch = 0;
+static float g_crossfire_satellite_recovery_time = 0.0f;
+static float g_crossfire_satellite_next_summary = 0.0f;
+static qboolean g_crossfire_satellite_had_owner = FALSE;
 static crossfire_gauss_stronghold_resource_t
    g_crossfire_gauss_stronghold_resources
       [CROSSFIRE_GAUSS_STRONGHOLD_MAX_RESOURCES];
 static int g_crossfire_gauss_stronghold_resource_count = 0;
 static crossfire_gauss_stronghold_stats_t
    g_crossfire_gauss_stronghold_stats;
+static crossfire_satellite_recruit_stats_t
+   g_crossfire_satellite_recruit_stats;
 static float g_crossfire_gauss_stronghold_stats_time = 0.0f;
 
 static void CrossfireTacticsReset(void);
@@ -272,6 +321,15 @@ static qboolean CrossfireTacticsAllowWaypoint(
 static void CrossfireTacticsApplyMovementSafety(bot_t &pBot);
 static int CrossfireTacticsPreferredWeapon(
    const bot_t &pBot, float target_distance);
+static void CrossfireTacticsUpdateSatelliteRecruitment(void);
+static qboolean CrossfireTacticsEnsureSatelliteRecruitGoal(
+   bot_t &pBot, int bot_index);
+static qboolean CrossfireTacticsHandleSatelliteRecruitMovement(
+   bot_t &pBot, int bot_index);
+static qboolean CrossfireTacticsIsSatelliteRecruitApproach(int bot_index);
+static void CrossfireTacticsReleaseSatelliteRecruitment(
+   int bot_index, const char *reason);
+static void CrossfireTacticsTraceSatelliteRecruitSummary(void);
 
 
 static qboolean CrossfireTacticsIsCrossfire(void)
@@ -338,6 +396,18 @@ static const char *CrossfireTacticsGaussStrongholdStageName(int stage)
    switch (stage)
    {
       case CROSSFIRE_GAUSS_STRONGHOLD_APPROACH: return "approach";
+      case CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR:
+         return "recruit_exterior";
+      case CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING:
+         return "recruit_enter_building";
+      case CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR:
+         return "recruit_first_floor";
+      case CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR:
+         return "recruit_stairs";
+      case CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD:
+         return "recruit_enter_stronghold";
+      case CROSSFIRE_GAUSS_RECRUIT_ACQUIRE_GAUSS:
+         return "recruit_acquire_gauss";
       case CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD: return "window_hold";
       case CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_GAUSS: return "resupply_gauss";
       case CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_HEALTH: return "resupply_health";
@@ -416,11 +486,22 @@ static qboolean CrossfireTacticsIsGaussStrongholdReserved(int bot_index)
 }
 
 
+static qboolean CrossfireTacticsIsSatelliteRecruitApproach(int bot_index)
+{
+   return bot_index >= 0 && bot_index < 32 &&
+      g_crossfire_gauss_stronghold_stage[bot_index] >=
+         CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR &&
+      g_crossfire_gauss_stronghold_stage[bot_index] <=
+         CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD;
+}
+
+
 static qboolean CrossfireTacticsIsGaussStrongholdPersistent(int bot_index)
 {
    return CrossfireTacticsIsGaussStrongholdReserved(bot_index) &&
       g_crossfire_gauss_stronghold_stage[bot_index] !=
-         CROSSFIRE_GAUSS_STRONGHOLD_APPROACH;
+         CROSSFIRE_GAUSS_STRONGHOLD_APPROACH &&
+      !CrossfireTacticsIsSatelliteRecruitApproach(bot_index);
 }
 
 
@@ -444,6 +525,58 @@ void MapProfileCrossfireGetGaussStrongholdStats(
 {
    if (stats != NULL)
       *stats = g_crossfire_gauss_stronghold_stats;
+}
+
+
+int MapProfileCrossfireSatelliteRecruitRoll(
+   int bot_index, unsigned int spawn_epoch, unsigned int map_epoch)
+{
+   unsigned int value = 0x9e3779b9u;
+   value ^= (unsigned int)(bot_index + 1) * 0x85ebca6bu;
+   value ^= spawn_epoch * 0xc2b2ae35u;
+   value ^= map_epoch * 0x27d4eb2fu;
+   value ^= value >> 16;
+   value *= 0x7feb352du;
+   value ^= value >> 15;
+   value *= 0x846ca68bu;
+   value ^= value >> 16;
+   return (int)(value % 100u);
+}
+
+
+int MapProfileCrossfireSatelliteRecruitState(const bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   return bot_index >= 0 ? g_crossfire_satellite_recruit_state[bot_index] :
+      CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED;
+}
+
+
+int MapProfileCrossfireSatelliteRecruitOwner(void)
+{
+   return g_crossfire_satellite_owner;
+}
+
+
+unsigned int MapProfileCrossfireSatelliteRecruitSpawnEpoch(
+   const bot_t &pBot)
+{
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   return bot_index >= 0 ? g_crossfire_satellite_spawn_epoch[bot_index] : 0;
+}
+
+
+unsigned int MapProfileCrossfireSatelliteMapEpoch(void)
+{
+   return g_crossfire_satellite_map_epoch;
+}
+
+
+void MapProfileCrossfireGetSatelliteRecruitStats(
+   crossfire_satellite_recruit_stats_t *stats)
+{
+   if (stats != NULL)
+      *stats = g_crossfire_satellite_recruit_stats;
 }
 
 
@@ -1526,7 +1659,16 @@ static void CrossfireTacticsCompleteGaussStrongholdResource(
       if (type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_AMMO)
          g_crossfire_gauss_stronghold_stats.gauss_ammo_pickups++;
       else if (type == CROSSFIRE_STRONGHOLD_RESOURCE_GAUSS_REPICK)
+      {
          g_crossfire_gauss_stronghold_stats.gauss_repicks++;
+         if (g_crossfire_satellite_recruit_state[bot_index] ==
+                CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED &&
+             !g_crossfire_satellite_gauss_counted[bot_index])
+         {
+            g_crossfire_satellite_gauss_counted[bot_index] = TRUE;
+            g_crossfire_satellite_recruit_stats.gauss_acquisitions++;
+         }
+      }
       else if (type == CROSSFIRE_STRONGHOLD_RESOURCE_HEALTH)
          g_crossfire_gauss_stronghold_stats.health_pickups++;
       else if (type == CROSSFIRE_STRONGHOLD_RESOURCE_ARMOR)
@@ -2067,6 +2209,895 @@ static void CrossfireTacticsCompleteGaussStrongholdReturn(
 }
 
 
+static int CrossfireTacticsFindSatelliteNamedWaypoint(
+   const Vector &anchor, qboolean require_stronghold)
+{
+   int best_index = -1;
+   float best_distance = CROSSFIRE_SATELLITE_RECRUIT_WAYPOINT_RADIUS;
+
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      const WAYPOINT &waypoint = waypoints[index];
+      if (waypoint.flags & (W_FL_DELETED | W_FL_JUMP | W_FL_LONGJUMP |
+          W_FL_LADDER | W_FL_LIFT_START | W_FL_LIFT_END))
+         continue;
+      if (require_stronghold &&
+          !MapProfileCrossfireIsWaypointInsideGaussStronghold(index))
+         continue;
+
+      const float distance = (waypoint.origin - anchor).Length();
+      if (distance < best_distance)
+      {
+         best_distance = distance;
+         best_index = index;
+      }
+   }
+
+   return best_index;
+}
+
+
+static qboolean CrossfireTacticsIsInsideSatelliteRecruitBounds(
+   const Vector &origin)
+{
+   return origin.x >= CROSSFIRE_SATELLITE_RECRUIT_MIN_X &&
+      origin.x <= CROSSFIRE_SATELLITE_RECRUIT_MAX_X &&
+      origin.y >= CROSSFIRE_SATELLITE_RECRUIT_MIN_Y &&
+      origin.y <= CROSSFIRE_SATELLITE_RECRUIT_MAX_Y &&
+      origin.z >= CROSSFIRE_SATELLITE_RECRUIT_MIN_Z &&
+      origin.z <= CROSSFIRE_SATELLITE_RECRUIT_MAX_Z;
+}
+
+
+static qboolean CrossfireTacticsIsInsideSatelliteFirstFloor(
+   const Vector &origin)
+{
+   return origin.x >= -1040.0f && origin.x <= -576.0f &&
+      origin.y >= -80.0f && origin.y <= 1344.0f &&
+      origin.z >= -1735.0f && origin.z <= -1580.0f;
+}
+
+
+static qboolean CrossfireTacticsIsInsideSatelliteSecondFloor(
+   const Vector &origin)
+{
+   return origin.x >= -1040.0f && origin.x <= -576.0f &&
+      origin.y >= -80.0f && origin.y <= 1344.0f &&
+      origin.z > -1580.0f && origin.z <= -1450.0f;
+}
+
+
+static int CrossfireTacticsSatelliteSkillBucket(const bot_t &pBot)
+{
+   if (pBot.weapon_skill <= SKILL3)
+      return 0;
+   if (pBot.weapon_skill == SKILL4)
+      return 1;
+   return 2;
+}
+
+
+static void CrossfireTacticsSyncSatelliteRecruitLife(int bot_index)
+{
+   bot_t &bot = bots[bot_index];
+   const float spawn_time = bot.f_bot_spawn_time;
+   const qboolean first_observation =
+      g_crossfire_satellite_observed_spawn_time[bot_index] < -0.5f;
+   if (!first_observation &&
+       fabs(g_crossfire_satellite_observed_spawn_time[bot_index] -
+          spawn_time) <= 0.001f)
+      return;
+
+   if (!first_observation &&
+       (g_crossfire_satellite_recruit_state[bot_index] ==
+          CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED ||
+        g_crossfire_satellite_owner == bot_index))
+      CrossfireTacticsClearPrecisionHold(bot_index, "new_spawn");
+
+   g_crossfire_satellite_observed_spawn_time[bot_index] = spawn_time;
+   g_crossfire_satellite_spawn_epoch[bot_index]++;
+   if (g_crossfire_satellite_spawn_epoch[bot_index] == 0)
+      g_crossfire_satellite_spawn_epoch[bot_index] = 1;
+   g_crossfire_satellite_recruit_state[bot_index] =
+      CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED;
+   g_crossfire_satellite_recruit_roll[bot_index] = -1;
+   g_crossfire_satellite_was_in_zone[bot_index] = FALSE;
+   g_crossfire_satellite_route_distance[bot_index] =
+      WAYPOINT_MAX_DISTANCE;
+   g_crossfire_satellite_assignment_score[bot_index] = 0.0f;
+   g_crossfire_satellite_approach_start_time[bot_index] = 0.0f;
+   g_crossfire_satellite_retry_time[bot_index] = 0.0f;
+   g_crossfire_satellite_anchor_step[bot_index] = 0;
+   g_crossfire_satellite_gauss_counted[bot_index] = FALSE;
+}
+
+
+static qboolean CrossfireTacticsSatelliteRecruitLocationEligible(
+   const bot_t &pBot, float *route_distance_out, int *entry_out)
+{
+   if (pBot.pEdict == NULL)
+      return FALSE;
+
+   const int entry = CrossfireTacticsFindSatelliteNamedWaypoint(
+      CROSSFIRE_SATELLITE_EXTERIOR_ENTRY, FALSE);
+   if (entry < 0)
+      return FALSE;
+
+   const Vector &origin = pBot.pEdict->v.origin;
+   const float physical_distance =
+      (origin - waypoints[entry].origin).Length();
+   const qboolean nearby =
+      CrossfireTacticsIsInsideSatelliteRecruitBounds(origin) ||
+      physical_distance <= CROSSFIRE_SATELLITE_RECRUIT_PHYSICAL_DISTANCE;
+   if (!nearby)
+      return FALSE;
+
+   float route_distance = physical_distance;
+   if (CrossfireTacticsIsOriginInsideGaussStronghold(origin))
+      route_distance = 0.0f;
+   else if (pBot.curr_waypoint_index >= 0 &&
+            pBot.curr_waypoint_index < num_waypoints)
+   {
+      route_distance = WaypointDistanceFromTo(
+         pBot.curr_waypoint_index, entry);
+      if (route_distance >= WAYPOINT_UNREACHABLE &&
+          physical_distance <= CROSSFIRE_SATELLITE_RECRUIT_STAGE_DISTANCE)
+         route_distance = physical_distance;
+   }
+
+   if (route_distance >= WAYPOINT_UNREACHABLE ||
+       route_distance > CROSSFIRE_SATELLITE_RECRUIT_ROUTE_DISTANCE)
+      return FALSE;
+
+   if (route_distance_out != NULL)
+      *route_distance_out = route_distance;
+   if (entry_out != NULL)
+      *entry_out = entry;
+   return TRUE;
+}
+
+
+static qboolean CrossfireTacticsSatelliteRecruitBlocked(
+   const bot_t &pBot)
+{
+   if (CrossfireTacticsIsStrikeActive() ||
+       CrossfireTacticsIsBotStrikeActivator(pBot) ||
+       pBot.pEdict == NULL ||
+       pBot.pEdict->v.health <= CROSSFIRE_GAUSS_CRITICAL_HEALTH ||
+       CrossfireTacticsHasImmediateDanger(pBot) ||
+       pBot.b_on_ladder || pBot.b_in_water)
+      return TRUE;
+
+   const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   return bot_index >= 0 &&
+      g_crossfire_precision_hold_goal[bot_index] >= 0 &&
+      g_crossfire_satellite_recruit_state[bot_index] !=
+         CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED;
+}
+
+
+static qboolean CrossfireTacticsEvaluateSatelliteRecruit(
+   int bot_index, float *route_distance_out)
+{
+   bot_t &bot = bots[bot_index];
+   if (!CrossfireTacticsBotAvailable(bot_index) ||
+       g_crossfire_satellite_recruit_state[bot_index] !=
+          CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED ||
+       CrossfireTacticsSatelliteRecruitBlocked(bot))
+      return FALSE;
+
+   float route_distance = WAYPOINT_MAX_DISTANCE;
+   if (!CrossfireTacticsSatelliteRecruitLocationEligible(
+          bot, &route_distance, NULL))
+      return FALSE;
+
+   g_crossfire_satellite_was_in_zone[bot_index] = TRUE;
+   g_crossfire_satellite_route_distance[bot_index] = route_distance;
+   const int roll = MapProfileCrossfireSatelliteRecruitRoll(
+      bot_index, g_crossfire_satellite_spawn_epoch[bot_index],
+      g_crossfire_satellite_map_epoch);
+   const qboolean volunteer =
+      roll < CROSSFIRE_SATELLITE_RECRUIT_PERCENT;
+   g_crossfire_satellite_recruit_roll[bot_index] = roll;
+   g_crossfire_satellite_recruit_state[bot_index] = volunteer ?
+      CROSSFIRE_SATELLITE_RECRUIT_VOLUNTEER :
+      CROSSFIRE_SATELLITE_RECRUIT_DECLINED;
+
+   crossfire_satellite_recruit_stats_t &stats =
+      g_crossfire_satellite_recruit_stats;
+   stats.eligible_events++;
+   const int skill_bucket = CrossfireTacticsSatelliteSkillBucket(bot);
+   stats.skill_eligible[skill_bucket]++;
+   if (volunteer)
+   {
+      stats.volunteer_yes++;
+      stats.skill_volunteer_yes[skill_bucket]++;
+   }
+   else
+   {
+      stats.volunteer_no++;
+      stats.skill_volunteer_no[skill_bucket]++;
+   }
+
+   BotTrace(bot,
+      "satellite_recruit_evaluated: bot=%d spawn_epoch=%u origin=%.0f,%.0f,%.0f roll=%d volunteer=%d route_distance=%.0f",
+      bot_index, g_crossfire_satellite_spawn_epoch[bot_index],
+      bot.pEdict->v.origin.x, bot.pEdict->v.origin.y,
+      bot.pEdict->v.origin.z, roll, volunteer, route_distance);
+   if (route_distance_out != NULL)
+      *route_distance_out = route_distance;
+   return TRUE;
+}
+
+
+static float CrossfireTacticsSatelliteRecruitScore(
+   int bot_index, float route_distance)
+{
+   bot_t &bot = bots[bot_index];
+   float score = route_distance;
+   if (CrossfireTacticsIsOriginInsideGaussStronghold(
+          bot.pEdict->v.origin))
+      score -= 900.0f;
+   else if (CrossfireTacticsIsInsideSatelliteSecondFloor(
+               bot.pEdict->v.origin))
+      score -= 650.0f;
+   else if (CrossfireTacticsIsInsideSatelliteFirstFloor(
+               bot.pEdict->v.origin))
+      score -= 300.0f;
+
+   if (BotIsCarryingWeapon(bot, VALVE_WEAPON_GAUSS))
+      score -= 240.0f;
+   else if (BotIsCarryingWeapon(bot, VALVE_WEAPON_CROSSBOW) ||
+            BotIsCarryingWeapon(bot, VALVE_WEAPON_MP5))
+      score -= 100.0f;
+
+   if (bot.pEdict->v.health < 60.0f)
+      score += (60.0f - bot.pEdict->v.health) * 4.0f;
+   if (bot.f_last_stuck_time > 0.0f &&
+       bot.f_last_stuck_time + 5.0f > gpGlobals->time)
+      score += 240.0f;
+
+   score += bot_index * 0.25f;
+   score += g_crossfire_satellite_recruit_roll[bot_index] * 0.001f;
+   return score;
+}
+
+
+static void CrossfireTacticsSetSatelliteRecruitStage(
+   bot_t &pBot, int bot_index, int stage, int waypoint_goal,
+   const char *reason)
+{
+   const int old_stage = g_crossfire_gauss_stronghold_stage[bot_index];
+   CrossfireTacticsSetGaussStrongholdStage(
+      pBot, bot_index, stage, reason);
+   pBot.wpt_goal_type = WPT_GOAL_GAUSS_HOLD;
+   pBot.waypoint_goal = waypoint_goal;
+   pBot.f_waypoint_goal_time = gpGlobals->time + 2.0f;
+   pBot.pBotPickupItem = NULL;
+   pBot.pTrackSoundEdict = NULL;
+   pBot.f_track_sound_time = -1.0f;
+   pBot.f_find_item = gpGlobals->time + 0.5f;
+   pBot.f_pause_time = 0.0f;
+
+   float distance = -1.0f;
+   if (waypoint_goal >= 0 && waypoint_goal < num_waypoints)
+      distance = (waypoints[waypoint_goal].origin -
+         pBot.pEdict->v.origin).Length();
+   BotTrace(pBot,
+      "satellite_recruit_stage: old=%s new=%s waypoint=%d distance=%.0f",
+      CrossfireTacticsGaussStrongholdStageName(old_stage),
+      CrossfireTacticsGaussStrongholdStageName(stage), waypoint_goal,
+      distance);
+}
+
+
+static qboolean CrossfireTacticsAssignSatelliteRecruit(int bot_index,
+   float route_distance, float score)
+{
+   if (!CrossfireTacticsBotAvailable(bot_index) ||
+       g_crossfire_satellite_recruit_state[bot_index] !=
+          CROSSFIRE_SATELLITE_RECRUIT_VOLUNTEER ||
+       CrossfireTacticsGaussStrongholdReservations(bots[bot_index]) >=
+          CROSSFIRE_SATELLITE_GAUSS_STRONGHOLD_CAPACITY)
+      return FALSE;
+
+   bot_t &bot = bots[bot_index];
+   bot_t window_scoring_bot = bot;
+   window_scoring_bot.curr_waypoint_index = -1;
+   const int window_goal =
+      CrossfireTacticsFindGaussStrongholdWindowWaypoint(
+         window_scoring_bot, -1);
+   const int exterior_goal = CrossfireTacticsFindSatelliteNamedWaypoint(
+      CROSSFIRE_SATELLITE_EXTERIOR_ENTRY, FALSE);
+   const int first_floor_goal =
+      CrossfireTacticsFindSatelliteNamedWaypoint(
+         CROSSFIRE_SATELLITE_FIRST_FLOOR_ENTRY, FALSE);
+   if (window_goal < 0 || exterior_goal < 0 || first_floor_goal < 0)
+      return FALSE;
+
+   g_crossfire_satellite_owner = bot_index;
+   g_crossfire_satellite_recruit_state[bot_index] =
+      CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED;
+   g_crossfire_satellite_assignment_score[bot_index] = score;
+   g_crossfire_satellite_approach_start_time[bot_index] = gpGlobals->time;
+   g_crossfire_satellite_anchor_step[bot_index] = 0;
+   g_crossfire_precision_hold_mode[bot_index] =
+      CROSSFIRE_PRECISION_HOLD_GAUSS;
+   g_crossfire_precision_hold_goal[bot_index] = window_goal;
+   g_crossfire_precision_hold_until[bot_index] = 0.0f;
+   g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+   g_crossfire_precision_stuck_since[bot_index] = 0.0f;
+   g_crossfire_precision_hold_arrived[bot_index] = FALSE;
+   g_crossfire_gauss_stronghold_window_goal[bot_index] = window_goal;
+   g_crossfire_gauss_stronghold_resource_goal[bot_index] = -1;
+   g_crossfire_gauss_stronghold_resource[bot_index] = NULL;
+   g_crossfire_gauss_stronghold_resource_type[bot_index] =
+      CROSSFIRE_STRONGHOLD_RESOURCE_NONE;
+   g_crossfire_gauss_stronghold_last_ammo[bot_index] =
+      CrossfireTacticsGaussStrongholdAmmo(bot);
+   g_crossfire_gauss_stronghold_fallback_weapon[bot_index] = 0;
+   g_crossfire_gauss_stronghold_next_scan[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_next_summary[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_next_window_change[bot_index] = 0.0f;
+   g_crossfire_gauss_stronghold_was_inside[bot_index] = FALSE;
+   g_crossfire_satellite_gauss_counted[bot_index] = FALSE;
+
+   int stage = CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR;
+   int stage_goal = exterior_goal;
+   const Vector &origin = bot.pEdict->v.origin;
+   if (CrossfireTacticsIsOriginInsideGaussStronghold(origin) ||
+       CrossfireTacticsIsInsideSatelliteSecondFloor(origin))
+   {
+      stage = CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD;
+      stage_goal = CrossfireTacticsFindSatelliteNamedWaypoint(
+         CROSSFIRE_SATELLITE_STRONGHOLD_ENTRY, TRUE);
+   }
+   else if (CrossfireTacticsIsInsideSatelliteFirstFloor(origin))
+   {
+      // First converge through the normal graph on the verified interior
+      // anchor. Direct steering from arbitrary first-floor positions can cut
+      // through the Satellite Operations exterior wall.
+      stage = CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING;
+      stage_goal = first_floor_goal;
+   }
+
+   CrossfireTacticsSetSatelliteRecruitStage(
+      bot, bot_index, stage, stage_goal, "volunteer_assigned");
+
+   crossfire_satellite_recruit_stats_t &stats =
+      g_crossfire_satellite_recruit_stats;
+   stats.assignments++;
+   if (CrossfireTacticsIsInsideSatelliteFirstFloor(origin))
+      stats.first_floor_approaches++;
+   else
+      stats.exterior_approaches++;
+   if (g_crossfire_satellite_had_owner)
+      stats.replacement_assignments++;
+   g_crossfire_satellite_had_owner = TRUE;
+   if (stats.max_simultaneous_approachers < 1)
+      stats.max_simultaneous_approachers = 1;
+
+   BotTrace(bot,
+      "satellite_recruit_assigned: bot=%d score=%.1f start_waypoint=%d entry_waypoint=%d reservation_owner=%d route_distance=%.0f",
+      bot_index, score, bot.curr_waypoint_index, exterior_goal,
+      g_crossfire_satellite_owner, route_distance);
+   return TRUE;
+}
+
+
+static void CrossfireTacticsTraceSatelliteStandby(int bot_index,
+   const char *reason)
+{
+   if (g_crossfire_satellite_last_standby_trace[bot_index] >
+       gpGlobals->time)
+      return;
+   g_crossfire_satellite_last_standby_trace[bot_index] =
+      gpGlobals->time + 3.0f;
+   g_crossfire_satellite_recruit_stats.standby_events++;
+   BotTrace(bots[bot_index],
+      "satellite_recruit_standby: bot=%d reason=%s",
+      bot_index, reason != NULL ? reason : "occupied");
+}
+
+
+static void CrossfireTacticsUpdateSatelliteRecruitment(void)
+{
+   for (int index = 0; index < 32; index++)
+   {
+      if (bots[index].is_used)
+         CrossfireTacticsSyncSatelliteRecruitLife(index);
+   }
+
+   int simultaneous_approachers = 0;
+   int simultaneous_stair_users = 0;
+   for (int index = 0; index < 32; index++)
+   {
+      if (!CrossfireTacticsBotAvailable(index) ||
+          !CrossfireTacticsIsSatelliteRecruitApproach(index))
+         continue;
+      simultaneous_approachers++;
+      if (g_crossfire_gauss_stronghold_stage[index] ==
+          CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR)
+         simultaneous_stair_users++;
+   }
+   if ((unsigned int)simultaneous_approachers >
+       g_crossfire_satellite_recruit_stats.max_simultaneous_approachers)
+      g_crossfire_satellite_recruit_stats.max_simultaneous_approachers =
+         simultaneous_approachers;
+   if (simultaneous_approachers >
+       CROSSFIRE_SATELLITE_GAUSS_STRONGHOLD_CAPACITY)
+      g_crossfire_satellite_recruit_stats.reservation_conflicts++;
+   if (simultaneous_stair_users > 1)
+      g_crossfire_satellite_recruit_stats.stair_congestion++;
+
+   if (CrossfireTacticsIsStrikeActive() ||
+       gpGlobals->time < g_crossfire_satellite_recovery_time)
+      return;
+
+   for (int index = 0; index < 32; index++)
+      CrossfireTacticsEvaluateSatelliteRecruit(index, NULL);
+
+   int reserved_owner = -1;
+   int reservations = 0;
+   for (int index = 0; index < 32; index++)
+   {
+      if (!CrossfireTacticsBotAvailable(index) ||
+          !CrossfireTacticsIsGaussStrongholdReserved(index))
+         continue;
+      reservations++;
+      if (reserved_owner < 0)
+         reserved_owner = index;
+   }
+   if (reservations > CROSSFIRE_SATELLITE_GAUSS_STRONGHOLD_CAPACITY)
+      g_crossfire_satellite_recruit_stats.reservation_conflicts++;
+
+   if (reserved_owner >= 0)
+   {
+      if (g_crossfire_satellite_recruit_state[reserved_owner] ==
+          CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED)
+         g_crossfire_satellite_owner = reserved_owner;
+      for (int index = 0; index < 32; index++)
+      {
+         if (g_crossfire_satellite_recruit_state[index] ==
+             CROSSFIRE_SATELLITE_RECRUIT_VOLUNTEER)
+            CrossfireTacticsTraceSatelliteStandby(index, "occupied");
+      }
+      return;
+   }
+
+   g_crossfire_satellite_owner = -1;
+   int best_index = -1;
+   float best_score = 999999.0f;
+   float best_route_distance = WAYPOINT_MAX_DISTANCE;
+   for (int index = 0; index < 32; index++)
+   {
+      if (!CrossfireTacticsBotAvailable(index) ||
+          g_crossfire_satellite_recruit_state[index] !=
+             CROSSFIRE_SATELLITE_RECRUIT_VOLUNTEER ||
+          g_crossfire_satellite_retry_time[index] > gpGlobals->time ||
+          CrossfireTacticsSatelliteRecruitBlocked(bots[index]))
+         continue;
+
+      float route_distance = WAYPOINT_MAX_DISTANCE;
+      if (!CrossfireTacticsSatelliteRecruitLocationEligible(
+             bots[index], &route_distance, NULL))
+         continue;
+      const float score = CrossfireTacticsSatelliteRecruitScore(
+         index, route_distance);
+      if (score < best_score)
+      {
+         best_score = score;
+         best_index = index;
+         best_route_distance = route_distance;
+      }
+   }
+
+   if (best_index >= 0 &&
+       !CrossfireTacticsAssignSatelliteRecruit(
+          best_index, best_route_distance, best_score))
+      g_crossfire_satellite_recruit_stats.reservation_conflicts++;
+}
+
+
+static void CrossfireTacticsTraceSatelliteRecruitSummary(void)
+{
+   if (g_crossfire_satellite_next_summary > gpGlobals->time)
+      return;
+
+   int trace_bot = CrossfireTacticsBotAvailable(
+      g_crossfire_satellite_owner) ? g_crossfire_satellite_owner : -1;
+   for (int index = 0; trace_bot < 0 && index < 32; index++)
+   {
+      if (CrossfireTacticsBotAvailable(index))
+         trace_bot = index;
+   }
+   if (trace_bot < 0)
+      return;
+
+   g_crossfire_satellite_next_summary = gpGlobals->time +
+      CROSSFIRE_GAUSS_STRONGHOLD_SUMMARY_INTERVAL;
+   const crossfire_satellite_recruit_stats_t &stats =
+      g_crossfire_satellite_recruit_stats;
+   const float volunteer_percent = stats.eligible_events > 0 ?
+      stats.volunteer_yes * 100.0f / stats.eligible_events : 0.0f;
+   const float average_arrival = stats.successful_arrivals > 0 ?
+      stats.total_arrival_seconds / stats.successful_arrivals : 0.0f;
+   BotTrace(bots[trace_bot],
+      "satellite_recruit_summary: eligible=%u yes=%u no=%u percent=%.1f assignments=%u arrivals=%u average_arrival=%.1f failed=%u standby=%u reservation_conflicts=%u stair_congestion=%u unsafe_routes=%u replacements=%u strike_preemptions=%u first_floor=%u exterior=%u gauss=%u enemy_pursuit_suppressions=%u max_approachers=%u skill3=%u/%u/%u skill4=%u/%u/%u skill5=%u/%u/%u owner=%d",
+      stats.eligible_events, stats.volunteer_yes, stats.volunteer_no,
+      volunteer_percent, stats.assignments, stats.successful_arrivals,
+      average_arrival, stats.failed_approaches, stats.standby_events,
+      stats.reservation_conflicts, stats.stair_congestion,
+      stats.unsafe_route_rejections, stats.replacement_assignments,
+      stats.strike_preemptions, stats.first_floor_approaches,
+      stats.exterior_approaches, stats.gauss_acquisitions,
+      stats.enemy_pursuit_suppressions,
+      stats.max_simultaneous_approachers,
+      stats.skill_eligible[0], stats.skill_volunteer_yes[0],
+      stats.skill_volunteer_no[0], stats.skill_eligible[1],
+      stats.skill_volunteer_yes[1], stats.skill_volunteer_no[1],
+      stats.skill_eligible[2], stats.skill_volunteer_yes[2],
+      stats.skill_volunteer_no[2], g_crossfire_satellite_owner);
+}
+
+
+static int CrossfireTacticsSatelliteRecruitStageWaypoint(int stage)
+{
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR)
+      return CrossfireTacticsFindSatelliteNamedWaypoint(
+         CROSSFIRE_SATELLITE_EXTERIOR_ENTRY, FALSE);
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING ||
+       stage == CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR ||
+       stage == CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR)
+      return CrossfireTacticsFindSatelliteNamedWaypoint(
+         CROSSFIRE_SATELLITE_FIRST_FLOOR_ENTRY, FALSE);
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD)
+      return CrossfireTacticsFindSatelliteNamedWaypoint(
+         CROSSFIRE_SATELLITE_STRONGHOLD_ENTRY, TRUE);
+   return -1;
+}
+
+
+static qboolean CrossfireTacticsSatelliteRecruitDirectTarget(
+   int bot_index, Vector *target)
+{
+   if (target == NULL)
+      return FALSE;
+
+   const int stage = g_crossfire_gauss_stronghold_stage[bot_index];
+   const int step = g_crossfire_satellite_anchor_step[bot_index];
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR)
+   {
+      *target = step == 0 ? CROSSFIRE_SATELLITE_FIRST_FLOOR_CORRIDOR :
+         CROSSFIRE_SATELLITE_STAIR_ENTRY;
+      return TRUE;
+   }
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR)
+   {
+      *target = step == 0 ? CROSSFIRE_SATELLITE_STAIR_MIDDLE :
+         CROSSFIRE_SATELLITE_SECOND_FLOOR_LANDING;
+      return TRUE;
+   }
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD)
+   {
+      *target = CROSSFIRE_SATELLITE_STRONGHOLD_ENTRY;
+      return TRUE;
+   }
+   return FALSE;
+}
+
+
+static qboolean CrossfireTacticsFinalizeSatelliteRecruitArrival(
+   bot_t &pBot, int bot_index)
+{
+   int &window_goal =
+      g_crossfire_gauss_stronghold_window_goal[bot_index];
+   if (!MapProfileCrossfireIsWaypointInsideGaussStronghold(window_goal))
+   {
+      bot_t scoring_bot = pBot;
+      scoring_bot.curr_waypoint_index = -1;
+      window_goal = CrossfireTacticsFindGaussStrongholdWindowWaypoint(
+         scoring_bot, -1);
+      if (window_goal < 0)
+         return FALSE;
+      g_crossfire_precision_hold_goal[bot_index] = window_goal;
+   }
+
+   g_crossfire_precision_hold_arrived[bot_index] = TRUE;
+   g_crossfire_precision_hold_until[bot_index] = 0.0f;
+   g_crossfire_precision_last_target_time[bot_index] = gpGlobals->time;
+   g_crossfire_gauss_stronghold_was_inside[bot_index] = TRUE;
+   g_crossfire_gauss_stronghold_stats.stronghold_entries++;
+   g_crossfire_satellite_recruit_stats.successful_arrivals++;
+   g_crossfire_satellite_recruit_stats.total_arrival_seconds +=
+      gpGlobals->time -
+         g_crossfire_satellite_approach_start_time[bot_index];
+
+   const qboolean has_gauss =
+      BotIsCarryingWeapon(pBot, VALVE_WEAPON_GAUSS);
+   if (has_gauss && !g_crossfire_satellite_gauss_counted[bot_index])
+   {
+      g_crossfire_satellite_gauss_counted[bot_index] = TRUE;
+      g_crossfire_satellite_recruit_stats.gauss_acquisitions++;
+   }
+
+   CrossfireTacticsSetSatelliteRecruitStage(pBot, bot_index,
+      CROSSFIRE_GAUSS_RECRUIT_ACQUIRE_GAUSS, window_goal,
+      "safe_ingress_arrival");
+   BotTrace(pBot,
+      "satellite_recruit_arrived: bot=%d time_to_arrive=%.1f has_gauss=%d uranium=%d",
+      bot_index,
+      gpGlobals->time - g_crossfire_satellite_approach_start_time[bot_index],
+      has_gauss, CrossfireTacticsGaussStrongholdAmmo(pBot));
+   return CrossfireTacticsEnsureGaussStrongholdGoal(pBot);
+}
+
+
+static qboolean CrossfireTacticsEnsureSatelliteRecruitGoal(
+   bot_t &pBot, int bot_index)
+{
+   if (bot_index < 0 ||
+       g_crossfire_satellite_recruit_state[bot_index] !=
+          CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED ||
+       !CrossfireTacticsIsSatelliteRecruitApproach(bot_index))
+      return FALSE;
+
+   if (pBot.wpt_goal_type == WPT_GOAL_ENEMY)
+   {
+      g_crossfire_satellite_recruit_stats.enemy_pursuit_suppressions++;
+      BotTrace(pBot,
+         "satellite_recruit_route_preserved: enemy_locomotion=0 stage=%s",
+         CrossfireTacticsGaussStrongholdStageName(
+            g_crossfire_gauss_stronghold_stage[bot_index]));
+   }
+
+   for (int transition = 0; transition < 8; transition++)
+   {
+      const int stage = g_crossfire_gauss_stronghold_stage[bot_index];
+      if (stage == CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR ||
+          stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING)
+      {
+         const int goal = CrossfireTacticsSatelliteRecruitStageWaypoint(
+            stage);
+         if (goal < 0)
+            return FALSE;
+         const float distance = (waypoints[goal].origin -
+            pBot.pEdict->v.origin).Length();
+         if (distance > CROSSFIRE_SATELLITE_RECRUIT_STAGE_DISTANCE)
+         {
+            CrossfireTacticsSetSatelliteRecruitStage(
+               pBot, bot_index, stage, goal, "stage_pending");
+            return TRUE;
+         }
+
+         const int next_stage = stage ==
+            CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR ?
+               CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING :
+               CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR;
+         g_crossfire_satellite_anchor_step[bot_index] = 0;
+         CrossfireTacticsSetSatelliteRecruitStage(pBot, bot_index,
+            next_stage,
+            CrossfireTacticsSatelliteRecruitStageWaypoint(next_stage),
+            "anchor_reached");
+         continue;
+      }
+
+      if (stage == CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR ||
+          stage == CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR)
+      {
+         Vector target;
+         if (!CrossfireTacticsSatelliteRecruitDirectTarget(
+                bot_index, &target))
+            return FALSE;
+         if ((target - pBot.pEdict->v.origin).Length() >
+             CROSSFIRE_SATELLITE_RECRUIT_DIRECT_DISTANCE)
+         {
+            CrossfireTacticsSetSatelliteRecruitStage(pBot, bot_index,
+               stage,
+               CrossfireTacticsSatelliteRecruitStageWaypoint(stage),
+               "direct_anchor_pending");
+            return TRUE;
+         }
+
+         if (g_crossfire_satellite_anchor_step[bot_index] == 0)
+         {
+            g_crossfire_satellite_anchor_step[bot_index] = 1;
+            continue;
+         }
+
+         g_crossfire_satellite_anchor_step[bot_index] = 0;
+         const int next_stage = stage ==
+            CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR ?
+               CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR :
+               CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD;
+         CrossfireTacticsSetSatelliteRecruitStage(pBot, bot_index,
+            next_stage,
+            CrossfireTacticsSatelliteRecruitStageWaypoint(next_stage),
+            "direct_anchor_reached");
+         continue;
+      }
+
+      if (stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD)
+      {
+         const Vector room_offset = CROSSFIRE_SATELLITE_STRONGHOLD_ENTRY -
+            pBot.pEdict->v.origin;
+         if (CrossfireTacticsIsOriginInsideGaussStronghold(
+                pBot.pEdict->v.origin) &&
+             (room_offset.Length() <=
+                 CROSSFIRE_SATELLITE_RECRUIT_STAGE_DISTANCE ||
+              (pBot.pEdict->v.origin.y >= 256.0f &&
+               pBot.pEdict->v.origin.z >= -1520.0f)))
+            return CrossfireTacticsFinalizeSatelliteRecruitArrival(
+               pBot, bot_index);
+
+         const int goal = CrossfireTacticsSatelliteRecruitStageWaypoint(
+            stage);
+         CrossfireTacticsSetSatelliteRecruitStage(
+            pBot, bot_index, stage, goal, "room_entry_pending");
+         return TRUE;
+      }
+
+      return FALSE;
+   }
+
+   return TRUE;
+}
+
+
+static void CrossfireTacticsTraceSatelliteRouteRejected(
+   bot_t &pBot, int bot_index, int waypoint_index, const Vector &origin,
+   const char *reason)
+{
+   g_crossfire_satellite_recruit_stats.unsafe_route_rejections++;
+   if (g_crossfire_gauss_stronghold_next_guard_trace[bot_index] >
+       gpGlobals->time)
+      return;
+   g_crossfire_gauss_stronghold_next_guard_trace[bot_index] =
+      gpGlobals->time + 1.0f;
+   BotTrace(pBot,
+      "satellite_recruit_route_rejected: waypoint=%d origin=%.0f,%.0f,%.0f reason=%s",
+      waypoint_index, origin.x, origin.y, origin.z,
+      reason != NULL ? reason : "outside_corridor");
+}
+
+
+static qboolean CrossfireTacticsSatelliteRecruitDirectSegmentSafe(
+   bot_t &pBot, int bot_index, const Vector &target)
+{
+   if (!CrossfireTacticsIsInsideSatelliteRecruitBounds(target))
+   {
+      CrossfireTacticsTraceSatelliteRouteRejected(
+         pBot, bot_index, -1, target, "outside_corridor");
+      return FALSE;
+   }
+
+   TraceResult hull_trace;
+   UTIL_TraceHull(pBot.pEdict->v.origin, target, ignore_monsters,
+      human_hull, pBot.pEdict->v.pContainingEntity, &hull_trace);
+   if (hull_trace.fStartSolid || hull_trace.flFraction < 0.95f)
+   {
+      CrossfireTacticsTraceSatelliteRouteRejected(
+         pBot, bot_index, -1, target, "unsupported");
+      return FALSE;
+   }
+
+   if (!CrossfireTacticsHasFloorBelow(pBot, target, 112.0f))
+   {
+      CrossfireTacticsTraceSatelliteRouteRejected(
+         pBot, bot_index, -1, target, "drop");
+      return FALSE;
+   }
+   return TRUE;
+}
+
+
+static void CrossfireTacticsAlignSatelliteRecruitMovement(
+   bot_t &pBot, const Vector &target)
+{
+   const Vector direction = target - pBot.pEdict->v.origin;
+   const Vector angles = UTIL_VecToAngles(direction);
+   const float angle_diff = UTIL_WrapAngle(
+      angles.y - pBot.pEdict->v.v_angle.y);
+
+   if (FNullEnt(pBot.pBotEnemy))
+      pBot.pEdict->v.ideal_yaw = UTIL_WrapAngle(angles.y);
+
+   if (angle_diff > 135.0f || angle_diff <= -135.0f)
+   {
+      pBot.f_strafe_direction = 0.0f;
+      pBot.f_move_direction = -1.0f;
+   }
+   else if (angle_diff > 45.0f)
+   {
+      pBot.f_strafe_direction = -1.0f;
+      pBot.f_move_direction = 1.0f;
+   }
+   else if (angle_diff <= -45.0f)
+   {
+      pBot.f_strafe_direction = 1.0f;
+      pBot.f_move_direction = 1.0f;
+   }
+   else
+   {
+      pBot.f_strafe_direction = 0.0f;
+      pBot.f_move_direction = 1.0f;
+   }
+
+   pBot.f_move_speed = CROSSFIRE_SATELLITE_RECRUIT_STAIR_SPEED *
+      pBot.f_move_direction;
+   pBot.b_not_maxspeed = TRUE;
+   pBot.f_pause_time = 0.0f;
+   pBot.f_dont_avoid_wall_time = gpGlobals->time + 0.25f;
+   pBot.pEdict->v.button &= ~IN_JUMP;
+}
+
+
+static qboolean CrossfireTacticsHandleSatelliteRecruitMovement(
+   bot_t &pBot, int bot_index)
+{
+   if (!CrossfireTacticsIsSatelliteRecruitApproach(bot_index))
+      return FALSE;
+
+   const int stage = g_crossfire_gauss_stronghold_stage[bot_index];
+   if (stage == CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR ||
+       stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING)
+      return FALSE;
+
+   Vector target;
+   if (!CrossfireTacticsSatelliteRecruitDirectTarget(bot_index, &target))
+      return FALSE;
+   if (!CrossfireTacticsSatelliteRecruitDirectSegmentSafe(
+          pBot, bot_index, target))
+   {
+      pBot.f_move_speed = 0.0f;
+      pBot.f_strafe_direction = 0.0f;
+      return TRUE;
+   }
+
+   CrossfireTacticsAlignSatelliteRecruitMovement(pBot, target);
+   return TRUE;
+}
+
+
+static void CrossfireTacticsReleaseSatelliteRecruitment(
+   int bot_index, const char *reason)
+{
+   if (bot_index < 0 || bot_index >= 32 ||
+       (g_crossfire_satellite_recruit_state[bot_index] !=
+          CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED &&
+        g_crossfire_satellite_owner != bot_index))
+      return;
+
+   bot_t &bot = bots[bot_index];
+   const qboolean approach =
+      CrossfireTacticsIsSatelliteRecruitApproach(bot_index);
+   if (reason != NULL && strcmp(reason, "strike") == 0)
+   {
+      g_crossfire_satellite_recruit_stats.strike_preemptions++;
+      g_crossfire_satellite_recovery_time =
+         g_crossfire_strike_end_time +
+            CROSSFIRE_SATELLITE_RECRUIT_STRIKE_RECOVERY;
+   }
+   else if (approach && reason != NULL &&
+            strcmp(reason, "new_spawn") != 0)
+      g_crossfire_satellite_recruit_stats.failed_approaches++;
+
+   if (bot.pEdict != NULL && !bot.pEdict->free)
+      BotTrace(bot,
+         "satellite_recruit_released: bot=%d reason=%s",
+         bot_index, reason != NULL ? reason : "reset");
+
+   if (g_crossfire_satellite_owner == bot_index)
+      g_crossfire_satellite_owner = -1;
+   g_crossfire_satellite_recruit_state[bot_index] =
+      reason != NULL && strcmp(reason, "new_spawn") == 0 ?
+         CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED :
+         CROSSFIRE_SATELLITE_RECRUIT_VOLUNTEER;
+   g_crossfire_satellite_retry_time[bot_index] = gpGlobals->time +
+      CROSSFIRE_SATELLITE_RECRUIT_REASSIGN_COOLDOWN;
+}
+
+
 static qboolean CrossfireTacticsEnsureGaussStrongholdGoal(bot_t &pBot)
 {
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
@@ -2327,6 +3358,7 @@ static void CrossfireTacticsClearPrecisionHold(
       return;
 
    bot_t &bot = bots[bot_index];
+   CrossfireTacticsReleaseSatelliteRecruitment(bot_index, reason);
    CrossfireTacticsClearGaussStronghold(bot_index, reason);
    const int mode = g_crossfire_precision_hold_mode[bot_index];
    const int goal = g_crossfire_precision_hold_goal[bot_index];
@@ -2379,6 +3411,48 @@ static const char *CrossfireTacticsPrecisionHoldCancellationReason(
    if (CrossfireTacticsIsBotStrikeActivator(pBot))
       return mode == CROSSFIRE_PRECISION_HOLD_GAUSS ?
          "strike" : "strike activator";
+   if (CrossfireTacticsIsSatelliteRecruitApproach(bot_index))
+   {
+      if (pBot.pEdict == NULL || pBot.pEdict->free ||
+          pBot.pEdict->v.deadflag != DEAD_NO ||
+          pBot.pEdict->v.health <= 0.0f)
+         return "death";
+      if (pBot.pEdict->v.health <= CROSSFIRE_GAUSS_CRITICAL_HEALTH)
+         return "critical_health";
+      if (CrossfireTacticsHasImmediateDanger(pBot))
+         return "danger";
+      if (g_crossfire_satellite_approach_start_time[bot_index] +
+          CROSSFIRE_SATELLITE_RECRUIT_APPROACH_TIMEOUT <= gpGlobals->time)
+         return "approach_timeout";
+
+      const qboolean recent_stuck =
+         pBot.trace_last_stuck_wpt == pBot.curr_waypoint_index &&
+         pBot.f_last_stuck_time > 0.0f &&
+         pBot.f_last_stuck_time + CROSSFIRE_RECENT_STUCK_WINDOW >
+            gpGlobals->time;
+      if (recent_stuck)
+      {
+         if (g_crossfire_precision_stuck_since[bot_index] <= 0.0f)
+            g_crossfire_precision_stuck_since[bot_index] = gpGlobals->time;
+         else if (g_crossfire_precision_stuck_since[bot_index] +
+                  CROSSFIRE_STUCK_CONFIRM_TIME <= gpGlobals->time)
+            return "stuck";
+      }
+      else
+         g_crossfire_precision_stuck_since[bot_index] = 0.0f;
+
+      const int stage = g_crossfire_gauss_stronghold_stage[bot_index];
+      if ((stage == CROSSFIRE_GAUSS_RECRUIT_APPROACH_EXTERIOR ||
+           stage == CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING))
+      {
+         const int safe_goal =
+            CrossfireTacticsSatelliteRecruitStageWaypoint(stage);
+         if (safe_goal < 0 || safe_goal >= num_waypoints ||
+             (waypoints[safe_goal].flags & W_FL_DELETED))
+            return "unreachable";
+      }
+      return NULL;
+   }
    if (CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
    {
       if (pBot.pEdict == NULL || pBot.pEdict->free ||
@@ -2477,6 +3551,20 @@ static qboolean CrossfireTacticsEnsurePrecisionHoldGoal(bot_t &pBot)
    if (g_crossfire_precision_hold_goal[bot_index] >= 0)
    {
       const int mode = g_crossfire_precision_hold_mode[bot_index];
+      if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
+          CrossfireTacticsIsSatelliteRecruitApproach(bot_index))
+      {
+         const char *reason =
+            CrossfireTacticsPrecisionHoldCancellationReason(
+               pBot, bot_index);
+         if (reason != NULL)
+         {
+            CrossfireTacticsClearPrecisionHold(bot_index, reason);
+            return FALSE;
+         }
+         return CrossfireTacticsEnsureSatelliteRecruitGoal(
+            pBot, bot_index);
+      }
       if (mode == CROSSFIRE_PRECISION_HOLD_GAUSS &&
           CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
          return CrossfireTacticsEnsureGaussStrongholdGoal(pBot);
@@ -3070,6 +4158,9 @@ static qboolean CrossfireTacticsEnsureBunkerShaftGoal(bot_t &pBot)
 
 static void CrossfireTacticsReset(void)
 {
+   g_crossfire_satellite_map_epoch++;
+   if (g_crossfire_satellite_map_epoch == 0)
+      g_crossfire_satellite_map_epoch = 1;
    CrossfireTacticsResetBunkerShaftRoutes();
    for (int index = 0; index < 32; index++)
    {
@@ -3089,13 +4180,34 @@ static void CrossfireTacticsReset(void)
       g_crossfire_gauss_stronghold_strike_next_jump[index] = 0.0f;
       g_crossfire_gauss_stronghold_next_guard_trace[index] = 0.0f;
       g_crossfire_gauss_stronghold_next_window_change[index] = 0.0f;
+      g_crossfire_satellite_recruit_state[index] =
+         CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED;
+      g_crossfire_satellite_recruit_roll[index] = -1;
+      g_crossfire_satellite_spawn_epoch[index] = 0;
+      g_crossfire_satellite_observed_spawn_time[index] = -1.0f;
+      g_crossfire_satellite_was_in_zone[index] = FALSE;
+      g_crossfire_satellite_route_distance[index] =
+         WAYPOINT_MAX_DISTANCE;
+      g_crossfire_satellite_assignment_score[index] = 0.0f;
+      g_crossfire_satellite_approach_start_time[index] = 0.0f;
+      g_crossfire_satellite_retry_time[index] = 0.0f;
+      g_crossfire_satellite_anchor_step[index] = 0;
+      g_crossfire_satellite_last_standby_trace[index] = 0.0f;
+      g_crossfire_satellite_gauss_counted[index] = FALSE;
    }
+
+   g_crossfire_satellite_owner = -1;
+   g_crossfire_satellite_recovery_time = 0.0f;
+   g_crossfire_satellite_next_summary = 0.0f;
+   g_crossfire_satellite_had_owner = FALSE;
 
    memset(g_crossfire_gauss_stronghold_resources, 0,
       sizeof(g_crossfire_gauss_stronghold_resources));
    g_crossfire_gauss_stronghold_resource_count = 0;
    memset(&g_crossfire_gauss_stronghold_stats, 0,
       sizeof(g_crossfire_gauss_stronghold_stats));
+   memset(&g_crossfire_satellite_recruit_stats, 0,
+      sizeof(g_crossfire_satellite_recruit_stats));
    g_crossfire_gauss_stronghold_stats_time =
       gpGlobals != NULL ? gpGlobals->time : 0.0f;
 
@@ -3203,6 +4315,8 @@ static void CrossfireTacticsStartFrame(void)
       return;
 
    CrossfireTacticsUpdateGaussStrongholdStats();
+   CrossfireTacticsUpdateSatelliteRecruitment();
+   CrossfireTacticsTraceSatelliteRecruitSummary();
 
    if (g_crossfire_next_bot_strike_time <= 0.0f)
    {
@@ -4077,6 +5191,10 @@ static qboolean CrossfireTacticsHandleGaussStrongholdMovement(bot_t &pBot)
        !CrossfireTacticsIsGaussStrongholdReserved(bot_index))
       return FALSE;
 
+   if (CrossfireTacticsIsSatelliteRecruitApproach(bot_index))
+      return CrossfireTacticsHandleSatelliteRecruitMovement(
+         pBot, bot_index);
+
    int stage = g_crossfire_gauss_stronghold_stage[bot_index];
    if (stage == CROSSFIRE_GAUSS_STRONGHOLD_APPROACH)
    {
@@ -4220,6 +5338,47 @@ static qboolean CrossfireTacticsAllowWaypoint(
    bot_t &pBot, int waypoint_index, const char *context)
 {
    const int bot_index = CrossfireTacticsBotArrayIndex(pBot);
+   if (bot_index >= 0 &&
+       CrossfireTacticsIsSatelliteRecruitApproach(bot_index))
+   {
+      if (waypoint_index < 0 || waypoint_index >= num_waypoints)
+         return FALSE;
+
+      const WAYPOINT &waypoint = waypoints[waypoint_index];
+      const int stage = g_crossfire_gauss_stronghold_stage[bot_index];
+      const char *reason = NULL;
+      if (waypoint.flags & (W_FL_JUMP | W_FL_LONGJUMP))
+         reason = "window";
+      else if (waypoint.flags & (W_FL_DELETED | W_FL_LADDER |
+               W_FL_LIFT_START | W_FL_LIFT_END))
+         reason = "outside_corridor";
+      else if (waypoint.origin.z <
+               CROSSFIRE_SATELLITE_RECRUIT_MIN_Z - 32.0f)
+         reason = "drop";
+      else if (stage < CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD &&
+               MapProfileCrossfireIsWaypointInsideGaussStronghold(
+                  waypoint_index))
+         reason = "wrong_floor";
+      else if (stage <= CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING &&
+               waypoint.origin.z > -1580.0f)
+         reason = "wrong_floor";
+      else if (waypoint.origin.x <
+                  CROSSFIRE_SATELLITE_RECRUIT_MIN_X - 256.0f ||
+               waypoint.origin.x >
+                  CROSSFIRE_SATELLITE_RECRUIT_MAX_X + 256.0f ||
+               waypoint.origin.y <
+                  CROSSFIRE_SATELLITE_RECRUIT_MIN_Y - 256.0f ||
+               waypoint.origin.y >
+                  CROSSFIRE_SATELLITE_RECRUIT_MAX_Y + 256.0f)
+         reason = "outside_corridor";
+
+      if (reason == NULL)
+         return TRUE;
+      CrossfireTacticsTraceSatelliteRouteRejected(pBot, bot_index,
+         waypoint_index, waypoint.origin, reason);
+      return FALSE;
+   }
+
    if (CrossfireTacticsIsStrikeActive() || bot_index < 0 ||
        !CrossfireTacticsIsGaussStrongholdPersistent(bot_index))
       return TRUE;

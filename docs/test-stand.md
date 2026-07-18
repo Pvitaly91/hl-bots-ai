@@ -1,10 +1,47 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-10
+HLDM-JKBOTTI-AI-STAND-20260415-11
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
+
+## Prompt 11: Satellite Stronghold Recruitment
+
+Prompt 11 adds a safe capacity-one recruitment path to the existing persistent Satellite Operations Gauss stronghold. The confirmed root cause was that the legacy hold selector required a bot to already carry usable Gauss ammo; it had no one-life volunteer decision, no reservation during approach, and no first-floor/exterior ingress state. Generic enemy, weapon, and shortest-route goals could therefore keep nearby bots outside or select an unsafe yard/window edge instead of filling an empty stronghold.
+
+Recruitment uses the following map-specific geometry:
+
+- candidate bounds: `X [-1250,-320]`, `Y [-360,1560]`, `Z [-1840,-1450]`
+- maximum safe route distance to the exterior entry: `1400`; maximum nearby physical distance: `1200`
+- exterior entry: waypoint `112`, `(-555.3,360.9,-1660)`
+- first-floor graph entry: waypoint `128`, `(-666.7,251.2,-1668)`
+- direct safe corridor anchors: `(-704,192,-1660)` and stair entry `(-832,-16,-1644)`
+- stair transition anchors: `(-832,86,-1580)` and second-floor landing `(-832,176,-1516)`
+- stronghold arrival: waypoint `45`, approximately `(-833,319,-1500)`
+- local Gauss/uranium: waypoint `47`; firing positions: waypoints `99/100`
+- the named anchor chain is approximately `847` units from waypoint `112` to room entry and about `1410` units through local Gauss to waypoint `99`; eligibility still uses authoritative waypoint distance where available
+
+The staged state machine is `APPROACH_EXTERIOR -> ENTER_BUILDING -> CROSS_FIRST_FLOOR -> CLIMB_SECOND_FLOOR -> ENTER_STRONGHOLD -> ACQUIRE_GAUSS`, then reuses the Prompt 10 persistent stronghold controller. Every direct segment is constrained to the map corridor and checked for deleted, jump, long-jump, ladder, lift, wrong-floor, unsupported, window/drop, and central-yard candidates. The first-floor start deliberately converges through waypoint `128` before direct anchors so arbitrary origins cannot cut through the exterior wall.
+
+Each slot stores one decision for one `f_bot_spawn_time`: `UNEVALUATED`, `DECLINED`, `VOLUNTEER`, or `ASSIGNED`, plus the deterministic roll, spawn epoch, map epoch, zone observation, route distance, and retry state. The hash input excludes skill, name, enemy, FPS, and frame time. Re-entering the zone, target loss, weapon switching, inactive Gauss, or zero uranium does not reroll or release the owner; death/new spawn and map reset do. Strike clears approach and reservation immediately, applies a five-second recovery, then reuses the saved same-life volunteer decision.
+
+Reservation starts before movement and covers exterior, first floor, stairs, arrival, and persistent occupancy. Accepted non-owners remain standby in normal play. Winner scoring uses safe route distance with bounded bonuses for already being inside and carrying useful equipment, health/stuck penalties, and a stable slot tie-break. Assigned ingress preserves aim, return fire, and defensive movement while suppressing `WPT_GOAL_ENEMY` locomotion and external pickup detours.
+
+Tests were written red first and grew the Crossfire map-profile suite from `32` to `47` cases. They cover deterministic 70% decisions, one-life/no-reroll semantics, skill independence, all eligibility zones and blocks, one-owner/replacement behavior, stable tie-break, every safe stage, unsafe shortcut rejection, enemy/pickup non-preemption, local Gauss acquisition, inactive-Gauss waiting, persistent handoff, confirmed-stuck release, strike interruption/recovery, and the regression where generic navigation transiently clears a valid stage goal. The latter exposed and fixed false `reason=unreachable` assignment churn by validating the named safe stage anchor rather than the transient live goal.
+
+Final controlled integration on isolated port `27017` passed:
+
+- 100 deterministic eligibility events: `70` yes, `30` no, stable repeated result; skill 3 `22/34`, skill 4 `26/33`, skill 5 `22/33`
+- a second map epoch also produced `70/100`, with skill 3 `23/34`, skill 4 `24/33`, skill 5 `23/33`
+- five-volunteer scenario: one owner, one replacement after forced owner death, maximum one approacher, zero conflicts, zero stair congestion
+- exterior and first-floor staged routes both arrived in about `12` seconds, entered `RESUPPLY_GAUSS`, acquired local Gauss and `20` uranium, and handed off to waypoint `99/100`
+- a visible central-yard enemy remained an attack target but did not replace the ingress movement goal
+- strike preempted `recruit_exterior`, `recruit_first_floor`, `recruit_stairs`, and `recruit_enter_stronghold`, replacing each with an authoritative bunker goal
+
+The clean natural soak ran `1800` seconds with 12 bots and no controlled placement, loadout, entity, or enemy injection. Relative to its initial sample, it recorded 130 new eligibility decisions (`99/31`, `76.2%`; the 25-minute point was `85/28`, `75.2%`), 16 assignments, four arrivals, 12 exterior approaches, four first-floor approaches, two local Gauss acquisitions, 15 replacement assignments, maximum one approacher, zero reservation conflicts, zero stair congestion, 5,794 enemy pursuit suppressions, five stronghold entries, `1018.7` occupancy-seconds, six uranium pickups, three health pickups, seven armor pickups, six crossbow and five MP5 fallback selections, 23 returns, 843 prevented stronghold enemy pursuits, and four strike exits. One displacement was conservatively classified as `unexpected_zone_exits=1` and `recoil_falls=1`; no ingress window/drop shortcut occurred, and the controller recovered the bot. This single event had trace disabled and cannot honestly be attributed to self-recoil rather than external combat knockback. The exact controlled 70% sample is therefore reported separately from the finite natural sample rather than tuning the deterministic hash to the soak.
+
+All six required focused binaries pass. The complete clean i386/SSE3 suite passes, including `test_map_profile_crossfire 47/47`; Visual Studio `Release|Win32` builds and stages `jk_botti_mm.dll`. Validation-only bot placement, death, and entity controls remain untracked and are not part of the production plugin.
 
 ## Prompt 10: Satellite Operations Gauss Stronghold
 

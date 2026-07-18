@@ -1894,6 +1894,711 @@ static int test_satellite_stronghold_strike_is_absolute(void)
 }
 
 
+static void setup_satellite_recruitment_bot(bot_t &bot, int slot,
+   const Vector &origin)
+{
+   setup_crossbow_bot(bot, mock_alloc_edict(), origin);
+   snprintf(bot.name, sizeof(bot.name), "SatelliteRecruit%d", slot);
+   bot.pEdict->v.weapons = (1u << VALVE_WEAPON_GLOCK);
+   bot.m_rgAmmo[4] = 0;
+   bot.f_bot_spawn_time = 100.0f + slot;
+   bot.curr_waypoint_index = 0;
+   bot.waypoint_goal = -1;
+   bot.wpt_goal_type = WPT_GOAL_NONE;
+}
+
+
+static void setup_satellite_recruitment_waypoints(void)
+{
+   setup_crossfire();
+   num_waypoints = 10;
+   weapon_defs[VALVE_WEAPON_GAUSS].iId = VALVE_WEAPON_GAUSS;
+   weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1 = 6;
+   weapon_defs[VALVE_WEAPON_MP5].iId = VALVE_WEAPON_MP5;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo1 = 2;
+   weapon_defs[VALVE_WEAPON_MP5].iAmmo2 = 3;
+
+   waypoints[0].flags = 0;
+   waypoints[0].itemflags = 0;
+   waypoints[0].origin = Vector(-555.3f, 360.9f, -1660.0f);
+
+   waypoints[1].flags = 0;
+   waypoints[1].itemflags = 0;
+   waypoints[1].origin = Vector(-666.7f, 251.2f, -1668.0f);
+
+   waypoints[2].flags = W_FL_DELETED;
+   waypoints[2].itemflags = 0;
+   waypoints[2].origin = Vector(-760.0f, 120.0f, -1660.0f);
+
+   waypoints[3].flags = W_FL_DELETED;
+   waypoints[3].itemflags = 0;
+   waypoints[3].origin = Vector(-832.0f, -16.0f, -1644.0f);
+
+   waypoints[4].flags = W_FL_DELETED;
+   waypoints[4].itemflags = 0;
+   waypoints[4].origin = Vector(-832.0f, 86.0f, -1580.0f);
+
+   waypoints[5].flags = W_FL_DELETED;
+   waypoints[5].itemflags = 0;
+   waypoints[5].origin = Vector(-832.0f, 176.0f, -1516.0f);
+
+   waypoints[6].flags = W_FL_WEAPON | W_FL_AMMO;
+   waypoints[6].itemflags = W_IFL_GAUSS | W_IFL_AMMO_GAUSS;
+   waypoints[6].origin = Vector(-976.0f, 608.0f, -1500.0f);
+
+   waypoints[7].flags = W_FL_AIMING;
+   waypoints[7].itemflags = 0;
+   waypoints[7].origin = Vector(-735.6f, 592.4f, -1500.0f);
+
+   waypoints[8].flags = W_FL_JUMP;
+   waypoints[8].itemflags = 0;
+   waypoints[8].origin = Vector(-447.4f, -424.6f, -1691.1f);
+
+   waypoints[9].flags = 0;
+   waypoints[9].itemflags = 0;
+   waypoints[9].origin = Vector(0.0f, -2520.0f, -1820.0f);
+
+   for (int index = 0; index < num_waypoints; index++)
+      mock_route_distances[index] = 80.0f + index * 40.0f;
+   mock_route_distances[0] = 0.0f;
+   mock_trace_line_fn = trace_gauss_overwatch_geometry;
+}
+
+
+static int satellite_volunteer_slot(int first_slot)
+{
+   const unsigned int map_epoch =
+      MapProfileCrossfireSatelliteMapEpoch();
+   for (int index = first_slot; index < 32; index++)
+   {
+      if (MapProfileCrossfireSatelliteRecruitRoll(
+             index, 1, map_epoch) < 70)
+         return index;
+   }
+   return -1;
+}
+
+
+static int satellite_declined_slot(int first_slot)
+{
+   const unsigned int map_epoch =
+      MapProfileCrossfireSatelliteMapEpoch();
+   for (int index = first_slot; index < 32; index++)
+   {
+      if (MapProfileCrossfireSatelliteRecruitRoll(
+             index, 1, map_epoch) >= 70)
+         return index;
+   }
+   return -1;
+}
+
+
+static int test_satellite_recruit_roll_is_stable_and_balanced(void)
+{
+   TEST("Satellite one-life recruitment roll is stable and near 70 percent");
+
+   const int stable = MapProfileCrossfireSatelliteRecruitRoll(7, 3, 11);
+   for (int repeat = 0; repeat < 100; repeat++)
+      ASSERT_INT(MapProfileCrossfireSatelliteRecruitRoll(7, 3, 11),
+         stable);
+
+   qboolean spawn_changed = FALSE;
+   for (unsigned int spawn = 4; spawn < 24; spawn++)
+   {
+      if (MapProfileCrossfireSatelliteRecruitRoll(7, spawn, 11) !=
+          stable)
+      {
+         spawn_changed = TRUE;
+         break;
+      }
+   }
+   ASSERT_TRUE(spawn_changed);
+
+   int volunteers = 0;
+   int by_skill[3] = { 0, 0, 0 };
+   for (int event = 0; event < 100; event++)
+   {
+      const int roll = MapProfileCrossfireSatelliteRecruitRoll(
+         event % 32, 1 + event / 32, 100);
+      if (roll < 70)
+      {
+         volunteers++;
+         by_skill[event % 3]++;
+      }
+   }
+   ASSERT_TRUE(volunteers >= 65 && volunteers <= 75);
+   ASSERT_INT(volunteers, 70);
+   ASSERT_TRUE(by_skill[0] > 0 && by_skill[1] > 0 && by_skill[2] > 0);
+
+   // Skill is deliberately absent from the helper inputs.
+   for (int skill = SKILL3; skill <= SKILL5; skill++)
+      ASSERT_INT(MapProfileCrossfireSatelliteRecruitRoll(7, 3, 11),
+         stable);
+
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_decline_does_not_reroll_before_respawn(void)
+{
+   TEST("Satellite declined decision persists until the next spawn");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_declined_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_DECLINED);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitSpawnEpoch(bots[slot]), 1);
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.eligible_events, 1);
+   ASSERT_INT(stats.volunteer_no, 1);
+
+   bots[slot].pEdict->v.origin = Vector(1800.0f, 1800.0f, -1700.0f);
+   MapProfileStartFrame();
+   bots[slot].pEdict->v.origin = waypoints[0].origin;
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_DECLINED);
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.eligible_events, 1);
+
+   bots[slot].f_bot_spawn_time += 100.0f;
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitSpawnEpoch(bots[slot]), 2);
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.eligible_events, 2);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_accepts_bot_without_gauss(void)
+{
+   TEST("Satellite recruits a nearby first-floor bot without Gauss");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(
+      bots[slot], slot, Vector(-722.0f, 414.0f, -1660.0f));
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+   ASSERT_INT(bots[slot].waypoint_goal, 1);
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_recovers_transient_goal_loss(void)
+{
+   TEST("Satellite recruitment restores a transiently cleared safe goal");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(
+      bots[slot], slot, Vector(-722.0f, 414.0f, -1660.0f));
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), slot);
+
+   // Generic navigation can clear a goal while changing waypoint legs. The
+   // named safe anchor is still valid, so recruitment must restore it instead
+   // of treating the transient bot field as an unreachable route.
+   bots[slot].wpt_goal_type = WPT_GOAL_NONE;
+   bots[slot].waypoint_goal = -1;
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), slot);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+   ASSERT_INT(bots[slot].waypoint_goal, 1);
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.assignments, 1);
+   ASSERT_INT(stats.failed_approaches, 0);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_eligibility_bounds_and_route(void)
+{
+   TEST("Satellite eligibility covers nearby floors but excludes far routes");
+
+   setup_satellite_recruitment_waypoints();
+   const Vector eligible_origins[] =
+   {
+      Vector(-555.3f, 360.9f, -1660.0f),
+      Vector(-666.7f, 251.2f, -1668.0f),
+      Vector(-580.0f, 330.0f, -1660.0f),
+      Vector(-833.0f, 319.0f, -1500.0f)
+   };
+   for (int index = 0; index < 4; index++)
+      setup_satellite_recruitment_bot(
+         bots[index], index, eligible_origins[index]);
+   setup_satellite_recruitment_bot(
+      bots[4], 4, Vector(1800.0f, 1800.0f, -1700.0f));
+
+   MapProfileStartFrame();
+   for (int index = 0; index < 4; index++)
+      ASSERT_TRUE(MapProfileCrossfireSatelliteRecruitState(bots[index]) !=
+         CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[4]),
+      CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED);
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.eligible_events, 4);
+
+   MapProfileReset();
+   setup_satellite_recruitment_waypoints();
+   setup_satellite_recruitment_bot(
+      bots[0], 0, Vector(-1000.0f, 1400.0f, -1660.0f));
+   mock_route_distances[0] = WAYPOINT_UNREACHABLE;
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[0]),
+      CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), -1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_emergency_blockers(void)
+{
+   TEST("Satellite recruitment waits through health danger ladder water and strike");
+
+   setup_satellite_recruitment_waypoints();
+   setup_satellite_recruitment_bot(bots[0], 0, waypoints[0].origin);
+   setup_satellite_recruitment_bot(bots[1], 1, waypoints[0].origin);
+   setup_satellite_recruitment_bot(bots[2], 2, waypoints[0].origin);
+   setup_satellite_recruitment_bot(bots[3], 3, waypoints[0].origin);
+   bots[0].pEdict->v.health = 20.0f;
+   bots[1].b_see_tripmine = TRUE;
+   bots[2].b_on_ladder = TRUE;
+   bots[3].b_in_water = TRUE;
+   MapProfileStartFrame();
+   for (int index = 0; index < 4; index++)
+      ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[index]),
+         CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), -1);
+
+   MapProfileReset();
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_UNEVALUATED);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), -1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_reserves_capacity_during_approach(void)
+{
+   TEST("Satellite recruitment reserves capacity before arrival");
+
+   setup_satellite_recruitment_waypoints();
+   int volunteer_slots[5];
+   int volunteer_count = 0;
+   for (int index = 0; index < 32 && volunteer_count < 5; index++)
+   {
+      if (MapProfileCrossfireSatelliteRecruitRoll(index, 1,
+             MapProfileCrossfireSatelliteMapEpoch()) < 70)
+         volunteer_slots[volunteer_count++] = index;
+   }
+   ASSERT_INT(volunteer_count, 5);
+   for (int index = 0; index < volunteer_count; index++)
+      setup_satellite_recruitment_bot(
+         bots[volunteer_slots[index]], volunteer_slots[index],
+         waypoints[0].origin);
+
+   MapProfileStartFrame();
+   int approachers = 0;
+   for (int index = 0; index < volunteer_count; index++)
+   {
+      bot_t &bot = bots[volunteer_slots[index]];
+      MapProfileEnsureStrategicGoal(bot);
+      if (bot.wpt_goal_type == WPT_GOAL_GAUSS_HOLD)
+         approachers++;
+   }
+   ASSERT_INT(approachers, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_replaces_dead_owner_without_oscillation(void)
+{
+   TEST("Satellite recruitment keeps one owner and replaces a dead owner");
+
+   setup_satellite_recruitment_waypoints();
+   int slots[5];
+   int count = 0;
+   for (int index = 0; index < 32 && count < 5; index++)
+   {
+      if (MapProfileCrossfireSatelliteRecruitRoll(index, 1,
+             MapProfileCrossfireSatelliteMapEpoch()) < 70)
+         slots[count++] = index;
+   }
+   ASSERT_INT(count, 5);
+   for (int index = 0; index < count; index++)
+      setup_satellite_recruitment_bot(
+         bots[slots[index]], slots[index], waypoints[0].origin);
+
+   MapProfileStartFrame();
+   const int first_owner = MapProfileCrossfireSatelliteRecruitOwner();
+   ASSERT_TRUE(first_owner >= 0);
+   for (int frame = 0; frame < 4; frame++)
+   {
+      gpGlobals->time += 0.1f;
+      MapProfileStartFrame();
+      ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), first_owner);
+   }
+
+   bots[first_owner].pEdict->v.health = 0.0f;
+   bots[first_owner].pEdict->v.deadflag = DEAD_DEAD;
+   gpGlobals->time += 0.1f;
+   MapProfileStartFrame();
+   const int replacement = MapProfileCrossfireSatelliteRecruitOwner();
+   ASSERT_TRUE(replacement >= 0 && replacement != first_owner);
+
+   int owners = 0;
+   for (int index = 0; index < count; index++)
+   {
+      if (MapProfileCrossfireSatelliteRecruitState(
+             bots[slots[index]]) == CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED)
+         owners++;
+   }
+   ASSERT_INT(owners, 1);
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.assignments, 2);
+   ASSERT_INT(stats.replacement_assignments, 1);
+   ASSERT_INT(stats.reservation_conflicts, 0);
+   ASSERT_INT(stats.stair_congestion, 0);
+   ASSERT_INT(stats.max_simultaneous_approachers, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_rejects_direct_window_route(void)
+{
+   TEST("Satellite recruitment rejects a direct window shortcut");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_FALSE(MapProfileAllowWaypoint(bots[slot], 7, "route"));
+   ASSERT_FALSE(MapProfileAllowWaypoint(bots[slot], 8, "route"));
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_follows_safe_ingress_stages(void)
+{
+   TEST("Satellite recruit follows entrance floor stairs room and waits inside");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_ENTER_BUILDING);
+   ASSERT_INT(bots[slot].waypoint_goal, 1);
+
+   bots[slot].pEdict->v.origin = waypoints[1].origin;
+   bots[slot].curr_waypoint_index = 1;
+   gpGlobals->time += 1.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR);
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[slot]));
+   ASSERT_TRUE(bots[slot].f_move_speed != 0.0f);
+
+   bots[slot].pEdict->v.origin = Vector(-704.0f, 192.0f, -1660.0f);
+   gpGlobals->time += 1.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_CROSS_FIRST_FLOOR);
+
+   bots[slot].pEdict->v.origin = Vector(-832.0f, -16.0f, -1644.0f);
+   gpGlobals->time += 1.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR);
+
+   bots[slot].pEdict->v.origin = Vector(-832.0f, 86.0f, -1580.0f);
+   gpGlobals->time += 1.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_CLIMB_SECOND_FLOOR);
+
+   bots[slot].pEdict->v.origin = Vector(-832.0f, 176.0f, -1516.0f);
+   gpGlobals->time += 1.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_RECRUIT_ENTER_STRONGHOLD);
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bots[slot]));
+
+   bots[slot].pEdict->v.origin = Vector(-833.0f, 319.0f, -1500.0f);
+   gpGlobals->time += 1.0f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_TRUE(MapProfileCrossfireIsGaussStrongholdActive(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_STRONGHOLD_WAIT_RESPAWN);
+   ASSERT_INT(bots[slot].waypoint_goal, 7);
+   ASSERT_FALSE(BotIsCarryingWeapon(bots[slot], VALVE_WEAPON_GAUSS));
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.successful_arrivals, 1);
+   ASSERT_TRUE(stats.total_arrival_seconds >= 5.0f);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_acquires_local_gauss_after_arrival(void)
+{
+   TEST("Satellite recruit without Gauss acquires local Gauss then holds window");
+
+   setup_satellite_recruitment_waypoints();
+   edict_t *gauss = spawn_stronghold_resource(
+      "weapon_gauss", waypoints[6].origin);
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(
+      bots[slot], slot, Vector(-833.0f, 319.0f, -1500.0f));
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_STRONGHOLD_RESUPPLY_GAUSS);
+   ASSERT_PTR_EQ(bots[slot].pBotPickupItem, gauss);
+   ASSERT_INT(bots[slot].waypoint_goal, 6);
+
+   bots[slot].pEdict->v.weapons |= (1u << VALVE_WEAPON_GAUSS);
+   bots[slot].m_rgAmmo[6] = 30;
+   gauss->v.effects |= EF_NODRAW;
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_STRONGHOLD_RETURN_TO_WINDOW);
+
+   bots[slot].pEdict->v.origin = waypoints[7].origin;
+   bots[slot].curr_waypoint_index = 7;
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussStrongholdStage(bots[slot]),
+      CROSSFIRE_GAUSS_STRONGHOLD_WINDOW_HOLD);
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.successful_arrivals, 1);
+   ASSERT_INT(stats.gauss_acquisitions, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_tracks_skill_without_using_it(void)
+{
+   TEST("Satellite recruitment reports skill buckets without changing rolls");
+
+   setup_satellite_recruitment_waypoints();
+   for (int index = 0; index < 3; index++)
+   {
+      setup_satellite_recruitment_bot(
+         bots[index], index, waypoints[0].origin);
+      bots[index].weapon_skill = SKILL3 + index;
+   }
+
+   MapProfileStartFrame();
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.eligible_events, 3);
+   for (int bucket = 0; bucket < 3; bucket++)
+   {
+      ASSERT_INT(stats.skill_eligible[bucket], 1);
+      ASSERT_INT(stats.skill_volunteer_yes[bucket] +
+         stats.skill_volunteer_no[bucket], 1);
+   }
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_preserves_route_during_combat(void)
+{
+   TEST("Satellite recruit returns fire without enemy or pickup locomotion");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   const int approach_goal = bots[slot].waypoint_goal;
+   ASSERT_TRUE(approach_goal >= 0);
+
+   edict_t *enemy = mock_alloc_edict();
+   enemy->v.flags = FL_CLIENT;
+   enemy->v.origin = Vector(0.0f, -600.0f, -1720.0f);
+   edict_t *external_weapon = mock_alloc_edict();
+   bots[slot].pBotEnemy = enemy;
+   bots[slot].pBotPickupItem = external_weapon;
+   bots[slot].wpt_goal_type = WPT_GOAL_ENEMY;
+   bots[slot].waypoint_goal = 8;
+
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_PTR_EQ(bots[slot].pBotEnemy, enemy);
+   ASSERT_PTR_EQ(bots[slot].pBotPickupItem, NULL);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+   ASSERT_INT(bots[slot].waypoint_goal, approach_goal);
+   ASSERT_TRUE(MapProfileShouldYieldToStrategicMovement(bots[slot]));
+   ASSERT_FALSE(MapProfileShouldSuppressCombat(bots[slot]));
+   ASSERT_TRUE(MapProfileShouldPrioritizeCombat(bots[slot]));
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.enemy_pursuit_suppressions, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_requires_confirmed_stuck(void)
+{
+   TEST("Satellite recruit survives a short stop and releases confirmed stuck");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), slot);
+
+   bots[slot].trace_last_stuck_wpt = bots[slot].curr_waypoint_index;
+   bots[slot].f_last_stuck_time = gpGlobals->time;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   gpGlobals->time += 1.0f;
+   bots[slot].f_last_stuck_time = gpGlobals->time;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), slot);
+
+   gpGlobals->time += 1.1f;
+   bots[slot].f_last_stuck_time = gpGlobals->time;
+   ASSERT_FALSE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), -1);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_VOLUNTEER);
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.failed_approaches, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_recruitment_strike_preempts_and_recovers(void)
+{
+   TEST("Satellite recruitment yields to strike and reuses its one-life roll");
+
+   setup_satellite_recruitment_waypoints();
+   const int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_satellite_recruitment_bot(bots[slot], slot, waypoints[0].origin);
+
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), slot);
+   const unsigned int spawn_epoch =
+      MapProfileCrossfireSatelliteRecruitSpawnEpoch(bots[slot]);
+
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), -1);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_TRUE(bots[slot].wpt_goal_type == WPT_GOAL_BUNKER ||
+      bots[slot].wpt_goal_type == WPT_GOAL_BUNKER_SHAFT);
+
+   gpGlobals->time += 71.0f;
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitSpawnEpoch(bots[slot]),
+      spawn_epoch);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitOwner(), slot);
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED);
+
+   crossfire_satellite_recruit_stats_t stats;
+   MapProfileCrossfireGetSatelliteRecruitStats(&stats);
+   ASSERT_INT(stats.eligible_events, 1);
+   ASSERT_INT(stats.strike_preemptions, 1);
+   ASSERT_INT(stats.assignments, 2);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -1931,6 +2636,21 @@ int main(void)
    fail |= test_satellite_stronghold_scans_local_windows();
    fail |= test_satellite_stronghold_capacity_releases_dead_bot();
    fail |= test_satellite_stronghold_strike_is_absolute();
+   fail |= test_satellite_recruit_roll_is_stable_and_balanced();
+   fail |= test_satellite_decline_does_not_reroll_before_respawn();
+   fail |= test_satellite_recruitment_accepts_bot_without_gauss();
+   fail |= test_satellite_recruitment_recovers_transient_goal_loss();
+   fail |= test_satellite_recruitment_eligibility_bounds_and_route();
+   fail |= test_satellite_recruitment_emergency_blockers();
+   fail |= test_satellite_recruitment_reserves_capacity_during_approach();
+   fail |= test_satellite_recruitment_replaces_dead_owner_without_oscillation();
+   fail |= test_satellite_recruitment_rejects_direct_window_route();
+   fail |= test_satellite_recruitment_follows_safe_ingress_stages();
+   fail |= test_satellite_recruitment_acquires_local_gauss_after_arrival();
+   fail |= test_satellite_recruitment_tracks_skill_without_using_it();
+   fail |= test_satellite_recruitment_preserves_route_during_combat();
+   fail |= test_satellite_recruitment_requires_confirmed_stuck();
+   fail |= test_satellite_recruitment_strike_preempts_and_recovers();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

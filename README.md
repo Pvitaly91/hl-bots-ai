@@ -1,17 +1,22 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-10
+HLDM-JKBOTTI-AI-STAND-20260415-11
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
 
 The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, the Python sidecar uses a deterministic rules engine. If the sidecar is absent or errors, the server and bot plugin still run.
 
-## Crossfire Satellite Operations Gauss Stronghold
+## Crossfire Satellite Operations Recruitment and Gauss Stronghold
 
-The `crossfire` map profile now gives one Gauss bot a persistent Satellite Operations second-floor defender role. Zero uranium, temporary loss of targets, fallback weapon selection, and local health or armor needs no longer cancel the role. The bot remains in the bounded room zone, rejects enemy and item routes into the yard, uses guarded window positions, and returns to a firing window after local resupply.
+The `crossfire` map profile recruits nearby bots to occupy the persistent Satellite Operations second-floor Gauss stronghold. The original role required a bot to arrive with usable Gauss ammo, so an empty room could not recruit a first-floor or exterior bot. Recruitment now makes one deterministic 70% decision per bot life, reserves the capacity-one role before movement begins, and lets the selected owner obtain Gauss and uranium after safe arrival.
 
+- Recruitment bounds are `X [-1250,-320]`, `Y [-360,1560]`, and `Z [-1840,-1450]`. Candidates must also have a safe entrance route no longer than `1400` waypoint units and cannot be drawn from the far side of the map.
+- The staged ingress is exterior waypoint `112` `(-555.3,360.9,-1660)` -> first-floor waypoint `128` `(-666.7,251.2,-1668)` -> corridor `(-704,192,-1660)` -> stair entry `(-832,-16,-1644)` -> stair middle `(-832,86,-1580)` -> second-floor landing `(-832,176,-1516)` -> stronghold waypoint `45` `(-833,319,-1500)` -> local Gauss waypoint `47` -> window waypoint `99/100`.
+- A one-life state is retained as unevaluated, declined, volunteer, or assigned. The roll hashes bot slot, spawn epoch derived from `f_bot_spawn_time`, and map epoch; skill, enemy, name, frame time, and repeated zone entry do not reroll it.
+- Capacity remains one from initial approach through occupancy. Other accepted volunteers stay in normal play as standby; death, confirmed stuck, true route failure, or release selects a stable replacement after cooldown.
+- Assigned movement remains authoritative over enemies and external pickups. Bots can aim and return fire, but enemy locomotion and unsafe window/drop shortcuts are rejected. Strike still clears the owner immediately and hands control to bunker/shaft evacuation without rerolling the life afterward.
 - Stronghold bounds are `X [-1040,-640]`, `Y [128,1340]`, and `Z [-1540,-1450]`; capacity is one live bot.
 - Window firing waypoints are `99` and `100`. Local resource waypoints include health charger `45`, Gauss/uranium `47`, MP5/AR grenades `48`, crossbow `49`, and batteries `58`.
 - Local resources are `weapon_gauss`, `ammo_gaussclip`/`ammo_uranium`, `weapon_9mmAR`, `ammo_ARgrenades`, `weapon_crossbow`, `item_battery`, `item_healthkit`/`func_healthcharger`, and `func_recharge` when present inside the zone.
@@ -22,6 +27,10 @@ The `crossfire` map profile now gives one Gauss bot a persistent Satellite Opera
 Prompt 10 controlled scenarios A-H passed on the isolated `27017` validation server with 12 bots and `jk_ai_balance_enabled 0`: Gauss secondary fire, `0 -> 33/53` local uranium refill, respawn waiting, crossbow and MP5 fallback, MP5 secondary, armor `15 -> 30`, health charger `30 -> 75`, return-to-window, no actual zone exit or recoil fall, and strike egress were all observed. Validation-only commands and entity controls are not included in the production plugin.
 
 A separate injection-free 20-minute natural soak passed with 12 bots: two stronghold entries, `245.4` accumulated stronghold-seconds, two health pickups, four armor pickups, five returns to a window, 96 prevented enemy pursuits, two successful strike exits, zero unexpected zone exits, zero recoil falls, and 18/18 accounted Gauss-secondary starts/releases. The natural match did not randomly deplete uranium, so local ammo respawn and fallback behavior remain evidenced by controlled scenarios B, C, and G rather than being attributed to the soak.
+
+Prompt 11 controlled validation produced exactly `70/100` volunteers (`skill 3: 22/34`, `skill 4: 26/33`, `skill 5: 22/33`) with identical repeated output. Five-volunteer concurrency kept one approacher, selected a replacement after owner death, and recorded zero reservation conflicts and stair congestion. Staged exterior and first-floor routes both reached `RESUPPLY_GAUSS` in about 12 seconds, acquired local Gauss with 20 uranium, preserved return fire without enemy locomotion, and yielded immediately to strike at every tested ingress stage.
+
+The independent 30-minute natural run used 12 unmodified bots and no teleport/loadout/entity injection. From its clean initial sample it recorded 130 eligibility decisions (`99` yes, `31` no; `76.2%`, with the required 25-minute window at `75.2%`), 16 assignments, four arrivals, 12 exterior and four first-floor approaches, two local Gauss acquisitions, 15 replacement assignments, at most one simultaneous approacher, zero reservation conflicts, zero stair congestion, 5,794 enemy-locomotion suppressions, and four strike exits. One non-route displacement was conservatively counted as both an unexpected exit and possible recoil fall; the persistent controller returned the owner and no unsafe ingress/window shortcut was observed. The exact controlled distribution remains the authoritative proof of the configured 70% decision rather than overfitting the hash to one finite natural sample.
 
 ## What This Repo Contains
 
