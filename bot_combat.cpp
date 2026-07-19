@@ -2012,6 +2012,8 @@ static void BotGaussResetSecondaryCharge(bot_t &pBot, int state)
       pBot.pEdict->v.button &= ~IN_ATTACK2;
 
    pBot.gauss_secondary_state = state;
+   if (state == BOT_GAUSS_SECONDARY_IDLE)
+      pBot.gauss_charge_purpose = BOT_GAUSS_CHARGE_NONE;
    pBot.f_secondary_charging = -1.0f;
    pBot.f_gauss_secondary_lost_time = 0.0f;
    if (state == BOT_GAUSS_SECONDARY_IDLE)
@@ -2094,6 +2096,7 @@ static qboolean BotGaussStartSecondaryCharge(bot_t &pBot, float distance)
 
    BotGaussClearWaitReason(pBot);
    BotGaussCount(pBot, distance, BOT_GAUSS_COUNTER_START);
+   pBot.gauss_charge_purpose = BOT_GAUSS_CHARGE_COMBAT;
    pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_HOLD;
    pBot.f_gauss_secondary_start_time = gpGlobals->time;
    pBot.f_gauss_secondary_release_time = gpGlobals->time + desired_charge;
@@ -2139,6 +2142,14 @@ static bot_gauss_attack_decision_t BotGaussSelectAttack(
    use_primary = FALSE;
    use_secondary = FALSE;
    decision_reason = BOT_GAUSS_REASON_NONE;
+
+   if (pBot.gauss_charge_purpose == BOT_GAUSS_CHARGE_JUMP)
+   {
+      decision_reason = BOT_GAUSS_REASON_STRATEGIC_CROSSFIRE;
+      BotGaussSetAttackDecision(pBot, BOT_GAUSS_ATTACK_WAIT_SECONDARY,
+         decision_reason);
+      return BOT_GAUSS_ATTACK_WAIT_SECONDARY;
+   }
 
    if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_RELEASE_WAIT)
    {
@@ -2304,6 +2315,11 @@ static void BotGaussAdjustSecondaryChargePlan(bot_t &pBot, float distance)
 
 qboolean BotGaussUpdateSecondaryCharge(bot_t &pBot)
 {
+   // Crossfire jump links own ATTACK2 and release timing explicitly. Combat
+   // charging must not re-plan, abort, or fire primary during that window.
+   if (pBot.gauss_charge_purpose == BOT_GAUSS_CHARGE_JUMP)
+      return FALSE;
+
    if (pBot.gauss_secondary_state == BOT_GAUSS_SECONDARY_IDLE)
       return FALSE;
 

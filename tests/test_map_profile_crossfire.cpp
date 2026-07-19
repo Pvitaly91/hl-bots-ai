@@ -2599,6 +2599,697 @@ static int test_satellite_recruitment_strike_preempts_and_recovers(void)
 }
 
 
+static void trace_gauss_jump_geometry(const float *v1, const float *v2,
+   int fNoMonsters, int hullNumber, edict_t *pentToSkip,
+   TraceResult *trace)
+{
+   (void)fNoMonsters;
+   (void)hullNumber;
+   (void)pentToSkip;
+   const Vector start(v1[0], v1[1], v1[2]);
+   const Vector end(v2[0], v2[1], v2[2]);
+   const Vector offset = end - start;
+
+   memset(trace, 0, sizeof(*trace));
+   trace->flFraction = 1.0f;
+   trace->vecEndPos[0] = end.x;
+   trace->vecEndPos[1] = end.y;
+   trace->vecEndPos[2] = end.z;
+   if (offset.z < -20.0f && offset.Make2D().Length() < 4.0f &&
+       !mock_force_unsupported_floor)
+   {
+      trace->flFraction = 0.5f;
+      const Vector hit = (start + end) * 0.5f;
+      trace->vecEndPos[0] = hit.x;
+      trace->vecEndPos[1] = hit.y;
+      trace->vecEndPos[2] = hit.z;
+      trace->vecPlaneNormal[2] = 1.0f;
+   }
+}
+
+
+static void setup_gauss_jump_waypoints(void)
+{
+   setup_crossfire();
+   num_waypoints = 312;
+   for (int index = 0; index < num_waypoints; index++)
+   {
+      waypoints[index].flags = W_FL_DELETED;
+      waypoints[index].itemflags = 0;
+      waypoints[index].origin = Vector(0.0f, 0.0f, 0.0f);
+   }
+
+   waypoints[35].flags = W_FL_WEAPON;
+   waypoints[35].itemflags = W_IFL_EGON;
+   waypoints[35].origin = Vector(0.0f, -192.0f, -1660.0f);
+   waypoints[45].flags = 0;
+   waypoints[45].origin = Vector(-833.0f, 319.0f, -1500.0f);
+   waypoints[47].flags = W_FL_WEAPON | W_FL_AMMO;
+   waypoints[47].itemflags = W_IFL_GAUSS | W_IFL_AMMO_GAUSS;
+   waypoints[47].origin = Vector(-976.0f, 608.0f, -1500.0f);
+   waypoints[50].flags = W_FL_AMMO;
+   waypoints[50].itemflags = W_IFL_AMMO_GAUSS;
+   waypoints[50].origin = Vector(-360.0f, 56.0f, -1660.0f);
+   waypoints[99].flags = W_FL_AIMING;
+   waypoints[99].origin = Vector(-735.6f, 592.4f, -1500.0f);
+   waypoints[100].flags = W_FL_AIMING;
+   waypoints[100].origin = Vector(-900.0f, 800.0f, -1500.0f);
+   waypoints[112].flags = 0;
+   waypoints[112].origin = Vector(-555.3f, 360.9f, -1660.0f);
+   waypoints[121].flags = 0;
+   waypoints[121].origin = Vector(-41.2f, -390.3f, -1820.0f);
+   waypoints[128].flags = 0;
+   waypoints[128].origin = Vector(-666.7f, 251.2f, -1668.0f);
+   waypoints[133].flags = 0;
+   waypoints[133].origin = Vector(-75.8f, -178.0f, -1660.0f);
+   waypoints[134].flags = W_FL_ARMOR;
+   waypoints[134].origin = Vector(128.0f, 128.0f, -1660.0f);
+   waypoints[311].flags = 0;
+   waypoints[311].origin = Vector(-432.6f, 621.9f, -1628.0f);
+
+   for (int index = 0; index < num_waypoints; index++)
+      mock_route_distances[index] = WAYPOINT_UNREACHABLE;
+   mock_route_distances[35] = 320.0f;
+   mock_route_distances[45] = 640.0f;
+   mock_route_distances[47] = 700.0f;
+   mock_route_distances[50] = 340.0f;
+   mock_route_distances[99] = 800.0f;
+   mock_route_distances[100] = 820.0f;
+   mock_route_distances[112] = 120.0f;
+   mock_route_distances[121] = 80.0f;
+   mock_route_distances[128] = 300.0f;
+   mock_route_distances[133] = 360.0f;
+   mock_route_distances[134] = 380.0f;
+   mock_route_distances[311] = 0.0f;
+
+   InitWeaponSelect(SUBMOD_HLDM);
+   weapon_defs[VALVE_WEAPON_GAUSS].iId = VALVE_WEAPON_GAUSS;
+   weapon_defs[VALVE_WEAPON_GAUSS].iAmmo1 = 6;
+   weapon_defs[VALVE_WEAPON_EGON].iId = VALVE_WEAPON_EGON;
+   weapon_defs[VALVE_WEAPON_EGON].iAmmo1 = 6;
+   mock_trace_line_fn = trace_gauss_jump_geometry;
+   mock_trace_hull_fn = trace_gauss_jump_geometry;
+}
+
+
+static void setup_jump_bot(bot_t &bot, int slot, const Vector &origin,
+   qboolean has_gauss)
+{
+   setup_gauss_bot(bot, mock_alloc_edict(), origin);
+   snprintf(bot.name, sizeof(bot.name), "GaussJump%d", slot);
+   bot.f_bot_spawn_time = 100.0f + slot;
+   bot.curr_waypoint_index = 0;
+   bot.current_weapon.iId = has_gauss ? VALVE_WEAPON_GAUSS :
+      VALVE_WEAPON_GLOCK;
+   bot.b_on_ground = TRUE;
+   bot.pEdict->v.flags |= FL_ONGROUND;
+   bot.pEdict->v.armorvalue = 100.0f;
+   if (!has_gauss)
+   {
+      bot.pEdict->v.weapons &= ~(1u << VALVE_WEAPON_GAUSS);
+      bot.m_rgAmmo[6] = 0;
+   }
+}
+
+
+static int select_satellite_jump(void)
+{
+   const int slot = satellite_volunteer_slot(0);
+   if (slot < 0)
+      return -1;
+   setup_jump_bot(bots[slot], slot, waypoints[311].origin, TRUE);
+   bots[slot].curr_waypoint_index = 311;
+   MapProfileStartFrame();
+   if (!MapProfileEnsureStrategicGoal(bots[slot]))
+      return -1;
+   return slot;
+}
+
+
+static int test_gauss_jump_links_match_controlled_calibration(void)
+{
+   TEST("Crossfire exposes exactly two calibrated Gauss jump links");
+
+   setup_gauss_jump_waypoints();
+   ASSERT_INT(MapProfileCrossfireGaussJumpLinkCount(), 2);
+   const crossfire_gauss_jump_link_t *satellite =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   const crossfire_gauss_jump_link_t *loft =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_TUNNEL_LOFT);
+   ASSERT_PTR_NOT_NULL(satellite);
+   ASSERT_PTR_NOT_NULL(loft);
+   ASSERT_STR(satellite->name, "satellite_operations_window");
+   ASSERT_INT(satellite->launch_waypoint, 311);
+   ASSERT_VEC(satellite->launch_origin, -432.6f, 621.9f, -1628.0f);
+   ASSERT_FLOAT_NEAR(satellite->desired_yaw, 5.5f, 0.01f);
+   ASSERT_FLOAT_NEAR(satellite->desired_pitch, 35.0f, 0.01f);
+   ASSERT_FLOAT_NEAR(satellite->charge_time, 0.8f, 0.01f);
+   ASSERT_STR(loft->name, "tunnel_loft_left_window");
+   ASSERT_INT(loft->launch_waypoint, 121);
+   ASSERT_VEC(loft->launch_origin, -128.0f, -390.0f, -1820.0f);
+   ASSERT_FLOAT_NEAR(loft->desired_yaw, -90.0f, 0.01f);
+   ASSERT_FLOAT_NEAR(loft->desired_pitch, 65.0f, 0.01f);
+   ASSERT_FLOAT_NEAR(loft->charge_time, 0.8f, 0.01f);
+   ASSERT_FLOAT_NEAR(loft->landing_floor_z, -1660.0f, 0.01f);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_owner_selects_jump_and_preserves_stairs_fallback(void)
+{
+   TEST("Assigned Satellite owner selects jump only when every guard passes");
+
+   setup_gauss_jump_waypoints();
+   int slot = select_satellite_jump();
+   ASSERT_TRUE(slot >= 0);
+   ASSERT_INT(MapProfileCrossfireGaussJumpLink(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_APPROACH);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_JUMP);
+
+   MapProfileReset();
+   setup_gauss_jump_waypoints();
+   slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, waypoints[311].origin, FALSE);
+   bots[slot].curr_waypoint_index = 311;
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   MapProfileReset();
+   setup_gauss_jump_waypoints();
+   slot = satellite_volunteer_slot(0);
+   setup_jump_bot(bots[slot], slot, waypoints[311].origin, TRUE);
+   bots[slot].curr_waypoint_index = 311;
+   bots[slot].m_rgAmmo[6] = 1;
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_satellite_jump_state_machine_hands_off_to_stronghold(void)
+{
+   TEST("Satellite jump charges launches lands and enters existing stronghold");
+
+   setup_gauss_jump_waypoints();
+   const int slot = select_satellite_jump();
+   ASSERT_TRUE(slot >= 0);
+   bot_t &bot = bots[slot];
+   const crossfire_gauss_jump_link_t *link =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_SATELLITE);
+
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_ALIGN);
+   bot.pEdict->v.v_angle.y = link->desired_yaw;
+   bot.pEdict->v.v_angle.x = link->desired_pitch;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_STABILIZE);
+   gpGlobals->time += 0.3f;
+   bot.pEdict->v.button = 0;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_CHARGE);
+   ASSERT_TRUE(FBitSet(bot.pEdict->v.button, IN_ATTACK2));
+   ASSERT_INT(bot.gauss_charge_purpose, BOT_GAUSS_CHARGE_JUMP);
+
+   gpGlobals->time += link->charge_time + 0.01f;
+   bot.pEdict->v.button = 0;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_FLIGHT);
+   ASSERT_TRUE(FBitSet(bot.pEdict->v.button, IN_JUMP));
+   ASSERT_TRUE(FBitSet(bot.pEdict->v.button, IN_DUCK));
+   ASSERT_FALSE(FBitSet(bot.pEdict->v.button, IN_ATTACK2));
+
+   bot.b_on_ground = FALSE;
+   bot.pEdict->v.flags &= ~FL_ONGROUND;
+   bot.pEdict->v.velocity = Vector(-450.0f, -45.0f, 520.0f);
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   bot.pEdict->v.origin = Vector(-785.7f, 587.9f, -1500.0f);
+   bot.pEdict->v.velocity = Vector(0.0f, 0.0f, 0.0f);
+   bot.b_on_ground = TRUE;
+   bot.pEdict->v.flags |= FL_ONGROUND;
+   gpGlobals->time += 0.7f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bot.gauss_charge_purpose, BOT_GAUSS_CHARGE_NONE);
+   ASSERT_TRUE(MapProfileCrossfireIsGaussStrongholdActive(bot));
+
+   crossfire_gauss_jump_stats_t stats;
+   MapProfileCrossfireGetGaussJumpStats(&stats);
+   ASSERT_INT(stats.jump_attempts, 1);
+   ASSERT_INT(stats.jump_successes, 1);
+   ASSERT_INT(stats.satellite_jump_successes, 1);
+   ASSERT_INT(stats.jump_deaths, 0);
+   ASSERT_INT(stats.recoil_falls, 0);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_tunnel_loft_jump_and_weapon_policy(void)
+{
+   TEST("Tunnel loft jump preserves uranium and selects Egon only in its lane");
+
+   setup_gauss_jump_waypoints();
+   const int slot = satellite_declined_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, Vector(-128.0f, -390.0f, -1820.0f),
+      TRUE);
+   bots[slot].curr_waypoint_index = 121;
+   edict_t *egon = spawn_stronghold_resource("weapon_egon",
+      Vector(0.0f, -192.0f, -1680.0f));
+   edict_t *uranium_a = spawn_stronghold_resource("ammo_gaussclip",
+      Vector(-360.0f, 56.0f, -1680.0f));
+   edict_t *uranium_b = spawn_stronghold_resource("ammo_gaussclip",
+      Vector(-360.0f, 104.0f, -1680.0f));
+   edict_t *outside_battery = spawn_stronghold_resource("item_battery",
+      Vector(472.0f, 280.0f, -1520.0f));
+   edict_t *inside_battery = spawn_stronghold_resource("item_battery",
+      Vector(128.0f, 128.0f, -1660.0f));
+   MapProfileStartFrame();
+   ASSERT_INT(MapProfileCrossfireSatelliteRecruitState(bots[slot]),
+      CROSSFIRE_SATELLITE_RECRUIT_DECLINED);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpLink(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_TUNNEL_LOFT);
+
+   bot_t &bot = bots[slot];
+   const crossfire_gauss_jump_link_t *link =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_TUNNEL_LOFT);
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   bot.pEdict->v.v_angle.y = link->desired_yaw;
+   bot.pEdict->v.v_angle.x = link->desired_pitch;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   gpGlobals->time += link->charge_time + 0.01f;
+   bot.pEdict->v.button = 0;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   bot.b_on_ground = FALSE;
+   bot.pEdict->v.flags &= ~FL_ONGROUND;
+   bot.pEdict->v.velocity = Vector(0.0f, 140.0f, 535.0f);
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   bot.pEdict->v.origin = Vector(-128.0f, -250.8f, -1678.0f);
+   bot.pEdict->v.velocity = Vector(0.0f, 0.0f, 0.0f);
+   bot.b_on_ground = TRUE;
+   bot.pEdict->v.flags |= FL_ONGROUND;
+   gpGlobals->time += 0.9f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_TRUE(MapProfileCrossfireIsTunnelLoftActive(bot));
+   ASSERT_TRUE(MapProfileCrossfireIsOriginInsideTunnelLoft(
+      Vector(-128.0f, -192.0f, -1660.0f)));
+   ASSERT_PTR_EQ(bot.pBotPickupItem, egon);
+   ASSERT_TRUE(MapProfileShouldPreservePickup(bot, egon));
+
+   bot.pEdict->v.weapons |= (1u << VALVE_WEAPON_EGON);
+   egon->v.effects |= EF_NODRAW;
+   bot.m_rgAmmo[6] = 4;
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   ASSERT_TRUE(bot.pBotPickupItem == uranium_a ||
+      bot.pBotPickupItem == uranium_b);
+   edict_t *first_uranium = bot.pBotPickupItem;
+   first_uranium->v.effects |= EF_NODRAW;
+   bot.m_rgAmmo[6] = 9;
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   ASSERT_TRUE(bot.pBotPickupItem == uranium_a ||
+      bot.pBotPickupItem == uranium_b);
+   ASSERT_TRUE(bot.pBotPickupItem != first_uranium);
+   bot.pBotPickupItem->v.effects |= EF_NODRAW;
+   bot.m_rgAmmo[6] = 25;
+   bot.pEdict->v.armorvalue = 0.0f;
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   ASSERT_PTR_EQ(bot.pBotPickupItem, inside_battery);
+   ASSERT_TRUE(bot.pBotPickupItem != outside_battery);
+   inside_battery->v.effects |= EF_NODRAW;
+   bot.pEdict->v.armorvalue = 15.0f;
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+
+   bot.weapon_skill = SKILL3;
+   bot.m_rgAmmo[6] = CROSSFIRE_EGON_URANIUM_RESERVE + 12;
+   ASSERT_INT(MapProfilePreferredWeapon(bot, 320.0f), VALVE_WEAPON_EGON);
+   ASSERT_INT(MapProfilePreferredWeapon(bot, 1100.0f),
+      VALVE_WEAPON_GAUSS);
+   bot.m_rgAmmo[6] = CROSSFIRE_EGON_URANIUM_RESERVE;
+   ASSERT_INT(MapProfilePreferredWeapon(bot, 320.0f),
+      VALVE_WEAPON_GAUSS);
+
+   crossfire_gauss_jump_stats_t stats;
+   MapProfileCrossfireGetGaussJumpStats(&stats);
+   ASSERT_INT(stats.tunnel_loft_jump_successes, 1);
+   ASSERT_INT(stats.egon_pickups, 1);
+   ASSERT_INT(stats.uranium_reserve_blocks, 1);
+
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_FALSE(MapProfileCrossfireIsTunnelLoftActive(bot));
+   ASSERT_PTR_EQ(bot.pBotPickupItem, NULL);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_strike_cancels_pre_takeoff_jump_charge(void)
+{
+   TEST("Crossfire strike cancels a pre-takeoff jump and releases ATTACK2");
+
+   setup_gauss_jump_waypoints();
+   waypoints[300].flags = 0;
+   waypoints[300].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   const int slot = select_satellite_jump();
+   ASSERT_TRUE(slot >= 0);
+   bot_t &bot = bots[slot];
+   const crossfire_gauss_jump_link_t *link =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   bot.pEdict->v.v_angle.y = link->desired_yaw;
+   bot.pEdict->v.v_angle.x = link->desired_pitch;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_TRUE(FBitSet(bot.pEdict->v.button, IN_ATTACK2));
+
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bot.gauss_charge_purpose, BOT_GAUSS_CHARGE_NONE);
+   ASSERT_FALSE(FBitSet(bot.pEdict->v.button, IN_ATTACK2));
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bot));
+   ASSERT_TRUE(bot.wpt_goal_type == WPT_GOAL_BUNKER ||
+      bot.wpt_goal_type == WPT_GOAL_BUNKER_SHAFT);
+
+   crossfire_gauss_jump_stats_t stats;
+   MapProfileCrossfireGetGaussJumpStats(&stats);
+   ASSERT_INT(stats.strike_aborts, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static qboolean advance_gauss_jump_to_flight(bot_t &bot,
+   const crossfire_gauss_jump_link_t &link)
+{
+   if (!MapProfileHandleSpecialMovement(bot) ||
+       MapProfileCrossfireGaussJumpStage(bot) !=
+          CROSSFIRE_GAUSS_JUMP_ALIGN)
+      return FALSE;
+
+   bot.pEdict->v.v_angle.y = link.desired_yaw;
+   bot.pEdict->v.v_angle.x = link.desired_pitch;
+   if (!MapProfileHandleSpecialMovement(bot) ||
+       MapProfileCrossfireGaussJumpStage(bot) !=
+          CROSSFIRE_GAUSS_JUMP_STABILIZE)
+      return FALSE;
+
+   gpGlobals->time += 0.3f;
+   bot.pEdict->v.button = 0;
+   if (!MapProfileHandleSpecialMovement(bot) ||
+       MapProfileCrossfireGaussJumpStage(bot) !=
+          CROSSFIRE_GAUSS_JUMP_CHARGE)
+      return FALSE;
+
+   gpGlobals->time += link.charge_time + 0.01f;
+   bot.pEdict->v.button = 0;
+   return MapProfileHandleSpecialMovement(bot) &&
+      MapProfileCrossfireGaussJumpStage(bot) ==
+         CROSSFIRE_GAUSS_JUMP_FLIGHT;
+}
+
+
+static int test_gauss_jump_rejects_unsafe_selection_guards(void)
+{
+   TEST("Gauss jump selection rejects low health occupied landing and distance");
+
+   setup_gauss_jump_waypoints();
+   int slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, waypoints[311].origin, TRUE);
+   bots[slot].curr_waypoint_index = 311;
+   MapProfileStartFrame();
+   const crossfire_gauss_jump_link_t *link =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   bots[slot].pEdict->v.health = (float)(link->min_health - 1);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   MapProfileReset();
+   setup_gauss_jump_waypoints();
+   slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, waypoints[311].origin, TRUE);
+   bots[slot].curr_waypoint_index = 311;
+   MapProfileStartFrame();
+   link = MapProfileCrossfireGaussJumpLink(
+      CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   const int blocker_slot = slot == 0 ? 1 : 0;
+   const Vector occupied_landing(
+      (link->landing_mins.x + link->landing_maxs.x) * 0.5f,
+      (link->landing_mins.y + link->landing_maxs.y) * 0.5f,
+      link->landing_floor_z);
+   setup_jump_bot(bots[blocker_slot], blocker_slot, occupied_landing, FALSE);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   MapProfileReset();
+   setup_gauss_jump_waypoints();
+   slot = satellite_volunteer_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, waypoints[311].origin, TRUE);
+   bots[slot].curr_waypoint_index = 311;
+   MapProfileStartFrame();
+   bots[slot].pEdict->v.origin = Vector(900.0f, 900.0f, -1628.0f);
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bots[slot].wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   MapProfileReset();
+   setup_gauss_jump_waypoints();
+   slot = satellite_declined_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, Vector(900.0f, 900.0f, -1820.0f),
+      TRUE);
+   bots[slot].curr_waypoint_index = 121;
+   MapProfileStartFrame();
+   MapProfileEnsureStrategicGoal(bots[slot]);
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_gauss_jump_failure_cleans_charge_and_uses_fallback(void)
+{
+   TEST("Gauss jump bounds weapon retry and falls back after wrong floor");
+
+   setup_gauss_jump_waypoints();
+   int slot = select_satellite_jump();
+   ASSERT_TRUE(slot >= 0);
+   bot_t &bot = bots[slot];
+   const crossfire_gauss_jump_link_t *link =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   crossfire_gauss_jump_stats_t baseline_stats;
+   MapProfileCrossfireGetGaussJumpStats(&baseline_stats);
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   bot.pEdict->v.v_angle.y = link->desired_yaw;
+   bot.pEdict->v.v_angle.x = link->desired_pitch;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   gpGlobals->time += 0.3f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_CHARGE);
+   bot.current_weapon.iId = VALVE_WEAPON_GLOCK;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_RECOVER);
+   ASSERT_INT(bot.gauss_charge_purpose, BOT_GAUSS_CHARGE_NONE);
+   ASSERT_FALSE(FBitSet(bot.pEdict->v.button, IN_ATTACK2));
+   crossfire_gauss_jump_stats_t first_failure_stats;
+   MapProfileCrossfireGetGaussJumpStats(&first_failure_stats);
+   ASSERT_INT(first_failure_stats.jump_failures -
+      baseline_stats.jump_failures, 1);
+   gpGlobals->time += 1.1f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_APPROACH);
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_STABILIZE);
+   gpGlobals->time += 1.1f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(bot.wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   crossfire_gauss_jump_stats_t retry_stats;
+   MapProfileCrossfireGetGaussJumpStats(&retry_stats);
+   ASSERT_INT(retry_stats.jump_failures - baseline_stats.jump_failures, 2);
+   ASSERT_INT(retry_stats.stairs_fallbacks - baseline_stats.stairs_fallbacks,
+      1);
+
+   MapProfileReset();
+   setup_gauss_jump_waypoints();
+   slot = select_satellite_jump();
+   ASSERT_TRUE(slot >= 0);
+   bot_t &landing_bot = bots[slot];
+   link = MapProfileCrossfireGaussJumpLink(
+      CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   ASSERT_TRUE(advance_gauss_jump_to_flight(landing_bot, *link));
+   landing_bot.b_on_ground = FALSE;
+   landing_bot.pEdict->v.flags &= ~FL_ONGROUND;
+   landing_bot.pEdict->v.velocity = Vector(-420.0f, -40.0f, 500.0f);
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(landing_bot));
+   landing_bot.pEdict->v.origin = Vector(-785.0f, 590.0f,
+      link->landing_floor_z + 100.0f);
+   landing_bot.pEdict->v.velocity = Vector(0.0f, 0.0f, 0.0f);
+   landing_bot.b_on_ground = TRUE;
+   landing_bot.pEdict->v.flags |= FL_ONGROUND;
+   gpGlobals->time += 0.7f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(landing_bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(landing_bot),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_INT(landing_bot.gauss_charge_purpose, BOT_GAUSS_CHARGE_NONE);
+   ASSERT_INT(landing_bot.wpt_goal_type, WPT_GOAL_GAUSS_HOLD);
+
+   crossfire_gauss_jump_stats_t stats;
+   MapProfileCrossfireGetGaussJumpStats(&stats);
+   ASSERT_INT(stats.jump_failures, 1);
+   ASSERT_INT(stats.wrong_floor, 1);
+   ASSERT_INT(stats.stairs_fallbacks, 1);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_tunnel_jump_death_releases_reservation(void)
+{
+   TEST("Tunnel jump death clears state and releases its capacity reservation");
+
+   setup_gauss_jump_waypoints();
+   const int slot = satellite_declined_slot(0);
+   ASSERT_TRUE(slot >= 0);
+   setup_jump_bot(bots[slot], slot, Vector(-128.0f, -390.0f, -1820.0f),
+      TRUE);
+   bots[slot].curr_waypoint_index = 121;
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpLink(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_TUNNEL_LOFT);
+   bots[slot].pEdict->v.deadflag = DEAD_DEAD;
+   bots[slot].pEdict->v.health = 0.0f;
+   ASSERT_FALSE(MapProfileHandleSpecialMovement(bots[slot]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bots[slot]),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+
+   int replacement = -1;
+   for (int index = 0; index < 32; index++)
+   {
+      if (index != slot && MapProfileCrossfireSatelliteRecruitRoll(
+             index, 1, MapProfileCrossfireSatelliteMapEpoch()) >= 70)
+      {
+         replacement = index;
+         break;
+      }
+   }
+   ASSERT_TRUE(replacement >= 0);
+   setup_jump_bot(bots[replacement], replacement,
+      Vector(-128.0f, -390.0f, -1820.0f), TRUE);
+   bots[replacement].curr_waypoint_index = 121;
+   MapProfileStartFrame();
+   ASSERT_TRUE(MapProfileEnsureStrategicGoal(bots[replacement]));
+   ASSERT_INT(MapProfileCrossfireGaussJumpLink(bots[replacement]),
+      CROSSFIRE_GAUSS_JUMP_TUNNEL_LOFT);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
+static int test_strike_in_flight_lands_before_bunker_handoff(void)
+{
+   TEST("Crossfire strike in flight preserves physics then hands off to bunker");
+
+   setup_gauss_jump_waypoints();
+   waypoints[300].flags = 0;
+   waypoints[300].origin = Vector(0.0f, -2520.0f, -1820.0f);
+   const int slot = select_satellite_jump();
+   ASSERT_TRUE(slot >= 0);
+   bot_t &bot = bots[slot];
+   const crossfire_gauss_jump_link_t *link =
+      MapProfileCrossfireGaussJumpLink(CROSSFIRE_GAUSS_JUMP_SATELLITE);
+   ASSERT_TRUE(advance_gauss_jump_to_flight(bot, *link));
+   bot.b_on_ground = FALSE;
+   bot.pEdict->v.flags &= ~FL_ONGROUND;
+   bot.pEdict->v.velocity = Vector(-430.0f, -40.0f, 510.0f);
+   gpGlobals->time += 0.1f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+
+   MapProfileOnAmbientSound("ambience/siren.wav", 0);
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_FLIGHT);
+   bot.pEdict->v.origin = Vector(-785.7f, 587.9f,
+      link->landing_floor_z);
+   bot.pEdict->v.velocity = Vector(0.0f, 0.0f, 0.0f);
+   bot.b_on_ground = TRUE;
+   bot.pEdict->v.flags |= FL_ONGROUND;
+   gpGlobals->time += 0.7f;
+   ASSERT_TRUE(MapProfileHandleSpecialMovement(bot));
+   ASSERT_INT(MapProfileCrossfireGaussJumpStage(bot),
+      CROSSFIRE_GAUSS_JUMP_NONE);
+   ASSERT_FALSE(MapProfileCrossfireIsGaussStrongholdActive(bot));
+   ASSERT_TRUE(bot.wpt_goal_type == WPT_GOAL_BUNKER ||
+      bot.wpt_goal_type == WPT_GOAL_BUNKER_SHAFT);
+
+   MapProfileReset();
+   PASS();
+   return 0;
+}
+
+
 int main(void)
 {
    int fail = 0;
@@ -2651,6 +3342,15 @@ int main(void)
    fail |= test_satellite_recruitment_preserves_route_during_combat();
    fail |= test_satellite_recruitment_requires_confirmed_stuck();
    fail |= test_satellite_recruitment_strike_preempts_and_recovers();
+   fail |= test_gauss_jump_links_match_controlled_calibration();
+   fail |= test_satellite_owner_selects_jump_and_preserves_stairs_fallback();
+   fail |= test_satellite_jump_state_machine_hands_off_to_stronghold();
+   fail |= test_tunnel_loft_jump_and_weapon_policy();
+   fail |= test_strike_cancels_pre_takeoff_jump_charge();
+   fail |= test_gauss_jump_rejects_unsafe_selection_guards();
+   fail |= test_gauss_jump_failure_cleans_charge_and_uses_fallback();
+   fail |= test_tunnel_jump_death_releases_reservation();
+   fail |= test_strike_in_flight_lands_before_bunker_handoff();
 
    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 

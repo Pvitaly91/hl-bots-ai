@@ -78,6 +78,8 @@ typedef int BOOL;
 #define WPT_GOAL_BUNKER_SHAFT 13
 #define WPT_GOAL_CROSSBOW_HOLD 14
 #define WPT_GOAL_GAUSS_HOLD 15
+#define WPT_GOAL_GAUSS_JUMP 16
+#define WPT_GOAL_TUNNEL_LOFT 17
 
 // The movement target is deliberately separate from the current aim target.
 #define BOT_MOVE_UNSET                  0
@@ -94,6 +96,13 @@ typedef int BOOL;
 #define BOT_GAUSS_SECONDARY_HOLD         1
 #define BOT_GAUSS_SECONDARY_RELEASE_WAIT 2
 #define BOT_GAUSS_SECONDARY_COOLDOWN     3
+
+enum bot_gauss_charge_purpose_t
+{
+   BOT_GAUSS_CHARGE_NONE = 0,
+   BOT_GAUSS_CHARGE_COMBAT,
+   BOT_GAUSS_CHARGE_JUMP
+};
 
 enum bot_gauss_attack_decision_t
 {
@@ -350,6 +359,7 @@ typedef struct
    float f_primary_charging;
    float f_secondary_charging;
    int gauss_secondary_state;
+   int gauss_charge_purpose;
    float f_gauss_secondary_start_time;
    float f_gauss_secondary_release_time;
    float f_gauss_secondary_hard_release_time;

@@ -108,6 +108,8 @@ const char *BotTraceGoalTypeName(int goal_type)
       case WPT_GOAL_BUNKER_SHAFT: return "bunker_shaft";
       case WPT_GOAL_CROSSBOW_HOLD: return "crossbow_hold";
       case WPT_GOAL_GAUSS_HOLD: return "gauss_hold";
+      case WPT_GOAL_GAUSS_JUMP: return "gauss_jump";
+      case WPT_GOAL_TUNNEL_LOFT: return "tunnel_loft";
       default:                   return "unknown";
    }
 }

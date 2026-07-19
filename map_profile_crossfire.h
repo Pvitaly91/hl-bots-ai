@@ -35,6 +35,97 @@ enum crossfire_satellite_recruit_state_t
    CROSSFIRE_SATELLITE_RECRUIT_ASSIGNED
 };
 
+enum crossfire_gauss_jump_link_id_t
+{
+   CROSSFIRE_GAUSS_JUMP_NONE_LINK = -1,
+   CROSSFIRE_GAUSS_JUMP_SATELLITE = 0,
+   CROSSFIRE_GAUSS_JUMP_TUNNEL_LOFT,
+   CROSSFIRE_GAUSS_JUMP_LINK_COUNT
+};
+
+enum crossfire_gauss_jump_stage_t
+{
+   CROSSFIRE_GAUSS_JUMP_NONE = 0,
+   CROSSFIRE_GAUSS_JUMP_APPROACH,
+   CROSSFIRE_GAUSS_JUMP_ALIGN,
+   CROSSFIRE_GAUSS_JUMP_STABILIZE,
+   CROSSFIRE_GAUSS_JUMP_CHARGE,
+   CROSSFIRE_GAUSS_JUMP_TAKEOFF,
+   CROSSFIRE_GAUSS_JUMP_RELEASE,
+   CROSSFIRE_GAUSS_JUMP_FLIGHT,
+   CROSSFIRE_GAUSS_JUMP_LAND_CONFIRM,
+   CROSSFIRE_GAUSS_JUMP_RECOVER,
+   CROSSFIRE_GAUSS_JUMP_FAILED
+};
+
+enum crossfire_gauss_jump_destination_role_t
+{
+   CROSSFIRE_GAUSS_JUMP_ROLE_NONE = 0,
+   CROSSFIRE_GAUSS_JUMP_ROLE_SATELLITE,
+   CROSSFIRE_GAUSS_JUMP_ROLE_TUNNEL_LOFT
+};
+
+enum crossfire_tunnel_loft_stage_t
+{
+   CROSSFIRE_TUNNEL_LOFT_NONE = 0,
+   CROSSFIRE_TUNNEL_LOFT_ACQUIRE_RESOURCES,
+   CROSSFIRE_TUNNEL_LOFT_GAUSS_HOLD,
+   CROSSFIRE_TUNNEL_LOFT_EGON_HOLD,
+   CROSSFIRE_TUNNEL_LOFT_RESUPPLY,
+   CROSSFIRE_TUNNEL_LOFT_WAIT_RESPAWN,
+   CROSSFIRE_TUNNEL_LOFT_REPOSITION
+};
+
+#define CROSSFIRE_EGON_MIN_DISTANCE 96.0f
+#define CROSSFIRE_EGON_MAX_DISTANCE 560.0f
+#define CROSSFIRE_EGON_URANIUM_RESERVE 12
+
+typedef struct crossfire_gauss_jump_link_s
+{
+   const char *name;
+   int launch_waypoint;
+   Vector launch_origin;
+   float launch_radius;
+   float launch_min_z;
+   float launch_max_z;
+   Vector aim_point;
+   float desired_yaw;
+   float desired_pitch;
+   float charge_time;
+   Vector landing_mins;
+   Vector landing_maxs;
+   float landing_floor_z;
+   int min_health;
+   int min_armor;
+   int min_uranium;
+   int max_retries;
+   int destination_role;
+} crossfire_gauss_jump_link_t;
+
+typedef struct crossfire_gauss_jump_stats_s
+{
+   unsigned int jump_candidates;
+   unsigned int jump_selections;
+   unsigned int jump_attempts;
+   unsigned int jump_successes;
+   unsigned int jump_failures;
+   unsigned int satellite_jump_successes;
+   unsigned int tunnel_loft_jump_successes;
+   unsigned int stairs_fallbacks;
+   unsigned int overshoots;
+   unsigned int undershoots;
+   unsigned int wrong_floor;
+   unsigned int jump_deaths;
+   unsigned int recoil_falls;
+   unsigned int strike_aborts;
+   unsigned int egon_pickups;
+   unsigned int egon_uses;
+   unsigned int gauss_uses;
+   unsigned int uranium_reserve_blocks;
+   unsigned int reservation_conflicts;
+   float total_flight_time;
+} crossfire_gauss_jump_stats_t;
+
 typedef struct crossfire_gauss_stronghold_stats_s
 {
    unsigned int stronghold_entries;
@@ -98,5 +189,17 @@ unsigned int MapProfileCrossfireSatelliteRecruitSpawnEpoch(
 unsigned int MapProfileCrossfireSatelliteMapEpoch(void);
 void MapProfileCrossfireGetSatelliteRecruitStats(
    crossfire_satellite_recruit_stats_t *stats);
+int MapProfileCrossfireGaussJumpLinkCount(void);
+const crossfire_gauss_jump_link_t *MapProfileCrossfireGaussJumpLink(
+   int link_id);
+int MapProfileCrossfireGaussJumpLink(const bot_t &pBot);
+int MapProfileCrossfireGaussJumpStage(const bot_t &pBot);
+qboolean MapProfileCrossfireIsTunnelLoftActive(const bot_t &pBot);
+int MapProfileCrossfireTunnelLoftStage(const bot_t &pBot);
+int MapProfileCrossfireTunnelLoftOwner(void);
+qboolean MapProfileCrossfireIsOriginInsideTunnelLoft(
+   const Vector &origin);
+void MapProfileCrossfireGetGaussJumpStats(
+   crossfire_gauss_jump_stats_t *stats);
 
 #endif // MAP_PROFILE_CROSSFIRE_H

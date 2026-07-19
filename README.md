@@ -1,12 +1,26 @@
 # hl-bots-ai
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-11
+HLDM-JKBOTTI-AI-STAND-20260415-12
 PROMPT_ID_END
 
 `hl-bots-ai` is a Windows-first Half-Life Deathmatch bot lab built on top of the upstream [Bots-United/jk_botti](https://github.com/Bots-United/jk_botti) codebase. The repository keeps the original jk_botti source layout in the repo root, adds a Visual Studio 2022 Win32 build, and layers in a slow AI balance director that adjusts only high-level bot tuning through a file bridge.
 
 The lab is designed to keep working offline. If no `OPENAI_API_KEY` is present, the Python sidecar uses a deterministic rules engine. If the sidecar is absent or errors, the server and bot plugin still run.
+
+## Crossfire Controlled Gauss Jumps
+
+The `crossfire` profile contains exactly two pre-calibrated Gauss-secondary recoil links. They are movement shortcuts with a dedicated `NONE`/`COMBAT`/`JUMP` charge purpose and a bounded approach, alignment, stabilization, charge, release, flight, landing, recovery, and failure state machine. They cannot be selected as generic combat movement or enemy chase, each destination has capacity one, and Crossfire strike evacuation remains authoritative.
+
+- `satellite_operations_window`: assigned Satellite owner only; launch waypoint `311`, origin `(-432.6,621.9,-1628)`, radius `24`, launch Z `[-1640,-1616]`, aim point `(402,702,-2215)`, yaw/pitch `5.5/35`, charge `0.80 s`, landing volume `(-840,520,-1528)` to `(-720,660,-1472)`, floor Z `-1500`. A successful landing hands off to the existing persistent Satellite controller; any rejected or failed attempt uses the safe indoor stair route.
+- `tunnel_loft_left_window`: nearby non-Satellite candidate only; launch waypoint `121`, origin `(-128,-390,-1820)`, radius `12`, launch Z `[-1830,-1810]`, aim point `(-128,-823,-2748)`, yaw/pitch `-90/65`, charge `0.80 s`, landing volume `(-176,-304,-1690)` to `(-80,-160,-1640)`, floor Z `-1660`. A successful landing starts the capacity-one tunnel-loft resource/overwatch controller inside bounds `X [-430,430]`, `Y [-304,300]`, `Z [-1690,-1620]`.
+- The tunnel-loft map entities are `weapon_egon` at `(0,-192,-1680)`, nearest waypoint `35` `(0,-192,-1660)`, and two `ammo_gaussclip` entities at `(-360,56,-1680)` and `(-360,104,-1680)`, nearest waypoint `50` `(-360,56,-1660)`. The two pickups described as batteries are therefore uranium, not armor.
+- Actual `item_battery` entities are outside the loft at `(472,280,-1520)` and `(472,312,-1520)`, nearest waypoint `57` `(472,280,-1500)`, so the local controller does not leave its room to collect them. The other `weapon_egon` at `(736,176,-1840)`, nearest waypoint `64`, is also outside this role.
+- In the loft, Gauss remains the long-range/default weapon. Egon is considered only from `96` through `560` units with clear local engagement geometry and uranium strictly above the named reserve of `12`; hysteresis prevents per-frame Gauss/Egon oscillation.
+
+Controlled Linux integration used 20 attempts per skill and link. Route A passed `20/20` at skills 3, 4, and 5 with average flight times `1.016`, `1.003`, and `1.010 s`; route B passed `20/20` at all three skills with `0.753`, `0.738`, and `0.747 s`. The accepted aggregate was `120/120` (`100%`) with ammo delta `-2/-3`, zero health/armor damage, wrong-floor landings, jump deaths, recoil falls, or repeated charge loops. Composite map-profile tests additionally verify Satellite stronghold handoff, tunnel resource/Egon policy, bounded retry/fallback, charge cleanup, and strike both before takeoff and during flight.
+
+The injection-free natural soak ran `1802.6 s` with 12 bots and `61/61` healthy status samples. It recorded 41 Satellite assignments, six stair-route arrivals, four strike preemptions, zero reservation conflicts, no fatal signal, and no container restart. It recorded zero jump selections or attempts because none of the six naturally arriving owners already had Gauss/uranium near the calibrated launch zone; therefore this run is stability evidence, not a claimed natural jump success. The narrow eligibility policy was deliberately not weakened to manufacture a soak event.
 
 ## Crossfire Satellite Operations Recruitment and Gauss Stronghold
 

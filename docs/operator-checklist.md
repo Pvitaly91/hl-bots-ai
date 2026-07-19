@@ -2,11 +2,24 @@
 
 Use this checklist before spending a real human session on the control-vs-treatment workflow.
 
+## Crossfire Controlled Gauss Jumps
+
+Production builds containing Prompt 12 expose only `satellite_operations_window` and `tunnel_loft_left_window`. There is no operator cvar that enables arbitrary Gauss jumping, and normal production must keep trace disabled.
+
+- Confirm `map crossfire`, 12 bots, `jk_ai_balance_enabled 0`, `jk_botti bot_trace 0`, and server logging off.
+- Route A is valid only for the already assigned Satellite owner carrying Gauss near waypoint `311`; the capacity-one reservation includes stairs, jump approach, charge, flight, and occupancy. Without every guard, the owner must use the safe indoor stairs.
+- Route B is valid only for a nearby eligible non-Satellite Gauss carrier at waypoint `121`; the tunnel-loft reservation is also capacity one.
+- The tunnel room contains `weapon_egon` at `(0,-192,-1680)` and uranium at `(-360,56,-1680)` / `(-360,104,-1680)`. These two uranium pickups are `ammo_gaussclip`, not batteries. Actual `item_battery` entities at positive X `472` are outside the room and must not pull the owner out.
+- Egon is a local close/medium fallback from `96` through `560` units only while uranium remains above reserve `12`; Gauss remains the long-range/default choice.
+- Expect `gauss_jump_selected`, stage, launch, release, landed/failed, resource, and weapon trace records only when temporary diagnostics are explicitly enabled. Return `jk_botti bot_trace` to `0` and logging to off after diagnosis.
+- A pre-flight strike must cancel and release charge immediately. A strike during flight must allow physical landing and then assign bunker/shaft evacuation without entering either hold role.
+- Treat stairs fallback, bounded one-retry recovery, zero simultaneous arrivals, zero wrong-floor landings, and zero jump deaths/recoil falls as deployment checks. Do not deploy any calibration-only command or entity-control build.
+
 ## Crossfire Satellite Recruitment and Gauss Stronghold
 
 The production `crossfire` profile contains a deterministic one-life recruitment path into the persistent capacity-one Satellite Operations Gauss defender role. No additional cvar is required. Nearby exterior and first-floor bots have a 70% volunteer decision, one owner follows the safe indoor route, and standby volunteers continue normal play until replacement is needed. The persistent role keeps the owner on the second floor, performs local Gauss/health/armor/fallback resupply, attacks through waypoints `99/100`, and refuses movement goals into the central yard. A Crossfire strike always clears recruitment and restores bunker/shaft evacuation.
 
-Operational checks after deploying a build that contains Prompt 11:
+Operational checks after deploying a build that contains Prompt 11 or later:
 
 - Confirm `map crossfire`, 12 bots, and `jk_ai_balance_enabled 0`.
 - Confirm the plugin marker and SHA-256 match the committed production build and preserve the timestamped previous-plugin backup.

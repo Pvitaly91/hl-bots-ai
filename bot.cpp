@@ -184,6 +184,7 @@ static void BotSpawnInit_CombatState( bot_t &pBot )
    pBot.f_primary_charging = -1.0;
    pBot.f_secondary_charging = -1.0;
    pBot.gauss_secondary_state = BOT_GAUSS_SECONDARY_IDLE;
+   pBot.gauss_charge_purpose = BOT_GAUSS_CHARGE_NONE;
    pBot.f_gauss_secondary_start_time = 0.0f;
    pBot.f_gauss_secondary_release_time = 0.0f;
    pBot.f_gauss_secondary_hard_release_time = 0.0f;

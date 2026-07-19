@@ -1,10 +1,59 @@
 # HLDM Test Stand
 
 PROMPT_ID_BEGIN
-HLDM-JKBOTTI-AI-STAND-20260415-11
+HLDM-JKBOTTI-AI-STAND-20260415-12
 PROMPT_ID_END
 
 This document describes the Windows-first local HLDM lab added on top of jk_botti.
+
+## Prompt 12: Controlled Crossfire Gauss-Jump Links
+
+Prompt 12 adds exactly two map-specific Gauss-secondary recoil links. It does not add generic ballistic planning, random movement boosts, combat chase jumps, or new Satellite recruitment. The Satellite link is a deterministic shortcut for the already assigned capacity-one owner; all other owners retain the Prompt 11 stair route. The tunnel-loft link is available only to a nearby eligible Gauss carrier that is neither the assigned nor a standby Satellite volunteer, and it has its own capacity-one reservation.
+
+The calibrated links are:
+
+- Route A, `satellite_operations_window`: launch waypoint `311`; launch origin `(-432.6,621.9,-1628)`, radius `24`, Z tolerance `[-1640,-1616]`; aim point `(402,702,-2215)`; yaw `5.5`, pitch `35`, charge `0.80 s`; landing volume `(-840,520,-1528)` through `(-720,660,-1472)`, expected floor Z `-1500`; minimum health/armor/uranium `75/25/5`; one retry; destination is the existing Satellite stronghold.
+- Route B, `tunnel_loft_left_window`: launch waypoint `121`; launch origin `(-128,-390,-1820)`, radius `12`, Z tolerance `[-1830,-1810]`; aim point `(-128,-823,-2748)`; yaw `-90`, pitch `65`, charge `0.80 s`; landing volume `(-176,-304,-1690)` through `(-80,-160,-1640)`, expected floor Z `-1660`; minimum health/armor/uranium `70/20/4`; one retry; destination is the tunnel-loft controller.
+
+`bot_gauss_charge_purpose_t` separates combat charge from movement charge. The map state machine progresses through `APPROACH`, `ALIGN`, `STABILIZE`, `CHARGE`, `TAKEOFF`, `RELEASE`, `FLIGHT`, `LAND_CONFIRM`, and bounded `RECOVER`/`FAILED` handling. A jump requires the calibrated source volume, route, ground, velocity, health, armor, uranium, reservation, launch/landing occupancy, floor, and two-segment hull trajectory checks. Flight suppresses normal navigation, strafing, weapon switching, primary fire, repeated secondary input, pickup diversion, and enemy locomotion. Failures clear charge state and reservation; a Satellite failure selects the existing indoor stairs.
+
+Strike is absolute. Before flight it cancels the jump, releases `ATTACK2`, and assigns bunker/shaft evacuation. Once recoil physics has launched the bot, strike marks the flight pending, allows physical landing, then bypasses both destination roles and immediately hands off to evacuation. Tests cover both branches.
+
+### Tunnel-Loft Evidence
+
+Authoritative BSP/entity and waypoint inspection found:
+
+- room/controller bounds: `X [-430,430]`, `Y [-304,300]`, `Z [-1690,-1620]`; local hold waypoint `133` at `(-75.8,-178,-1660)`
+- `weapon_egon` at `(0,-192,-1680)`, nearest waypoint `35` `(0,-192,-1660)`
+- `ammo_gaussclip` at `(-360,56,-1680)` and `(-360,104,-1680)`, both nearest waypoint `50` `(-360,56,-1660)`
+- actual `item_battery` at `(472,280,-1520)` and `(472,312,-1520)`, nearest waypoint `57` `(472,280,-1500)`, outside the loft bounds
+- another `weapon_egon` at `(736,176,-1840)`, nearest waypoint `64`, in the unrelated lower zone
+- left opening used by Route B: wall plane near `Y -320`, opening `X [-192,-64]`, vertical opening `Z [-1696,-1608]`
+
+The two objects described by the operator as batteries are the two `ammo_gaussclip` entities and correctly increase uranium. There is no local armor pickup in the room. The controller recognizes `ammo_gaussclip`/`ammo_uranium`, `item_battery`, and `weapon_egon` only when their resolved origin is inside the room. It selects local Egon first when absent, then uranium when low, then armor if a compatible map revision actually supplies a local battery. Gauss remains preferred at range; Egon has a `96` to `560` unit lane and requires uranium above `CROSSFIRE_EGON_URANIUM_RESERVE=12`. The unit integration scenario verifies Egon and both uranium pickups, rejects the outside battery, verifies reserve blocking, and switches back to Gauss for a distant target without oscillation.
+
+### Controlled Calibration
+
+Calibration-only placement/loadout/entity controls remained outside the repository. The accepted matrix used skill 3, 4, and 5 with 20 attempts per link and skill:
+
+| Link | Skill | Success | Avg flight | Avg max height | Avg horizontal | Avg horizontal velocity | Avg vertical velocity |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A | 3 | 20/20 | 1.016 s | 165.4 | 372.8 | 367.7 | 485.6 |
+| A | 4 | 20/20 | 1.003 s | 164.3 | 367.0 | 363.6 | 481.9 |
+| A | 5 | 20/20 | 1.010 s | 164.5 | 368.3 | 365.7 | 484.1 |
+| B | 3 | 20/20 | 0.753 s | 193.7 | 142.3 | 188.6 | 633.2 |
+| B | 4 | 20/20 | 0.738 s | 193.8 | 141.5 | 190.2 | 635.6 |
+| B | 5 | 20/20 | 0.747 s | 193.9 | 141.6 | 188.2 | 631.5 |
+
+The aggregate is `120/120` (`100%`). Uranium delta was `-2` or `-3` per jump, health and armor delta were zero, and there were zero wrong-floor landings, jump deaths, recoil falls, and repeated charge loops. Route A landing enters the existing persistent stronghold state machine, including local Gauss/uranium, waypoint `99/100`, return fire, resupply, zone lock, and stairs fallback. Route B landing enters the local room controller and the composite integration test confirms resource classification, Egon inventory policy, Gauss range preference, and uranium reserve behavior.
+
+### Natural Soak and Builds
+
+The production-like candidate, with no validation commands or entity injection, ran on isolated port `27017` for `1802.6 s`. All `61/61` status samples reported `crossfire` and 12 active bots. The run recorded 452 eligibility evaluations (`329` yes, `123` no), 41 assignments, six stair-route arrivals, 30 failed ordinary approaches, 40 replacement assignments, zero reservation conflicts, and four strike preemptions. There were no `gauss_jump_selected`, launch, release, landing, failure, tunnel-resource, or tunnel-weapon trace events, no fatal signal, no OOM, and no container restart.
+
+This natural run did not satisfy the rare combined precondition: all six owners that reached Satellite arrived without Gauss/uranium, so none was eligible for Route A at waypoint `311`, and no nearby non-Satellite Gauss carrier reached Route B's source volume. The result is reported as stability and regression evidence only. The implementation was not broadened to recruit bots across the map or manufacture a jump, because that would violate the controlled-link requirement.
+
+Tests were written red first. The final Crossfire suite passes `56/56`, including unsafe selection guards, full state-machine handoffs, wrong-floor fallback, weapon-switch cleanup, death/reservation release, capacity/resource policy, and strike before takeoff and in flight. All six required focused Linux i386/SSE3 binaries pass, the complete clean suite passes, and Visual Studio `Release|Win32` builds and stages `jk_botti_mm.dll` with zero warnings/errors. No calibration helper, teleport/give command, entity injection, log, waypoint output, or compiled binary is tracked.
 
 ## Prompt 11: Satellite Stronghold Recruitment
 
